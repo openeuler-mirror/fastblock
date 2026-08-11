@@ -26,7 +26,9 @@ public:
 
     append_entries_buffer(raft_server_t* raft)
     : _raft(raft)
-    , _in_progress(false) {}
+    , _timer(nullptr)
+    , _in_progress(false)
+    , _stopping(false) {}
 
     void enqueue(const msg_appendentries_t* request,
                 msg_appendentries_response_t* response,
@@ -42,13 +44,20 @@ public:
 
     void do_flush();
 
-    void stop();
+    void stop(utils::complete_fun fun, void *arg);
     void set_in_progress(bool is_in_progress){
         _in_progress = is_in_progress;
     }
+    void flush_done(int res, utils::context* complete);
 private:
+    void drain(int res);
+    void finish_stop_if_idle();
+
     raft_server_t* _raft;
     std::queue<item_type> _request;
     struct spdk_poller * _timer;
     bool _in_progress;
+    bool _stopping;
+    utils::complete_fun _stop_fun;
+    void *_stop_arg{nullptr};
 };

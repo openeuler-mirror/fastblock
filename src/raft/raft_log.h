@@ -18,6 +18,7 @@
 
 #include "raft_cache.h"
 
+#include "fastblock/utils/err_num.h"
 #include "localstore/disk_log.h"
 #include "localstore/spdk_buffer.h"
 
@@ -119,12 +120,19 @@ public:
     }
 
     bool disk_get_term(raft_index_t idx, raft_term_t& term){
+        if (!_log) {
+            return false;
+        }
         auto _term = _log->get_term_id(idx);
         if(_term == 0){
             return false;
         }
         term = _term;
         return true;
+    }
+
+    bool disk_log_available() const {
+        return _log != nullptr;
     }
 
     /** Get an array of entries from this index onwards.

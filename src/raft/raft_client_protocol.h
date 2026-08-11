@@ -172,6 +172,7 @@ public:
                         node_id, address.c_str(), port, _shard_cores[shard_id]);
 
                     utils::switch_core_func(ctx, err::RAFT_ERR_UNKNOWN);
+                    return;
                   }
                   auto &stub = _stubs[shard_id];
                   stub[node_id] = std::make_shared<rpc_service_raft_Stub>(conn);
@@ -267,6 +268,8 @@ public:
       int32_t target_node_id,
       uint64_t pool_id,
       uint64_t pg_id,
+      uint32_t core_index,
+      std::vector<raft_node_info> nodes,
       int64_t revision_id,
       std::function<void(int)> cb);
     int send_vote(raft_server_t *raft, int32_t target_node_id, msg_requestvote_t *request);

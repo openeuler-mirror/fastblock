@@ -112,14 +112,16 @@ public:
         while (itr != _cache.end())
         {
             auto item = *itr;
-            if (item->complete)
-            {
-                item->complete->complete(result);
-                item->complete = nullptr;
-            }
-            if (item->entry->idx() == end_idx)
-                break;
+            auto complete = item->complete;
+            item->complete = nullptr;
+            bool done = item->entry->idx() == end_idx;
             itr++;
+            if (complete)
+            {
+                complete->complete(result);
+            }
+            if (done)
+                break;
         }
     }
 

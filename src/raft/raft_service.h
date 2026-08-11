@@ -14,6 +14,7 @@
 #include "rpc/raft_msg.pb.h"
 #include "fastblock/utils/utils.h"
 #include "fastblock/utils/err_num.h"
+#include "fastblock/utils/rtc_local_first.h"
 #include "raft/raft.h"
 #include "fastblock/base/core_sharded.h"
 
@@ -86,15 +87,11 @@ void raft_service<PartitionManager>::append_entries(google::protobuf::RpcControl
         return;
     }
 
-    auto thread = spdk_get_thread();
-    _pm->get_shard().invoke_on(
+    rtc::local_first(
+      _pm->get_shard(),
       shard_id,
-      [this, shard_id, done, request, response, thread](){
-        auto cur_thread = spdk_get_thread();
-        if(thread != cur_thread){
-            SPDK_DEBUGLOG(pg_group, "current thread %lu, thread %lu\n",
-                    spdk_thread_get_id(cur_thread), spdk_thread_get_id(thread));
-        }
+      [this, shard_id, done, request, response](){
+        rtc::maybe_log_metrics_notice();
         auto raft = _pm->get_pg(shard_id, request->pool_id(), request->pg_id());
         if(!raft){
             SPDK_WARNLOG("not find pg %lu.%lu\n", request->pool_id(), request->pg_id());
@@ -118,7 +115,8 @@ void raft_service<PartitionManager>::append_entries(google::protobuf::RpcControl
                 request->pool_id(), request->pg_id(), request->node_id());
         append_entries_complete *complete = new append_entries_complete(done, request);
         raft->append_entries_to_buffer(request, response, complete);
-      });
+      },
+      rtc::hop_kind::raft_replica);
 }
 
 template<typename PartitionManager>
@@ -139,7 +137,8 @@ void raft_service<PartitionManager>::vote(google::protobuf::RpcController* contr
         return;
     }
 
-    _pm->get_shard().invoke_on(
+    rtc::local_first(
+      _pm->get_shard(),
       shard_id,
       [this, shard_id, request, response, done](){
         auto raft = _pm->get_pg(shard_id, request->pool_id(), request->pg_id());
@@ -158,7 +157,8 @@ void raft_service<PartitionManager>::vote(google::protobuf::RpcController* contr
         }
         raft->raft_recv_requestvote(request->node_id(), request, response);
         done->Run();
-      });
+      },
+      rtc::hop_kind::raft_replica);
 }
 
 struct snapshot_complete : public utils::context{
@@ -186,7 +186,8 @@ void raft_service<PartitionManager>::snapshot_check(google::protobuf::RpcControl
         return;
     }
 
-    _pm->get_shard().invoke_on(
+    rtc::local_first(
+      _pm->get_shard(),
       shard_id,
       [this, shard_id, done, request, response](){
         auto raft = _pm->get_pg(shard_id, request->pool_id(), request->pg_id());
@@ -206,7 +207,8 @@ void raft_service<PartitionManager>::snapshot_check(google::protobuf::RpcControl
 
         snapshot_complete* complete = new snapshot_complete(done);
         raft->raft_recv_snapshot_check(request->node_id(), request, response, complete);
-      });
+      },
+      rtc::hop_kind::raft_replica);
 }
 
 template<typename PartitionManager>
@@ -223,7 +225,8 @@ void raft_service<PartitionManager>::install_snapshot(google::protobuf::RpcContr
         return;
     }
 
-    _pm->get_shard().invoke_on(
+    rtc::local_first(
+      _pm->get_shard(),
       shard_id,
       [this, shard_id, done, request, response](){
         auto raft = _pm->get_pg(shard_id, request->pool_id(), request->pg_id());
@@ -243,7 +246,8 @@ void raft_service<PartitionManager>::install_snapshot(google::protobuf::RpcContr
 
         snapshot_complete* complete = new snapshot_complete(done);
         raft->raft_recv_installsnapshot(request->node_id(), request, response, complete);
-      });
+      },
+      rtc::hop_kind::raft_replica);
 }
 
 struct heartbeat_complete : public utils::context{
@@ -296,11 +300,18 @@ void raft_service<PartitionManager>::heartbeat(google::protobuf::RpcController* 
                        heartbeat_response* response,
                        google::protobuf::Closure* done){
     auto beat_num = request->heartbeats_size();
+    if (beat_num == 0) {
+        done->Run();
+        return;
+    }
     heartbeat_complete *complete = new heartbeat_complete(done, beat_num, false);
+    complete->reps.reserve(beat_num);
+    response->mutable_meta()->Reserve(beat_num);
 
     for(int i = 0; i < beat_num; i++){
-        const heartbeat_metadata& meta = request->heartbeats(i);
+        heartbeat_metadata meta = request->heartbeats(i);
 
+        const int rsp_index = response->meta_size();
         auto rsp = response->add_meta();
 
         auto pool_id = meta.pool_id();
@@ -319,9 +330,11 @@ void raft_service<PartitionManager>::heartbeat(google::protobuf::RpcController* 
         complete->reps.push_back(req);
 
         SPDK_DEBUGLOG(pg_group, "recv heartbeat from %d pg: %lu.%lu\n", meta.node_id(), pool_id, pg_id);
-        _pm->get_shard().invoke_on(
+        const int rc = rtc::local_first(
+          _pm->get_shard(),
           shard_id,
-          [this, &meta, shard_id, complete, req, rsp](){
+          [this, meta = std::move(meta), shard_id, complete, req, response, rsp_index](){
+            auto rsp = response->mutable_meta(rsp_index);
             auto raft = _pm->get_pg(shard_id, meta.pool_id(), meta.pg_id());
             if(!raft){
                 SPDK_WARNLOG("not find pg %lu.%lu\n", meta.pool_id(), meta.pg_id());
@@ -350,7 +363,13 @@ void raft_service<PartitionManager>::heartbeat(google::protobuf::RpcController* 
             req->set_leader_commit(meta.leader_commit());
 
             raft->append_entries_to_buffer(req, rsp, complete);
-          });
+          },
+          rtc::hop_kind::raft_replica);
+        if (rc != 0) {
+            rsp->set_node_id(_pm->get_current_node_id());
+            rsp->set_success(err::RAFT_ERR_UNKNOWN);
+            complete->complete(err::RAFT_ERR_UNKNOWN);
+        }
     }
 }
 
@@ -371,7 +390,8 @@ void raft_service<PartitionManager>::timeout_now(google::protobuf::RpcController
         return;
     }
 
-    _pm->get_shard().invoke_on(
+    rtc::local_first(
+      _pm->get_shard(),
       shard_id,
       [this, shard_id, done, request, response](){
         auto raft = _pm->get_pg(shard_id, request->pool_id(), request->pg_id());
@@ -399,5 +419,6 @@ void raft_service<PartitionManager>::timeout_now(google::protobuf::RpcController
         response->set_node_id(_pm->get_current_node_id());
         response->set_success(err_num);
         done->Run();
-      });
+      },
+      rtc::hop_kind::raft_replica);
 }
