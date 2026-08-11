@@ -205,6 +205,7 @@ std::vector<shard_manager::node_heartbeat> shard_manager::get_heartbeat_requests
             raft_term_t term = 0;
             auto got = raft->raft_get_entry_term(next_idx - 1, term);
             if(!got && next_idx - 1 != 0){
+                raft->dispatch_recovery(node);
                 return;
             }
 
