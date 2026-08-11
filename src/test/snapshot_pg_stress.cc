@@ -26,7 +26,13 @@ static std::string g_object_name{"snapshot_pg_obj"};
 static std::string g_payload{};
 static uint32_t g_op_type = SNAP_WRITE;
 static uint32_t g_write_count = 64;
+static uint32_t g_object_count = 1;
 static uint32_t g_done_count = 0;
+
+static void fail_app()
+{
+    spdk_app_stop(1);
+}
 
 static void usage()
 {
@@ -38,6 +44,7 @@ static void usage()
     printf(" -G <pg_id>                pg id\n");
     printf(" Environment variables:\n");
     printf("   FB_PG_OBJECT            target object name, default snapshot_pg_obj\n");
+    printf("   FB_PG_OBJECT_COUNT      unique object count, default 1\n");
     printf("   FB_PG_WRITES            number of writes in write mode, default 64\n");
     printf("   FB_PG_IO_SIZE           payload size in bytes, default 4096\n");
     printf("   FB_PG_MODE              write or read, default write\n");
@@ -71,31 +78,54 @@ static int parse_arg(int ch, char* arg)
 }
 
 static void issue_next_write(osd_client* cli, server_t* server);
+static void issue_next_read(osd_client* cli, server_t* server);
 
-static void on_read_finished(int state, const std::string& data)
+static std::string object_name_at(uint32_t index)
+{
+    if (g_object_count <= 1) {
+        return g_object_name;
+    }
+    return g_object_name + "-" + std::to_string(index);
+}
+
+static void on_read_finished(osd_client* cli, server_t* server, std::string object_name,
+                             int state, const std::string& data)
 {
     if (state != err::E_SUCCESS) {
-        SPDK_ERRLOG("read object failed: %s(%d)\n", err::string_status(state), state);
-        std::raise(SIGINT);
+        SPDK_ERRLOG("read object %s failed: %s(%d)\n",
+                    object_name.c_str(), err::string_status(state), state);
+        fail_app();
         return;
     }
 
     if (data != g_payload) {
-        SPDK_ERRLOG("read verify failed, size %lu expect %lu\n", data.size(), g_payload.size());
-        std::raise(SIGINT);
+        SPDK_ERRLOG("read verify failed for object %s, size %lu expect %lu\n",
+                    object_name.c_str(), data.size(), g_payload.size());
+        fail_app();
         return;
     }
 
-    SPDK_NOTICELOG("snapshot_pg_stress read verify success, object=%s size=%lu\n",
-      g_object_name.c_str(), data.size());
-    spdk_app_stop(0);
+    g_done_count++;
+    if (g_done_count % 10 == 0 || g_done_count == g_object_count) {
+        SPDK_NOTICELOG("snapshot_pg_stress read progress %u/%u object=%s pg=%lu.%lu\n",
+          g_done_count, g_object_count, g_object_name.c_str(), server->pool_id, server->pg_id);
+    }
+
+    if (g_done_count >= g_object_count) {
+        SPDK_NOTICELOG("snapshot_pg_stress read verify success, object=%s count=%u size=%lu\n",
+          g_object_name.c_str(), g_object_count, data.size());
+        spdk_app_stop(0);
+        return;
+    }
+
+    issue_next_read(cli, server);
 }
 
 static void on_write_finished(osd_client* cli, server_t* server, int state)
 {
     if (state != err::E_SUCCESS) {
         SPDK_ERRLOG("write object failed: %s(%d)\n", err::string_status(state), state);
-        std::raise(SIGINT);
+        fail_app();
         return;
     }
 
@@ -117,10 +147,11 @@ static void on_write_finished(osd_client* cli, server_t* server, int state)
 
 static void issue_next_write(osd_client* cli, server_t* server)
 {
+    auto object_name = object_name_at(g_done_count % g_object_count);
     auto rc = cli->write_object(
       server->pool_id,
       server->pg_id,
-      g_object_name,
+      object_name,
       0,
       g_payload,
       [cli, server](int state) {
@@ -128,7 +159,26 @@ static void issue_next_write(osd_client* cli, server_t* server)
       });
     if (rc != err::E_SUCCESS) {
         SPDK_ERRLOG("write_object submit failed: %s(%d)\n", err::string_status(rc), rc);
-        std::raise(SIGINT);
+        fail_app();
+    }
+}
+
+static void issue_next_read(osd_client* cli, server_t* server)
+{
+    auto object_name = object_name_at(g_done_count % g_object_count);
+    auto callback_object_name = object_name;
+    auto rc = cli->read_object(
+      server->pool_id,
+      server->pg_id,
+      object_name,
+      0,
+      g_payload.size(),
+      [cli, server, callback_object_name = std::move(callback_object_name)](int state, const std::string& data) {
+          on_read_finished(cli, server, callback_object_name, state, data);
+      });
+    if (rc != err::E_SUCCESS) {
+        SPDK_ERRLOG("read_object submit failed: %s(%d)\n", err::string_status(rc), rc);
+        fail_app();
     }
 }
 
@@ -148,26 +198,15 @@ static void snapshot_pg_stress(void* arg1)
     auto connect_done = [cli, server](void*, int res) {
         if (res != err::E_SUCCESS) {
             SPDK_ERRLOG("connect failed: %s(%d)\n", err::string_status(res), res);
-            throw std::runtime_error{"connect failed"};
+            fail_app();
+            return;
         }
 
         auto op = [cli, server]() {
             if (g_op_type == SNAP_WRITE) {
                 issue_next_write(cli, server);
             } else {
-                auto rc = cli->read_object(
-                  server->pool_id,
-                  server->pg_id,
-                  g_object_name,
-                  0,
-                  g_payload.size(),
-                  [](int state, const std::string& data) {
-                      on_read_finished(state, data);
-                  });
-                if (rc != err::E_SUCCESS) {
-                    SPDK_ERRLOG("read_object submit failed: %s(%d)\n", err::string_status(rc), rc);
-                    std::raise(SIGINT);
-                }
+                issue_next_read(cli, server);
             }
         };
         cli->get_leader(server->node_id, server->pool_id, server->pg_id, op);
@@ -212,8 +251,17 @@ int main(int argc, char* argv[])
     if (const char* obj = std::getenv("FB_PG_OBJECT")) {
         g_object_name = obj;
     }
+    if (const char* objects = std::getenv("FB_PG_OBJECT_COUNT")) {
+        g_object_count = spdk_strtol(objects, 10);
+        if (g_object_count == 0) {
+            return -EINVAL;
+        }
+    }
     if (const char* writes = std::getenv("FB_PG_WRITES")) {
         g_write_count = spdk_strtol(writes, 10);
+        if (g_write_count == 0) {
+            return -EINVAL;
+        }
     }
     if (const char* size = std::getenv("FB_PG_IO_SIZE")) {
         g_payload.assign(spdk_strtol(size, 10), 0x5a);
