@@ -17,6 +17,7 @@
 #include "crc32.h"
 #include "extent_map.h"
 #include "mem_device_backend.h"
+#include "osd_store.h"
 #include "pg_store.h"
 #include "record.h"
 #include "segment_allocator.h"
@@ -642,6 +643,87 @@ void test_segment_allocator_no_double_alloc() {
   EXPECT_EQ(alloc.reserve(4096, &pfail, nullptr), -ENOSPC);
 }
 
+void test_osd_store_multi_pg_shared_allocator() {
+  const uint64_t seg = 256 * 1024;
+  mem_device_backend dev(4 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, seg);
+
+  sync_result r;
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 1, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  pg_store* a = osd.get_latest_pg(1, 0);
+  pg_store* b = osd.get_latest_pg(1, 1);
+  EXPECT_TRUE(a != nullptr && b != nullptr);
+  EXPECT_TRUE(a->allocator() == b->allocator());
+  EXPECT_EQ(osd.latest_epoch(1, 0), 1u);
+  EXPECT_EQ(osd.latest_epoch(1, 1), 1u);
+
+  std::vector<char> da(4096, 'A');
+  std::vector<char> db(4096, 'B');
+  r = {};
+  a->write("oa", 0, da.data(), da.size(), 1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  b->write("ob", 0, db.data(), db.size(), 1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  // Cross-PG isolation on live stores
+  std::vector<char> out(4096, 0);
+  r = {};
+  a->read("oa", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'A');
+  r = {};
+  a->read("ob", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(std::all_of(out.begin(), out.end(), [](char c) { return c == 0; }));
+
+  // Shared allocator should have consumed space once
+  EXPECT_TRUE(osd.allocator()->open_cursor() > 0 ||
+              osd.allocator()->sealed_count() > 0);
+
+  // Recover into a fresh osd_store on same device image
+  osd_store osd2(&dev, buffer_mode::heap, seg);
+  r = {};
+  osd2.recover(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(osd2.pg_count(), 2u);
+
+  pg_store* a2 = osd2.get_latest_pg(1, 0);
+  pg_store* b2 = osd2.get_latest_pg(1, 1);
+  EXPECT_TRUE(a2 && b2);
+  r = {};
+  a2->read("oa", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'A');
+  r = {};
+  b2->read("ob", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'B');
+
+  // delete_pg + recreate gets higher epoch; old records ignored for new epoch
+  r = {};
+  osd2.delete_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(osd2.latest_epoch(1, 0), 1u); // remembered
+  r = {};
+  osd2.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(osd2.latest_epoch(1, 0), 2u);
+  pg_store* a3 = osd2.get_latest_pg(1, 0);
+  EXPECT_TRUE(a3 != nullptr);
+  EXPECT_EQ(a3->id().store_epoch, 2u);
+  // New empty epoch does not see old object until written
+  r = {};
+  a3->read("oa", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(std::all_of(out.begin(), out.end(), [](char c) { return c == 0; }));
+}
+
 void test_pg_store_multi_segment_write_recover() {
   // Small segments force seal across writes.
   const uint64_t seg = 256 * 1024; // 256KiB
@@ -734,6 +816,7 @@ int main() {
   test_pg_store_checkpoint_then_discard_recover();
   test_segment_allocator_no_double_alloc();
   test_pg_store_multi_segment_write_recover();
+  test_osd_store_multi_pg_shared_allocator();
 
   if (g_failures != 0) {
     std::fprintf(stderr, "aos_m1_test: %d failure(s)\n", g_failures);
