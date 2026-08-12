@@ -56,6 +56,7 @@ spdk_bdev_backend        # spdk_bdev_write/read/flush_blocks
 | superblock A/B + manifest | 有：盘前部 `kMetaSize` 元数据区；epoch 表跨重启 |
 | write queue depth | `spdk_bdev_backend` 默认最多 32 路并发 `write_at`（可调） |
 | GC skeleton | `osd_store::gc_once`：无 live head 引用的 sealed segment 回 free |
+| raft snapshot (M3) | `create/release_raft_snapshot` O(1) pin；`read(..., raft_read_index)` 历史视图；version log |
 
 已删除错误方向：`file_segment`（POSIX pwrite）。
 
@@ -77,10 +78,10 @@ echo 2048 > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
 
 ## 下一步
 
-- GC rewrite / cleaner 搬迁仍存活 extent（真正空间回收到可写）
-- pg_store 用户写路径 pipeline（目前单 op 串行 queue）
+- image_snap_seq 读视图 / clone pin（M3 延伸）
+- install snapshot streaming reader（M5）
 - 接 osd_stm apply / raft（M4）
-- superblock torn 双写故障注入补强
+- GC rewrite 搬迁存活 extent
 
 ## vibe 约束
 
