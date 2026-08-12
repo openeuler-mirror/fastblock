@@ -137,6 +137,23 @@ public:
    */
   uint32_t gc_rewrite_once(bool persist = true);
 
+  /**
+   * Raft/OSD STM paths against the serving (active) generation (M4).
+   * raft_write_index is the raft log index (idempotency); image_snap_seq is
+   * image timeline (0 for plain object writes).
+   */
+  void apply(uint64_t pool_id, uint64_t pg_id, const std::string& object_name,
+             uint64_t offset, const void* data, uint64_t len,
+             uint64_t raft_write_index, uint64_t image_snap_seq, op_complete cb,
+             void* arg);
+
+  void read(uint64_t pool_id, uint64_t pg_id, const std::string& object_name,
+            uint64_t offset, void* buf, uint64_t len, op_complete cb, void* arg);
+
+  void remove(uint64_t pool_id, uint64_t pg_id, const std::string& object_name,
+              uint64_t raft_write_index, uint64_t image_snap_seq, op_complete cb,
+              void* arg);
+
 private:
   using pg_key = std::tuple<uint64_t, uint64_t, uint64_t>; // pool, pg, epoch
 
