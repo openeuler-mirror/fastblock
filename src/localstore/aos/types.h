@@ -36,6 +36,10 @@ enum class record_type : uint8_t {
   // pin payload: u64 LE term; unpin payload empty
   raft_snapshot_pin = 8,
   raft_snapshot_unpin = 9,
+  // image snapshot pin/unpin (design §10.2 / M3); image_snap_seq = snap seq
+  // pin/unpin payload empty
+  image_snapshot_pin = 10,
+  image_snapshot_unpin = 11,
   // metadata_delta intentionally unused in M1
 };
 

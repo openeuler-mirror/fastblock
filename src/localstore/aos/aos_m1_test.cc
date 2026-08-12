@@ -22,6 +22,7 @@
 #include "pg_store.h"
 #include "record.h"
 #include "segment_allocator.h"
+#include "snapshot_reader.h"
 #include "superblock.h"
 #include "types.h"
 
@@ -713,6 +714,112 @@ void test_pg_store_raft_snapshot_read() {
   }
 }
 
+void test_pg_store_image_snapshot_read() {
+  mem_device_backend dev(32 * 1024 * 1024);
+  pg_store store(&dev, pg_id{1, 0, 1});
+
+  std::vector<char> a(4096, 'A');
+  std::vector<char> b(4096, 'B');
+  std::vector<char> c(4096, 'C');
+  sync_result r;
+
+  // Write under image_snap_seq=5 (visible to snaps with seq >= 5)
+  store.write("img", 0, a.data(), a.size(), /*raft*/ 1, /*image*/ 5, on_done,
+              &r);
+  EXPECT_EQ(r.err, 0);
+
+  // Pin image snapshot at seq 5 (sees 'A')
+  r = {};
+  store.create_image_snapshot(5, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(store.image_snapshot_pin_count(5), 1u);
+  EXPECT_EQ(store.total_image_snapshot_pins(), 1u);
+
+  // Clone-style re-pin
+  r = {};
+  store.create_image_snapshot(5, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(store.image_snapshot_pin_count(5), 2u);
+
+  // Later write under image_snap_seq=10 (not visible at snap 5)
+  r = {};
+  store.write("img", 0, b.data(), b.size(), 2, 10, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  // Head sees B
+  std::vector<char> out(4096, 0);
+  r = {};
+  store.read("img", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'B');
+
+  // Image view at seq 5 sees A (raft_read_index=0, image_read_seq=5)
+  r = {};
+  out.assign(4096, 0);
+  store.read("img", 0, out.data(), 4096, /*raft*/ 0, /*image*/ 5, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'A');
+
+  // Image view at seq 10 sees B
+  r = {};
+  out.assign(4096, 0);
+  store.read("img", 0, out.data(), 4096, 0, 10, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'B');
+
+  // Unpin once (clone drop); pin remains for reader
+  r = {};
+  store.release_image_snapshot(5, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(store.image_snapshot_pin_count(5), 1u);
+
+  // Discard half under seq 15, then overwrite
+  r = {};
+  store.discard("img", 0, 4096, 3, 15, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  store.write("img", 0, c.data(), c.size(), 4, 15, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  // Snap 5 still A; head is C
+  r = {};
+  out.assign(4096, 0);
+  store.read("img", 0, out.data(), 4096, 0, 5, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'A');
+  r = {};
+  out.assign(4096, 0);
+  store.read("img", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'C');
+
+  // Full unpin
+  r = {};
+  store.release_image_snapshot(5, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(store.image_snapshot_pin_count(5), 0u);
+  EXPECT_EQ(store.total_image_snapshot_pins(), 0u);
+
+  // Recover: version log still serves image view; pins were released
+  {
+    pg_store store2(&dev, pg_id{1, 0, 1});
+    r = {};
+    store2.recover(on_done, &r);
+    EXPECT_EQ(r.err, 0);
+    EXPECT_EQ(store2.image_snapshot_pin_count(5), 0u);
+    r = {};
+    out.assign(4096, 0);
+    store2.read("img", 0, out.data(), 4096, 0, 5, on_done, &r);
+    EXPECT_EQ(r.err, 0);
+    EXPECT_EQ(out[0], 'A');
+    r = {};
+    out.assign(4096, 0);
+    store2.read("img", 0, out.data(), 4096, on_done, &r);
+    EXPECT_EQ(r.err, 0);
+    EXPECT_EQ(out[0], 'C');
+  }
+}
+
 void test_segment_allocator_free_sealed() {
   segment_allocator alloc(4ull * 1024 * 1024, 1024 * 1024, 4096);
   uint64_t p = 0;
@@ -780,6 +887,201 @@ void test_osd_store_gc_once() {
   pg->read("keep", 0, out.data(), 4096, on_done, &r);
   EXPECT_EQ(r.err, 0);
   EXPECT_EQ(out[0], 'X');
+}
+
+void test_pg_snapshot_reader_stream() {
+  mem_device_backend dev(16 * 1024 * 1024);
+  pg_store store(&dev, pg_id{1, 0, 1});
+
+  std::vector<char> a(4096, 'A');
+  std::vector<char> b(4096, 'B');
+  sync_result r;
+  store.write("o1", 0, a.data(), a.size(), 5, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  store.write("o2", 0, b.data(), b.size(), 6, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  // Overwrite o1 after snapshot index 6 — snapshot@6 still sees A.
+  std::vector<char> c(4096, 'C');
+  r = {};
+  store.write("o1", 0, c.data(), c.size(), 10, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  struct open_pack {
+    int err{-1};
+    pg_snapshot_reader* reader{nullptr};
+  } op;
+  pg_snapshot_reader::open(
+      &store, /*raft*/ 6, /*term*/ 1,
+      [](void* a, int err, pg_snapshot_reader* reader) {
+        auto* p = static_cast<open_pack*>(a);
+        p->err = err;
+        p->reader = reader;
+      },
+      &op);
+  EXPECT_EQ(op.err, 0);
+  EXPECT_TRUE(op.reader != nullptr);
+  EXPECT_TRUE(store.snapshot_pin_count(6) >= 1u);
+  EXPECT_TRUE(op.reader->total_chunks() >= 2u);
+
+  std::vector<char> buf(4096, 0);
+  int chunks = 0;
+  char seen_o1 = 0;
+  char seen_o2 = 0;
+  for (;;) {
+    struct {
+      int err{-1};
+      bool done{false};
+      std::string name;
+      char first{0};
+    } ch;
+    op.reader->next_chunk(
+        buf.data(), buf.size(),
+        [](void* a, int err, bool done, const char* name, uint64_t /*off*/,
+           uint64_t /*len*/) {
+          auto* p = static_cast<decltype(ch)*>(a);
+          p->err = err;
+          p->done = done;
+          if (!done && name != nullptr) {
+            p->name = name;
+          }
+        },
+        &ch);
+    // Copy first byte before next overwrites buf — next_chunk already filled buf
+    if (ch.err == 0 && !ch.done) {
+      ch.first = buf[0];
+    }
+    EXPECT_EQ(ch.err, 0);
+    if (ch.done) {
+      break;
+    }
+    ++chunks;
+    if (ch.name == "o1") {
+      seen_o1 = ch.first;
+    }
+    if (ch.name == "o2") {
+      seen_o2 = ch.first;
+    }
+  }
+  EXPECT_TRUE(chunks >= 2);
+  EXPECT_EQ(seen_o1, 'A');
+  EXPECT_EQ(seen_o2, 'B');
+
+  r = {};
+  op.reader->close(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  delete op.reader;
+  EXPECT_EQ(store.snapshot_pin_count(6), 0u);
+}
+
+void test_pg_store_rewrite_extent() {
+  mem_device_backend dev(16 * 1024 * 1024);
+  pg_store store(&dev, pg_id{1, 0, 1});
+
+  std::vector<char> a(4096, 'A');
+  sync_result r;
+  store.write("rw", 0, a.data(), a.size(), 1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  // Collect head extent and rewrite it to a new physical location.
+  std::vector<std::tuple<std::string, uint64_t, uint64_t>> targets;
+  store.collect_head_extents_in_range(0, dev.capacity(), &targets);
+  EXPECT_EQ(targets.size(), 1u);
+
+  r = {};
+  store.rewrite_extent("rw", 0, 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  std::vector<char> out(4096, 0);
+  r = {};
+  store.read("rw", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'A');
+
+  // Recover must still see rewritten data via gc_rewrite record.
+  {
+    pg_store store2(&dev, pg_id{1, 0, 1});
+    r = {};
+    store2.recover(on_done, &r);
+    EXPECT_EQ(r.err, 0);
+    r = {};
+    out.assign(4096, 0);
+    store2.read("rw", 0, out.data(), 4096, on_done, &r);
+    EXPECT_EQ(r.err, 0);
+    EXPECT_EQ(out[0], 'A');
+  }
+}
+
+void test_osd_store_gc_rewrite_once() {
+  // Small segments force early seal; survivors stay on sealed segment 0.
+  const uint64_t seg = 32 * 1024;
+  mem_device_backend dev(8 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, seg);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  pg_store* pg = osd.get_latest_pg(1, 0);
+  EXPECT_TRUE(pg != nullptr);
+
+  std::vector<char> a(4096, 'A');
+  r = {};
+  pg->write("keep0", 0, a.data(), a.size(), 1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  // Pad until segment 0 is sealed; keep0 remains live on sealed region.
+  std::vector<char> filler(4096, 'Z');
+  int idx = 0;
+  while (osd.allocator()->sealed_count() < 1 && idx < 80) {
+    r = {};
+    pg->write("tmp" + std::to_string(idx), 0, filler.data(), filler.size(),
+              static_cast<uint64_t>(10 + idx), 0, on_done, &r);
+    EXPECT_EQ(r.err, 0);
+    ++idx;
+  }
+  EXPECT_TRUE(osd.allocator()->sealed_count() >= 1u);
+
+  for (int i = 0; i < idx; ++i) {
+    r = {};
+    pg->remove("tmp" + std::to_string(i), 1000 + static_cast<uint64_t>(i), 0,
+               on_done, &r);
+    EXPECT_EQ(r.err, 0);
+  }
+
+  // Direct rewrite of keep0 must succeed (validates rewrite path).
+  r = {};
+  pg->rewrite_extent("keep0", 0, 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  // gc_rewrite_once should rewrite any remaining sealed live heads (or free dead).
+  const uint32_t n = osd.gc_rewrite_once(true);
+  (void)n;
+
+  std::vector<char> out(4096, 0);
+  r = {};
+  pg->read("keep0", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'A');
+
+  {
+    osd_store osd2(&dev, buffer_mode::heap, seg);
+    r = {};
+    osd2.recover(on_done, &r);
+    EXPECT_EQ(r.err, 0);
+    pg_store* pg2 = osd2.get_latest_pg(1, 0);
+    EXPECT_TRUE(pg2 != nullptr);
+    if (pg2 == nullptr) {
+      return;
+    }
+    r = {};
+    out.assign(4096, 0);
+    pg2->read("keep0", 0, out.data(), 4096, on_done, &r);
+    EXPECT_EQ(r.err, 0);
+    EXPECT_EQ(out[0], 'A');
+  }
 }
 
 void test_superblock_manifest_codec() {
@@ -1010,8 +1312,12 @@ int main() {
   test_segment_allocator_no_double_alloc();
   test_pg_store_multi_segment_write_recover();
   test_pg_store_raft_snapshot_read();
+  test_pg_store_image_snapshot_read();
   test_segment_allocator_free_sealed();
   test_osd_store_gc_once();
+  test_pg_snapshot_reader_stream();
+  test_pg_store_rewrite_extent();
+  test_osd_store_gc_rewrite_once();
   test_superblock_manifest_codec();
   test_osd_store_multi_pg_shared_allocator();
 

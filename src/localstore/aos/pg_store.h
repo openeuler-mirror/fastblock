@@ -23,6 +23,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 
@@ -92,16 +93,25 @@ public:
 
   /**
    * Read object view. Missing ranges are zero-filled.
-   * raft_read_index == 0: head; else snapshot view at that raft index (M3).
+   * raft_read_index == 0 && image_read_seq == 0: head.
+   * raft_read_index > 0: raft snapshot view at that index (M3).
+   * image_read_seq > 0: image snapshot view (ops with image_snap_seq <= seq).
+   * Both non-zero: intersection (ops satisfying both filters).
    * buf is caller-owned; may be non-DMA (staged through internal buffer).
    */
   void read(const std::string& object_name, uint64_t offset, void* buf,
             uint64_t len, op_complete cb, void* arg) {
-    read(object_name, offset, buf, len, /*raft_read_index=*/0, std::move(cb),
-         arg);
+    read(object_name, offset, buf, len, /*raft_read_index=*/0,
+         /*image_read_seq=*/0, std::move(cb), arg);
   }
   void read(const std::string& object_name, uint64_t offset, void* buf,
-            uint64_t len, uint64_t raft_read_index, op_complete cb, void* arg);
+            uint64_t len, uint64_t raft_read_index, op_complete cb, void* arg) {
+    read(object_name, offset, buf, len, raft_read_index, /*image_read_seq=*/0,
+         std::move(cb), arg);
+  }
+  void read(const std::string& object_name, uint64_t offset, void* buf,
+            uint64_t len, uint64_t raft_read_index, uint64_t image_read_seq,
+            op_complete cb, void* arg);
 
   void remove(const std::string& object_name, uint64_t raft_apply_index,
               uint64_t image_snap_seq, op_complete cb, void* arg);
@@ -116,6 +126,15 @@ public:
                op_complete cb, void* arg);
 
   void flush(op_complete cb, void* arg);
+
+  /**
+   * GC rewrite one head extent (design §11.4): read old payload, append
+   * gc_rewrite record to a new physical location, update head + version log
+   * phys pointers only (does not advance raft/image version).
+   * object_name + logical (offset,len) must match a live head extent.
+   */
+  void rewrite_extent(const std::string& object_name, uint64_t logical_offset,
+                      uint64_t len, op_complete cb, void* arg);
 
   /**
    * O(1) raft snapshot pin (design M3): append pin record + flush, pin index.
@@ -133,6 +152,25 @@ public:
 
   uint32_t snapshot_pin_count(uint64_t raft_apply_index) const;
   uint32_t total_snapshot_pins() const { return total_snapshot_pins_; }
+
+  /**
+   * O(1) image snapshot pin (design §10.2 / M3): append pin + flush.
+   * Control plane / clone may re-pin; pin_count increments.
+   */
+  void create_image_snapshot(uint64_t image_snap_seq, op_complete cb,
+                             void* arg);
+
+  /**
+   * Release one pin on image_snap_seq. When count hits 0, GC may reclaim
+   * extents only needed by that image snapshot (after all pins gone).
+   */
+  void release_image_snapshot(uint64_t image_snap_seq, op_complete cb,
+                              void* arg);
+
+  uint32_t image_snapshot_pin_count(uint64_t image_snap_seq) const;
+  uint32_t total_image_snapshot_pins() const {
+    return total_image_snapshot_pins_;
+  }
 
   /**
    * Append a durable checkpoint_marker (ObjectMap snapshot) and flush.
@@ -164,12 +202,29 @@ public:
   bool busy() const { return busy_; }
 
   /**
-   * Visit every live physical extent. Head always; if any snapshot pin is
-   * held, also all historical put extents (conservative pin for GC).
+   * Visit every live physical extent. Head always; if any raft/image snapshot
+   * pin is held, also all historical put extents (conservative pin for GC).
    */
   void for_each_live_extent(
       const std::function<void(uint64_t phys_offset, uint64_t length)>& fn)
       const;
+
+  /**
+   * Collect live head extents whose physical range intersects
+   * [phys_begin, phys_end). Output: (object_name, logical_offset, len).
+   */
+  void collect_head_extents_in_range(
+      uint64_t phys_begin, uint64_t phys_end,
+      std::vector<std::tuple<std::string, uint64_t, uint64_t>>* out) const;
+
+  /**
+   * Visit each non-empty snapshot object view (for install-snapshot streaming).
+   * Uses view_at(raft_read_index, image_read_seq); skips deleted/empty names.
+   */
+  void for_each_snapshot_object(
+      uint64_t raft_read_index, uint64_t image_read_seq,
+      const std::function<void(const std::string& name,
+                               const extent_map& view)>& fn) const;
 
 private:
   // In-memory version log for snapshot reads (M3).
@@ -180,6 +235,7 @@ private:
     uint64_t offset{0};
     uint64_t len{0};
     uint64_t raft_index{0};
+    uint64_t image_seq{0};
   };
 
   struct object_state {
@@ -199,6 +255,7 @@ private:
   struct discard_req;
   struct checkpoint_req;
   struct snap_req;
+  struct rewrite_req;
   struct recover_req;
 
   object_state* find_object(const std::string& name);
@@ -208,12 +265,19 @@ private:
   checkpoint_snapshot build_snapshot(uint64_t generation) const;
   void clear_maps();
 
-  // Build extent_map as of raft_read_index (0 => head). deleted => empty.
-  extent_map view_at(const object_state& obj, uint64_t raft_read_index) const;
+  // Build extent_map for snapshot view. Both 0 => head. deleted => empty.
+  extent_map view_at(const object_state& obj, uint64_t raft_read_index,
+                     uint64_t image_read_seq = 0) const;
   void record_version_put(object_state* obj, const extent& e);
   void record_version_discard(object_state* obj, uint64_t off, uint64_t len,
-                              uint64_t raft_index);
-  void record_version_remove(object_state* obj, uint64_t raft_index);
+                              uint64_t raft_index, uint64_t image_seq);
+  void record_version_remove(object_state* obj, uint64_t raft_index,
+                             uint64_t image_seq);
+
+  void pin_snapshot_index(std::map<uint64_t, uint32_t>* pins,
+                          uint32_t* total, uint64_t index);
+  void unpin_snapshot_index(std::map<uint64_t, uint32_t>* pins,
+                            uint32_t* total, uint64_t index);
 
   void finish_op(op_complete cb, void* arg, int err);
   void enqueue_or_run(std::function<void()> op);
@@ -241,6 +305,12 @@ private:
   static void snap_after_append(void* arg, uint64_t phys, int err);
   static void snap_after_flush(void* arg, int err);
 
+  static void rewrite_after_read(void* arg, int err);
+  static void rewrite_after_append(void* arg, uint64_t phys, int err);
+  static void rewrite_after_flush(void* arg, int err);
+  void apply_rewrite_phys(uint64_t object_id, uint64_t logical_offset,
+                          uint64_t len, uint64_t new_data_phys);
+
   static void read_extent_done(void* arg, int err);
 
   static void recover_read_done(void* arg, int err);
@@ -262,6 +332,9 @@ private:
   // raft_apply_index -> pin count
   std::map<uint64_t, uint32_t> snapshot_pins_;
   uint32_t total_snapshot_pins_{0};
+  // image_snap_seq -> pin count (clone / image snapshot reader)
+  std::map<uint64_t, uint32_t> image_snapshot_pins_;
+  uint32_t total_image_snapshot_pins_{0};
 
   void* scratch_ptr_{nullptr};
   uint64_t scratch_cap_{0};
