@@ -45,9 +45,8 @@ enum class buffer_mode {
  * - Durability: user write/remove complete only after backend flush (§8).
  * - Idempotency key: (object_id, offset, len, raft_apply_index).
  *
- * M1: head only, no image pin / GC / multi-segment.
- * Checkpoint: append checkpoint_marker with ObjectMap payload (§12.1);
- * recovery loads latest complete checkpoint then replays the tail.
+ * Checkpoint: append checkpoint_marker with ObjectMap payload (§12.1).
+ * M3: raft snapshot pin is O(1); snapshot read uses per-object version log.
  */
 class pg_store {
 public:
@@ -92,11 +91,17 @@ public:
              op_complete cb, void* arg);
 
   /**
-   * Read head view. Missing ranges are zero-filled.
+   * Read object view. Missing ranges are zero-filled.
+   * raft_read_index == 0: head; else snapshot view at that raft index (M3).
    * buf is caller-owned; may be non-DMA (staged through internal buffer).
    */
   void read(const std::string& object_name, uint64_t offset, void* buf,
-            uint64_t len, op_complete cb, void* arg);
+            uint64_t len, op_complete cb, void* arg) {
+    read(object_name, offset, buf, len, /*raft_read_index=*/0, std::move(cb),
+         arg);
+  }
+  void read(const std::string& object_name, uint64_t offset, void* buf,
+            uint64_t len, uint64_t raft_read_index, op_complete cb, void* arg);
 
   void remove(const std::string& object_name, uint64_t raft_apply_index,
               uint64_t image_snap_seq, op_complete cb, void* arg);
@@ -111,6 +116,23 @@ public:
                op_complete cb, void* arg);
 
   void flush(op_complete cb, void* arg);
+
+  /**
+   * O(1) raft snapshot pin (design M3): append pin record + flush, pin index.
+   * Does not scan objects. pin_count(index) increments (idempotent re-pin OK).
+   */
+  void create_raft_snapshot(uint64_t raft_apply_index, uint64_t raft_term,
+                            op_complete cb, void* arg);
+
+  /**
+   * Release one pin on raft_apply_index. When pin_count hits 0, GC may reclaim
+   * extents only needed by that snapshot.
+   */
+  void release_raft_snapshot(uint64_t raft_apply_index, op_complete cb,
+                             void* arg);
+
+  uint32_t snapshot_pin_count(uint64_t raft_apply_index) const;
+  uint32_t total_snapshot_pins() const { return total_snapshot_pins_; }
 
   /**
    * Append a durable checkpoint_marker (ObjectMap snapshot) and flush.
@@ -142,19 +164,29 @@ public:
   bool busy() const { return busy_; }
 
   /**
-   * Visit every live head extent (not deleted objects). Used by GC to decide
-   * whether a physical segment still has references.
-   * fn(phys_offset, length) — absolute device offsets.
+   * Visit every live physical extent. Head always; if any snapshot pin is
+   * held, also all historical put extents (conservative pin for GC).
    */
   void for_each_live_extent(
       const std::function<void(uint64_t phys_offset, uint64_t length)>& fn)
       const;
 
 private:
+  // In-memory version log for snapshot reads (M3).
+  struct version_op {
+    enum class kind : uint8_t { put = 1, discard = 2, remove = 3 };
+    kind k{kind::put};
+    extent e{};
+    uint64_t offset{0};
+    uint64_t len{0};
+    uint64_t raft_index{0};
+  };
+
   struct object_state {
     std::string name;
     extent_map head;
     bool deleted{false};
+    std::vector<version_op> versions;
     // key = (offset, len) -> last applied raft_apply_index
     std::map<std::pair<uint64_t, uint64_t>, uint64_t> applied_writes;
     std::map<std::pair<uint64_t, uint64_t>, uint64_t> applied_discards;
@@ -166,6 +198,7 @@ private:
   struct remove_req;
   struct discard_req;
   struct checkpoint_req;
+  struct snap_req;
   struct recover_req;
 
   object_state* find_object(const std::string& name);
@@ -174,6 +207,13 @@ private:
 
   checkpoint_snapshot build_snapshot(uint64_t generation) const;
   void clear_maps();
+
+  // Build extent_map as of raft_read_index (0 => head). deleted => empty.
+  extent_map view_at(const object_state& obj, uint64_t raft_read_index) const;
+  void record_version_put(object_state* obj, const extent& e);
+  void record_version_discard(object_state* obj, uint64_t off, uint64_t len,
+                              uint64_t raft_index);
+  void record_version_remove(object_state* obj, uint64_t raft_index);
 
   void finish_op(op_complete cb, void* arg, int err);
   void enqueue_or_run(std::function<void()> op);
@@ -198,6 +238,9 @@ private:
   static void checkpoint_after_append(void* arg, uint64_t phys, int err);
   static void checkpoint_after_flush(void* arg, int err);
 
+  static void snap_after_append(void* arg, uint64_t phys, int err);
+  static void snap_after_flush(void* arg, int err);
+
   static void read_extent_done(void* arg, int err);
 
   static void recover_read_done(void* arg, int err);
@@ -215,6 +258,10 @@ private:
 
   std::unordered_map<std::string, uint64_t> name_to_id_;
   std::unordered_map<uint64_t, object_state> objects_;
+
+  // raft_apply_index -> pin count
+  std::map<uint64_t, uint32_t> snapshot_pins_;
+  uint32_t total_snapshot_pins_{0};
 
   void* scratch_ptr_{nullptr};
   uint64_t scratch_cap_{0};
