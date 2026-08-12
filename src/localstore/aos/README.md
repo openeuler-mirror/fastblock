@@ -61,6 +61,7 @@ spdk_bdev_backend        # spdk_bdev_write/read/flush_blocks
 | image snapshot (M3) | `create/release_image_snapshot` O(1) pin；`read(..., raft=0, image_read_seq)` 按 `image_snap_seq` 过滤 version log |
 | snapshot reader (M5) | `pg_snapshot_reader`：pin + 按 extent 流式读 snapshot 视图（install snapshot 发送端骨架） |
 | snapshot ingest (M5) | `snapshot_ingest`：idle→ingesting→sealed→catchup→idle；staging epoch + CRC chunk + abort |
+| osd_store apply (M4) | `apply` / `read` / `remove` 对 serving PG；`osd_stm::attach_aos` 可切 blob/aos/shadow |
 
 已删除错误方向：`file_segment`（POSIX pwrite）。
 
@@ -82,9 +83,9 @@ echo 2048 > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
 
 ## 下一步
 
-- 接 osd_stm apply / raft + install snapshot RPC（M4）
+- 进程内创建/恢复 AOS 设备并在 `partition_manager` 里 `attach_aos`（M4 落地）
+- install snapshot RPC 接 reader/ingest（M5）
 - GC 限速、live ratio victim 选择、pin 时间线精细化（M6 完善）
-- ingest 与 manifest active/staging generation 字段对齐
 
 ## vibe 约束
 
