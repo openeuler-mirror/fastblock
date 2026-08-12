@@ -9,6 +9,7 @@ compile_library(
     record.cc
     extent_map.cc
     checkpoint.cc
+    superblock.cc
     segment_allocator.cc
     segment.cc
     spdk_bdev_backend.cc

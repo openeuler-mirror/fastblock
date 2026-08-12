@@ -1022,21 +1022,30 @@ void pg_store::recover_process_buffer(recover_req* req) {
 
   const uint64_t seg_size =
       alloc_ ? alloc_->segment_size() : backend_->capacity();
+  const uint64_t region_base = alloc_ ? alloc_->region_base() : 0;
+  const uint64_t region_end =
+      region_base + (alloc_ ? alloc_->capacity() : backend_->capacity());
 
   // Skip pad hole to next segment boundary (multi-segment layout).
   auto skip_to_next_segment = [&]() -> bool {
-    if (seg_size == 0 || seg_size >= backend_->capacity()) {
+    if (seg_size == 0 || alloc_ == nullptr) {
       return false;
     }
-    uint64_t target;
-    if (req->last_good % seg_size == 0) {
-      // At boundary with bad magic: empty segment start or pad — skip whole seg.
-      target = req->last_good + seg_size;
-    } else {
-      target = ((req->last_good / seg_size) + 1) * seg_size;
+    if (seg_size >= alloc_->capacity()) {
+      return false;
     }
-    if (target >= backend_->capacity() ||
-        target >= backend_->write_pointer()) {
+    if (req->last_good < region_base) {
+      return false;
+    }
+    const uint64_t rel = req->last_good - region_base;
+    uint64_t target_rel;
+    if (rel % seg_size == 0) {
+      target_rel = rel + seg_size;
+    } else {
+      target_rel = ((rel / seg_size) + 1) * seg_size;
+    }
+    const uint64_t target = region_base + target_rel;
+    if (target >= region_end || target >= backend_->write_pointer()) {
       return false;
     }
     req->last_good = target;
@@ -1069,9 +1078,11 @@ void pg_store::recover_process_buffer(recover_req* req) {
         return 2;
       }
       // Do not cross segment boundary with a single record.
-      if (seg_size > 0 && seg_size < backend_->capacity()) {
+      if (seg_size > 0 && alloc_ && seg_size < alloc_->capacity() &&
+          req->last_good >= region_base) {
+        const uint64_t rel = req->last_good - region_base;
         const uint64_t seg_end =
-            ((req->last_good / seg_size) + 1) * seg_size;
+            region_base + ((rel / seg_size) + 1) * seg_size;
         if (req->last_good + aligned > seg_end) {
           if (skip_to_next_segment()) {
             return 3;

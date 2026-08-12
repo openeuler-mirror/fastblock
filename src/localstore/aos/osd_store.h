@@ -11,8 +11,10 @@
 #pragma once
 
 #include "device_backend.h"
+#include "layout.h"
 #include "pg_store.h"
 #include "segment_allocator.h"
+#include "superblock.h"
 #include "types.h"
 
 #include <cstdint>
@@ -27,10 +29,12 @@ namespace fastblock::aos {
 /**
  * Multi-PG facade sharing one segment_allocator + device (design §4 / M2).
  *
- * - create_pg allocates a fresh store_epoch for (pool_id, pg_id).
- * - All PG writes interleave on the shared open segment.
- * - recover() single-pass scans the device and routes records by
- *   (pool_id, pg_id, store_epoch).
+ * Device layout (see layout.h):
+ *   superblock A/B | manifest slots | data segments
+ *
+ * - format() writes empty superblock + empty manifest.
+ * - create_pg / delete_pg update in-memory epoch table and persist_manifest.
+ * - recover() loads superblock+manifest then single-pass scans the data region.
  *
  * SPDK: all methods are reactor-thread only; completions via callback.
  */
@@ -39,8 +43,8 @@ public:
   using op_complete = device_backend::op_complete;
 
   /**
-   * segment_size: 0 => single segment over full capacity.
-   * backend lifetime must exceed osd_store and all child pg_store.
+   * segment_size: 0 => single data segment over full data region.
+   * Uses fixed metadata front (kMetaSize); backend capacity must be larger.
    */
   osd_store(device_backend* backend, buffer_mode mode = buffer_mode::heap,
             uint64_t segment_size = 0);
@@ -54,6 +58,11 @@ public:
   const segment_allocator* allocator() const { return alloc_.get(); }
   std::shared_ptr<segment_allocator> shared_allocator() const { return alloc_; }
 
+  uint64_t data_offset() const { return data_offset_; }
+  uint64_t data_length() const { return data_length_; }
+  uint64_t superblock_generation() const { return sb_generation_; }
+  uint64_t manifest_generation() const { return manifest_generation_; }
+
   size_t pg_count() const { return pgs_.size(); }
 
   // Latest store_epoch for (pool, pg), or 0 if none.
@@ -63,21 +72,30 @@ public:
   pg_store* get_latest_pg(uint64_t pool_id, uint64_t pg_id);
 
   /**
-   * Create a new PG instance with store_epoch = latest+1.
-   * Callback: err=0, then get_latest_pg(pool,pg) is valid.
+   * Write empty superblock A/B + empty manifest. Required once before first use
+   * on a fresh device (or after wipe).
+   */
+  void format(op_complete cb, void* arg);
+
+  /**
+   * Persist epoch table + allocator open cursor into the next manifest slot
+   * and bump superblock (dual-write).
+   */
+  void persist_manifest(op_complete cb, void* arg);
+
+  /**
+   * Create a new PG instance with store_epoch = latest+1, then persist_manifest.
    */
   void create_pg(uint64_t pool_id, uint64_t pg_id, op_complete cb, void* arg);
 
   /**
-   * Drop in-memory PG (all epochs for pool+pg). Does not free on-disk
-   * segments (GC later). Future create_pg gets a higher epoch so old
-   * records are ignored on recover.
+   * Drop in-memory PG instances. Keeps active_epoch in table so recreate
+   * gets a higher epoch. Persists manifest.
    */
   void delete_pg(uint64_t pool_id, uint64_t pg_id, op_complete cb, void* arg);
 
   /**
-   * Rebuild all PGs from device image (single scan, apply checkpoints).
-   * Discovers (pool,pg,epoch) from records.
+   * Load superblock + latest manifest, then rebuild PGs from data region.
    */
   void recover(op_complete cb, void* arg);
 
@@ -86,17 +104,27 @@ private:
 
   pg_store* ensure_pg(uint64_t pool_id, uint64_t pg_id, uint64_t epoch);
   void clear_all_pgs();
+  manifest build_manifest() const;
+  void apply_manifest_epochs(const manifest& m);
 
+  struct meta_req;
   struct recover_req;
 
-  static void recover_read_done(void* arg, int err);
+  void format_continue(meta_req* req);
+  void persist_continue(meta_req* req);
+  void recover_after_meta(recover_req* req);
   void recover_process(recover_req* req);
 
   device_backend* backend_{nullptr};
   buffer_mode mode_{buffer_mode::heap};
+  uint64_t configured_segment_size_{0};
+  uint64_t data_offset_{kMetaSize};
+  uint64_t data_length_{0};
+  uint64_t sb_generation_{0};
+  uint64_t manifest_generation_{0};
   std::shared_ptr<segment_allocator> alloc_;
   std::map<pg_key, std::unique_ptr<pg_store>> pgs_;
-  // (pool, pg) -> max epoch ever created in this process
+  // (pool, pg) -> max epoch ever created (from manifest + create_pg)
   std::map<std::pair<uint64_t, uint64_t>, uint64_t> latest_epoch_;
 };
 

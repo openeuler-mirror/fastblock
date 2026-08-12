@@ -39,13 +39,20 @@ public:
       std::numeric_limits<uint32_t>::max();
 
   /**
-   * capacity and segment_size must be block-aligned; segment_size > 0.
-   * If segment_size > capacity, it is clamped to capacity.
+   * region_base: absolute byte offset of segment 0 on the device.
+   * capacity: usable data bytes from region_base (not including metadata).
+   * segment_size: fixed segment bytes; if 0 or > capacity, clamped to capacity.
    * If capacity % segment_size != 0, trailing partial region is unused.
    */
-  segment_allocator(uint64_t capacity, uint64_t segment_size,
-                    uint32_t block_size);
+  segment_allocator(uint64_t region_base, uint64_t capacity,
+                    uint64_t segment_size, uint32_t block_size);
 
+  // region_base = 0 (legacy single-region layout).
+  segment_allocator(uint64_t capacity, uint64_t segment_size,
+                    uint32_t block_size)
+      : segment_allocator(0, capacity, segment_size, block_size) {}
+
+  uint64_t region_base() const { return region_base_; }
   uint64_t capacity() const { return capacity_; }
   uint64_t segment_size() const { return segment_size_; }
   uint32_t block_size() const { return block_size_; }
@@ -58,8 +65,9 @@ public:
   uint32_t free_count() const;
   uint32_t sealed_count() const;
 
+  // Absolute device offset of segment id.
   uint64_t segment_base(uint32_t id) const {
-    return static_cast<uint64_t>(id) * segment_size_;
+    return region_base_ + static_cast<uint64_t>(id) * segment_size_;
   }
 
   // Bytes left in the open segment (0 if none open).
@@ -98,6 +106,7 @@ public:
 private:
   int open_free_unlocked();
 
+  uint64_t region_base_{0};
   uint64_t capacity_{0};
   uint64_t segment_size_{0};
   uint32_t block_size_{0};

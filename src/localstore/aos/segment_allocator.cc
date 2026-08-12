@@ -14,13 +14,14 @@
 
 namespace fastblock::aos {
 
-segment_allocator::segment_allocator(uint64_t capacity, uint64_t segment_size,
-                                     uint32_t block_size)
-    : capacity_(capacity), segment_size_(segment_size),
-      block_size_(block_size) {
+segment_allocator::segment_allocator(uint64_t region_base, uint64_t capacity,
+                                     uint64_t segment_size, uint32_t block_size)
+    : region_base_(region_base), capacity_(capacity),
+      segment_size_(segment_size), block_size_(block_size) {
   if (block_size_ == 0) {
     block_size_ = 4096;
   }
+  region_base_ = (region_base_ / block_size_) * block_size_;
   if (segment_size_ == 0 || segment_size_ > capacity_) {
     segment_size_ = capacity_ == 0 ? block_size_ : capacity_;
   }
@@ -152,12 +153,15 @@ void segment_allocator::note_written(uint64_t phys_offset, uint64_t len) {
   if (len == 0 || segment_size_ == 0 || states_.empty()) {
     return;
   }
-  const uint64_t end = phys_offset + len;
-  const uint32_t first =
-      static_cast<uint32_t>(phys_offset / segment_size_);
-  const uint32_t last = end == 0
-                            ? first
-                            : static_cast<uint32_t>((end - 1) / segment_size_);
+  if (phys_offset < region_base_) {
+    return;
+  }
+  const uint64_t rel = phys_offset - region_base_;
+  const uint64_t end_rel = rel + len;
+  const uint32_t first = static_cast<uint32_t>(rel / segment_size_);
+  const uint32_t last =
+      end_rel == 0 ? first
+                   : static_cast<uint32_t>((end_rel - 1) / segment_size_);
   for (uint32_t id = first; id <= last && id < states_.size(); ++id) {
     if (states_[id] == segment_state::free) {
       states_[id] = segment_state::sealed;
@@ -165,7 +169,6 @@ void segment_allocator::note_written(uint64_t phys_offset, uint64_t len) {
   }
   // Highest touched segment becomes open with cursor at local end.
   if (last < states_.size()) {
-    // Sealed all lower that we marked; reopen last as open.
     for (uint32_t id = first; id < last && id < states_.size(); ++id) {
       if (states_[id] != segment_state::bad) {
         states_[id] = segment_state::sealed;
@@ -174,7 +177,8 @@ void segment_allocator::note_written(uint64_t phys_offset, uint64_t len) {
     states_[last] = segment_state::open;
     open_id_ = last;
     const uint64_t base = segment_base(last);
-    open_cursor_ = end > base ? end - base : 0;
+    const uint64_t end_abs = phys_offset + len;
+    open_cursor_ = end_abs > base ? end_abs - base : 0;
     if (open_cursor_ > segment_size_) {
       open_cursor_ = segment_size_;
       states_[last] = segment_state::sealed;
@@ -185,13 +189,15 @@ void segment_allocator::note_written(uint64_t phys_offset, uint64_t len) {
 }
 
 void segment_allocator::set_open_cursor_abs(uint64_t abs_end) {
-  if (open_id_ == kInvalidSeg || segment_size_ == 0) {
-    // Try map abs_end into a segment and open it.
-    if (abs_end == 0 || states_.empty()) {
+  if (abs_end <= region_base_ || states_.empty() || segment_size_ == 0) {
+    return;
+  }
+  const uint64_t rel_end = abs_end - region_base_;
+  if (open_id_ == kInvalidSeg) {
+    if (rel_end == 0) {
       return;
     }
-    const uint32_t id =
-        static_cast<uint32_t>((abs_end - 1) / segment_size_);
+    const uint32_t id = static_cast<uint32_t>((rel_end - 1) / segment_size_);
     if (id >= states_.size()) {
       return;
     }
@@ -203,6 +209,9 @@ void segment_allocator::set_open_cursor_abs(uint64_t abs_end) {
     states_[id] = segment_state::open;
     open_id_ = id;
     open_cursor_ = abs_end - segment_base(id);
+    if (open_cursor_ > segment_size_) {
+      open_cursor_ = segment_size_;
+    }
     return;
   }
   const uint64_t base = segment_base(open_id_);
