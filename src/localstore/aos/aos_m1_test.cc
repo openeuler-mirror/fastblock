@@ -645,6 +645,74 @@ void test_segment_allocator_no_double_alloc() {
   EXPECT_EQ(alloc.reserve(4096, &pfail, nullptr), -ENOSPC);
 }
 
+void test_pg_store_raft_snapshot_read() {
+  mem_device_backend dev(32 * 1024 * 1024);
+  pg_store store(&dev, pg_id{1, 0, 1});
+
+  std::vector<char> a(4096, 'A');
+  std::vector<char> b(4096, 'B');
+  sync_result r;
+  store.write("s", 0, a.data(), a.size(), /*raft*/ 10, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  // Pin snapshot at index 10 (sees 'A')
+  r = {};
+  store.create_raft_snapshot(10, /*term*/ 1, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(store.snapshot_pin_count(10), 1u);
+  EXPECT_EQ(store.total_snapshot_pins(), 1u);
+
+  // Overwrite head with 'B' at index 20
+  r = {};
+  store.write("s", 0, b.data(), b.size(), 20, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  std::vector<char> out(4096, 0);
+  r = {};
+  store.read("s", 0, out.data(), 4096, on_done, &r); // head
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'B');
+
+  r = {};
+  out.assign(4096, 0);
+  store.read("s", 0, out.data(), 4096, /*raft_read_index*/ 10, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'A');
+
+  // Unpin; head still B
+  r = {};
+  store.release_raft_snapshot(10, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(store.snapshot_pin_count(10), 0u);
+  EXPECT_EQ(store.total_snapshot_pins(), 0u);
+
+  // Snapshot view still works from version log even after unpin
+  r = {};
+  out.assign(4096, 0);
+  store.read("s", 0, out.data(), 4096, 10, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'A');
+
+  // Recover rebuilds pin + versions
+  {
+    pg_store store2(&dev, pg_id{1, 0, 1});
+    // Re-create pin was released on disk via unpin; total pins 0 after recover
+    r = {};
+    store2.recover(on_done, &r);
+    EXPECT_EQ(r.err, 0);
+    r = {};
+    out.assign(4096, 0);
+    store2.read("s", 0, out.data(), 4096, 10, on_done, &r);
+    EXPECT_EQ(r.err, 0);
+    EXPECT_EQ(out[0], 'A');
+    r = {};
+    out.assign(4096, 0);
+    store2.read("s", 0, out.data(), 4096, on_done, &r);
+    EXPECT_EQ(r.err, 0);
+    EXPECT_EQ(out[0], 'B');
+  }
+}
+
 void test_segment_allocator_free_sealed() {
   segment_allocator alloc(4ull * 1024 * 1024, 1024 * 1024, 4096);
   uint64_t p = 0;
@@ -941,6 +1009,7 @@ int main() {
   test_pg_store_checkpoint_then_discard_recover();
   test_segment_allocator_no_double_alloc();
   test_pg_store_multi_segment_write_recover();
+  test_pg_store_raft_snapshot_read();
   test_segment_allocator_free_sealed();
   test_osd_store_gc_once();
   test_superblock_manifest_codec();
