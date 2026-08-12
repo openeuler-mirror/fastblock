@@ -14,12 +14,14 @@
 #include "device_backend.h"
 #include "extent_map.h"
 #include "segment.h"
+#include "segment_allocator.h"
 #include "types.h"
 
 #include <cstdint>
 #include <deque>
 #include <functional>
 #include <map>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -51,9 +53,13 @@ class pg_store {
 public:
   using op_complete = device_backend::op_complete;
 
-  // backend lifetime must exceed pg_store.
+  /**
+   * backend lifetime must exceed pg_store.
+   * segment_size: fixed segment bytes; 0 means single segment spanning
+   * the whole backend capacity (compatible with linear M1 layout).
+   */
   pg_store(device_backend* backend, pg_id id,
-           buffer_mode mode = buffer_mode::heap);
+           buffer_mode mode = buffer_mode::heap, uint64_t segment_size = 0);
   ~pg_store();
 
   pg_store(const pg_store&) = delete;
@@ -62,6 +68,8 @@ public:
   const pg_id& id() const { return id_; }
   device_backend* backend() const { return backend_; }
   buffer_mode mode() const { return mode_; }
+  segment_allocator* allocator() { return alloc_.get(); }
+  const segment_allocator* allocator() const { return alloc_.get(); }
   uint64_t checkpoint_generation() const { return checkpoint_generation_; }
   // Phys offset of last durable checkpoint record end (0 if none).
   uint64_t last_checkpoint_end() const { return last_checkpoint_end_; }
@@ -179,6 +187,7 @@ private:
   void recover_start_replay(recover_req* req, uint64_t from_offset);
 
   device_backend* backend_{nullptr};
+  std::unique_ptr<segment_allocator> alloc_;
   segment seg_;
   pg_id id_{};
   buffer_mode mode_{buffer_mode::heap};

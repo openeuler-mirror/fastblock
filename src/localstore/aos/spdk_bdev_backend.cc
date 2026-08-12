@@ -121,7 +121,10 @@ void spdk_bdev_backend::write_done(struct spdk_bdev_io* bdev_io, bool success,
   spdk_bdev_backend* self = ctx->self;
   const int err = success ? 0 : -EIO;
   if (success) {
-    self->write_pointer_ += ctx->nbytes;
+    const uint64_t end = ctx->phys_offset + ctx->nbytes;
+    if (end > self->write_pointer_) {
+      self->write_pointer_ = end;
+    }
   }
   self->append_inflight_ = false;
   auto cb = std::move(ctx->cb);
@@ -162,22 +165,29 @@ void spdk_bdev_backend::flush_done(struct spdk_bdev_io* bdev_io, bool success,
 
 void spdk_bdev_backend::append(void* data, uint64_t nbytes, append_complete cb,
                                void* arg) {
+  write_at(write_pointer_, data, nbytes, std::move(cb), arg);
+}
+
+void spdk_bdev_backend::write_at(uint64_t phys_offset, void* data,
+                                  uint64_t nbytes, append_complete cb,
+                                  void* arg) {
   if (!ready() || data == nullptr || cb == nullptr) {
     if (cb) {
       cb(arg, 0, -EINVAL);
     }
     return;
   }
-  if (nbytes == 0 || (nbytes % block_size_) != 0) {
+  if (nbytes == 0 || (nbytes % block_size_) != 0 ||
+      (phys_offset % block_size_) != 0) {
     cb(arg, 0, -EINVAL);
     return;
   }
   if (append_inflight_) {
-    // M1: single in-flight append; caller must queue.
+    // M1: single in-flight write; caller must queue.
     cb(arg, 0, -EAGAIN);
     return;
   }
-  if (write_pointer_ + nbytes > region_length_) {
+  if (phys_offset + nbytes > region_length_) {
     cb(arg, 0, -ENOSPC);
     return;
   }
@@ -190,15 +200,14 @@ void spdk_bdev_backend::append(void* data, uint64_t nbytes, append_complete cb,
   ctx->self = this;
   ctx->cb = std::move(cb);
   ctx->arg = arg;
-  ctx->phys_offset = write_pointer_;
+  ctx->phys_offset = phys_offset;
   ctx->nbytes = nbytes;
 
-  const uint64_t abs_off = region_offset_ + write_pointer_;
+  const uint64_t abs_off = region_offset_ + phys_offset;
   const uint64_t offset_blocks = abs_off / block_size_;
   const uint64_t num_blocks = nbytes / block_size_;
 
   append_inflight_ = true;
-  // write_pointer advances only in write_done on success.
   const int rc = spdk_bdev_write_blocks(desc_, channel_, data, offset_blocks,
                                         num_blocks, write_done, ctx);
   if (rc != 0) {

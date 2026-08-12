@@ -112,8 +112,15 @@ struct pg_store::recover_req {
   std::string best_ckpt_payload;
 };
 
-pg_store::pg_store(device_backend* backend, pg_id id, buffer_mode mode)
-    : backend_(backend), seg_(backend), id_(id), mode_(mode) {
+pg_store::pg_store(device_backend* backend, pg_id id, buffer_mode mode,
+                   uint64_t segment_size)
+    : backend_(backend),
+      alloc_(std::make_unique<segment_allocator>(
+          backend ? backend->capacity() : 0,
+          segment_size == 0 ? (backend ? backend->capacity() : 0)
+                            : segment_size,
+          backend ? backend->block_size() : 4096)),
+      seg_(backend, alloc_.get()), id_(id), mode_(mode) {
   ensure_scratch(kMaxObjectSize + 256 * 1024);
 }
 
@@ -908,6 +915,9 @@ void pg_store::recover(op_complete cb, void* arg) {
     clear_maps();
     checkpoint_generation_ = 0;
     last_checkpoint_end_ = 0;
+    if (alloc_) {
+      alloc_->reset();
+    }
 
     auto* req = new (std::nothrow) recover_req();
     if (req == nullptr) {
@@ -943,6 +953,7 @@ void pg_store::recover_start_replay(recover_req* req, uint64_t from_offset) {
   clear_maps();
   checkpoint_generation_ = 0;
   last_checkpoint_end_ = 0;
+  // Keep allocator state from find phase (note_written); do not full reset.
 
   if (req->have_ckpt) {
     checkpoint_snapshot snap;
@@ -984,6 +995,9 @@ void pg_store::recover_process_buffer(recover_req* req) {
 
   auto finish_ok = [&]() {
     backend_->set_write_pointer(req->last_good);
+    if (alloc_) {
+      alloc_->set_open_cursor_abs(req->last_good);
+    }
     free_buf(req->buf);
     auto cb = std::move(req->cb);
     void* a = req->arg;
@@ -998,8 +1012,33 @@ void pg_store::recover_process_buffer(recover_req* req) {
     recover_start_replay(req, from);
   };
 
+  const uint64_t seg_size =
+      alloc_ ? alloc_->segment_size() : backend_->capacity();
+
+  // Skip pad hole to next segment boundary (multi-segment layout).
+  auto skip_to_next_segment = [&]() -> bool {
+    if (seg_size == 0 || seg_size >= backend_->capacity()) {
+      return false;
+    }
+    uint64_t target;
+    if (req->last_good % seg_size == 0) {
+      // At boundary with bad magic: empty segment start or pad — skip whole seg.
+      target = req->last_good + seg_size;
+    } else {
+      target = ((req->last_good / seg_size) + 1) * seg_size;
+    }
+    if (target >= backend_->capacity() ||
+        target >= backend_->write_pointer()) {
+      return false;
+    }
+    req->last_good = target;
+    req->pos = target;
+    req->pending.clear();
+    return true;
+  };
+
   // Decode from pending buffer first.
-  // returns: 0 continue, 1 stop phase (torn), 2 need more data
+  // returns: 0 continue, 1 stop phase (hard end), 2 need more, 3 skip segment
   auto try_decode_pending = [&]() -> int {
     while (!req->pending.empty()) {
       data_record rec;
@@ -1010,13 +1049,27 @@ void pg_store::recover_process_buffer(recover_req* req) {
         return 2;
       }
       if (st != decode_status::ok) {
-        // Torn / corrupt: stop at last_good
+        // Torn / empty pad at segment tail → try next segment.
+        if (skip_to_next_segment()) {
+          return 3;
+        }
         return 1;
       }
       const uint64_t aligned =
           ((static_cast<uint64_t>(consumed) + bs - 1) / bs) * bs;
       if (req->pending.size() < aligned) {
         return 2;
+      }
+      // Do not cross segment boundary with a single record.
+      if (seg_size > 0 && seg_size < backend_->capacity()) {
+        const uint64_t seg_end =
+            ((req->last_good / seg_size) + 1) * seg_size;
+        if (req->last_good + aligned > seg_end) {
+          if (skip_to_next_segment()) {
+            return 3;
+          }
+          return 1;
+        }
       }
       const uint64_t rec_phys = req->last_good;
       if (req->ph == recover_req::phase::find_checkpoint) {
@@ -1035,6 +1088,9 @@ void pg_store::recover_process_buffer(recover_req* req) {
       } else {
         apply_record(rec, rec_phys);
       }
+      if (alloc_) {
+        alloc_->note_written(rec_phys, aligned);
+      }
       req->last_good += aligned;
       req->pending.erase(req->pending.begin(),
                          req->pending.begin() +
@@ -1044,11 +1100,18 @@ void pg_store::recover_process_buffer(recover_req* req) {
   };
 
   const int dec = try_decode_pending();
+  if (dec == 3) {
+    recover_process_buffer(req);
+    return;
+  }
   if (dec == 1) {
     // Torn: end of this phase
     if (req->ph == recover_req::phase::find_checkpoint) {
       end_of_find_phase();
       return;
+    }
+    if (alloc_) {
+      alloc_->set_open_cursor_abs(req->last_good);
     }
     finish_ok();
     return;
@@ -1247,8 +1310,12 @@ uint64_t pg_store::rebuild_from_image(const uint8_t* image, size_t len) {
   clear_maps();
   checkpoint_generation_ = 0;
   last_checkpoint_end_ = 0;
+  if (alloc_) {
+    alloc_->reset();
+  }
 
   const uint32_t bs = backend_ ? backend_->block_size() : 4096;
+  const uint64_t seg_size = alloc_ ? alloc_->segment_size() : 0;
   uint64_t pos = 0;
   uint64_t last_good = 0;
   while (pos < len) {
@@ -1258,6 +1325,19 @@ uint64_t pg_store::rebuild_from_image(const uint8_t* image, size_t len) {
         decode_record(image + static_cast<size_t>(pos),
                       len - static_cast<size_t>(pos), &rec, &consumed);
     if (st == decode_status::need_more || st != decode_status::ok) {
+      // Multi-segment: skip pad to next segment and continue.
+      if (seg_size > 0 && seg_size < static_cast<uint64_t>(len)) {
+        uint64_t target;
+        if (pos % seg_size == 0) {
+          target = pos + seg_size;
+        } else {
+          target = ((pos / seg_size) + 1) * seg_size;
+        }
+        if (target < len) {
+          pos = target;
+          continue;
+        }
+      }
       break;
     }
     const uint64_t aligned =
@@ -1273,11 +1353,17 @@ uint64_t pg_store::rebuild_from_image(const uint8_t* image, size_t len) {
     } else {
       apply_record(rec, pos);
     }
+    if (alloc_) {
+      alloc_->note_written(pos, aligned);
+    }
     pos += aligned;
     last_good = pos;
   }
   if (backend_) {
     backend_->set_write_pointer(last_good);
+  }
+  if (alloc_) {
+    alloc_->set_open_cursor_abs(last_good);
   }
   return last_good;
 }

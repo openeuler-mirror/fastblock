@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include <cerrno>
 #include <cstdint>
 #include <functional>
 
@@ -59,6 +60,23 @@ public:
    */
   virtual void append(void* data, uint64_t nbytes, append_complete cb,
                       void* arg) = 0;
+
+  /**
+   * Absolute write at phys_offset (block aligned). Used by multi-segment
+   * allocator; does not require phys_offset == write_pointer().
+   * On success, write_pointer becomes max(write_pointer, phys+nbytes)
+   * (high-water for recover/read bounds).
+   * Default: not implemented (-ENOTSUP).
+   */
+  virtual void write_at(uint64_t phys_offset, void* data, uint64_t nbytes,
+                        append_complete cb, void* arg) {
+    (void)phys_offset;
+    (void)data;
+    (void)nbytes;
+    if (cb) {
+      cb(arg, 0, -ENOTSUP);
+    }
+  }
 
   /**
    * Read nbytes from absolute phys_offset into data (DMA-safe).
