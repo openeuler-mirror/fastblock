@@ -84,8 +84,12 @@ int spdk_bdev_backend::open(const char* bdev_name, uint64_t region_offset,
   region_offset_ = region_offset;
   region_length_ = region_length;
   write_pointer_ = 0;
-  append_inflight_ = false;
+  write_inflight_ = 0;
   return 0;
+}
+
+void spdk_bdev_backend::set_max_write_inflight(uint32_t n) {
+  max_write_inflight_ = n == 0 ? 1 : n;
 }
 
 void spdk_bdev_backend::close() {
@@ -102,7 +106,7 @@ void spdk_bdev_backend::close() {
   region_offset_ = 0;
   region_length_ = 0;
   write_pointer_ = 0;
-  append_inflight_ = false;
+  write_inflight_ = 0;
 }
 
 void spdk_bdev_backend::set_write_pointer(uint64_t bytes_from_region_start) {
@@ -126,7 +130,9 @@ void spdk_bdev_backend::write_done(struct spdk_bdev_io* bdev_io, bool success,
       self->write_pointer_ = end;
     }
   }
-  self->append_inflight_ = false;
+  if (self->write_inflight_ > 0) {
+    --self->write_inflight_;
+  }
   auto cb = std::move(ctx->cb);
   void* arg = ctx->arg;
   const uint64_t phys = ctx->phys_offset;
@@ -182,8 +188,7 @@ void spdk_bdev_backend::write_at(uint64_t phys_offset, void* data,
     cb(arg, 0, -EINVAL);
     return;
   }
-  if (append_inflight_) {
-    // M1: single in-flight write; caller must queue.
+  if (write_inflight_ >= max_write_inflight_) {
     cb(arg, 0, -EAGAIN);
     return;
   }
@@ -207,11 +212,13 @@ void spdk_bdev_backend::write_at(uint64_t phys_offset, void* data,
   const uint64_t offset_blocks = abs_off / block_size_;
   const uint64_t num_blocks = nbytes / block_size_;
 
-  append_inflight_ = true;
+  ++write_inflight_;
   const int rc = spdk_bdev_write_blocks(desc_, channel_, data, offset_blocks,
                                         num_blocks, write_done, ctx);
   if (rc != 0) {
-    append_inflight_ = false;
+    if (write_inflight_ > 0) {
+      --write_inflight_;
+    }
     auto done = std::move(ctx->cb);
     void* a = ctx->arg;
     delete ctx;
