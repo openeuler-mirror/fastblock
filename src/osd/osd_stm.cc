@@ -15,8 +15,10 @@
 #include "fastblock/rpc/osd_msg.pb.h"
 #include "fastblock/utils/utils.h"
 #include "fastblock/utils/err_num.h"
+#include "localstore/aos/osd_store.h"
 #include <errno.h>
 #include <concepts>
+#include <cstring>
 
 // Write 8 units at a time, i.e. 4K
 #define BLOCK_UNITS 8
@@ -28,15 +30,27 @@ osd_stm::osd_stm()
     _sockid = spdk_env_get_socket_id(lcore);
 }
 
+void osd_stm::attach_aos(fastblock::aos::osd_store* store, uint64_t pool_id,
+                         uint64_t pg_id, object_engine_mode mode) {
+    _aos = store;
+    _pool_id = pool_id;
+    _pg_id = pg_id;
+    _engine_mode = mode;
+    SPDK_INFOLOG(osd, "osd_stm attach_aos pool %lu pg %lu mode %u\n",
+                 pool_id, pg_id, static_cast<unsigned>(mode));
+}
+
 void osd_stm::apply(std::shared_ptr<raft_entry_t> entry, utils::context *complete){
+    const uint64_t raft_idx = static_cast<uint64_t>(entry->idx());
     if(entry->type() == RAFT_LOGTYPE_WRITE){
         osd::write_cmd write;
         write.ParseFromString(entry->meta());
-        write_obj(write.object_name(), write.offset(), entry->data(), complete);
+        write_obj(write.object_name(), write.offset(), entry->data(), raft_idx,
+                  complete);
     }else if(entry->type() == RAFT_LOGTYPE_DELETE){
         osd::delete_cmd del;
         del.ParseFromString(entry->meta());
-        delete_obj(del.object_name(), complete);
+        delete_obj(del.object_name(), raft_idx, complete);
     }else{
         complete->complete(err::E_SUCCESS);
     }
@@ -47,52 +61,101 @@ struct write_obj_ctx{
     std::string obj_name;
     char* buf;
     utils::context *complete;
+    int remaining{1}; // dual-write (shadow) completion barrier
+    int first_err{0};
+    bool free_buf{true};
 };
 
-void write_obj_done(void *arg, int obj_errno){
+static void write_obj_done(void *arg, int obj_errno){
     write_obj_ctx * ctx = (write_obj_ctx *)arg;
-    SPDK_DEBUGLOG(osd, "write obj %s pg: %s done in core: %u\n",
+    if (obj_errno != 0 && ctx->first_err == 0) {
+        ctx->first_err = obj_errno;
+    }
+    if (--ctx->remaining > 0) {
+        return;
+    }
+    SPDK_DEBUGLOG(osd, "write obj %s pg: %s done in core: %u err %d\n",
         ctx->obj_name.c_str(), ctx->stm->get_pg_name().c_str(),
-        core_sharded::get_core_sharded().this_shard_id());
+        core_sharded::get_core_sharded().this_shard_id(), ctx->first_err);
     ctx->stm->unlock(ctx->obj_name, utils::operation_type::WRITE);
-    ctx->complete->complete(obj_errno);
-    spdk_free(ctx->buf);
+    ctx->complete->complete(ctx->first_err);
+    if (ctx->free_buf && ctx->buf) {
+        spdk_free(ctx->buf);
+    }
     delete ctx;
 }
 
-struct delete_obj_ctx{
-    osd_stm* stm;
-    std::string obj_name;
-    utils::context *complete;
-};
+void osd_stm::write_obj(const std::string& obj_name, uint64_t offset,
+                        const std::string& data, uint64_t raft_write_index,
+                        utils::context *complete){
+    const bool use_aos =
+        (_aos != nullptr) &&
+        (_engine_mode == object_engine_mode::aos ||
+         _engine_mode == object_engine_mode::shadow);
+    const bool use_blob =
+        (_engine_mode == object_engine_mode::blob) ||
+        (_engine_mode == object_engine_mode::shadow) ||
+        (_aos == nullptr);
 
-void delete_obj_done(void *arg, int obj_errno){
-    delete_obj_ctx * ctx = (delete_obj_ctx *)arg;
-    SPDK_DEBUGLOG(osd, "delete obj %s pg: %s done in core: %u\n",
-        ctx->obj_name.c_str(), ctx->stm->get_pg_name().c_str(),
-        core_sharded::get_core_sharded().this_shard_id());
-    ctx->stm->unlock(ctx->obj_name, utils::operation_type::DELETE);
-    ctx->complete->complete(obj_errno);
-    delete ctx;
-}
+    // Blob path needs DMA-aligned buffer; AOS path copies internally.
+    char* buf = nullptr;
+    if (use_blob) {
+        uint64_t len = utils::align_up<uint64_t>(data.size(), 512 * BLOCK_UNITS);
+        buf = (char*)spdk_zmalloc(len, 0x1000, NULL, _sockid, SPDK_MALLOC_DMA);
+        if (buf == nullptr) {
+            complete->complete(-ENOMEM);
+            return;
+        }
+        memcpy(buf, data.c_str(), data.size());
+    }
 
-void osd_stm::write_obj(const std::string& obj_name, uint64_t offset, const std::string& data, utils::context *complete){
-    uint64_t len = utils::align_up<uint64_t>(data.size(), 512 * BLOCK_UNITS);
-    char* buf = (char*)spdk_zmalloc(len, 0x1000, NULL, _sockid, SPDK_MALLOC_DMA);
-    memcpy(buf, data.c_str(), data.size());
     write_obj_ctx * ctx = new write_obj_ctx{this, obj_name, buf, complete};
-    std::map<std::string, xattr_val_type> xattr;
-    xattr["type"] = blob_type::object;
-    xattr["pg"] = get_pg_name();
-    SPDK_DEBUGLOG(osd, "write obj %s xattr type: %u pg: %s in core: %u\n",
-        obj_name.c_str(), (uint32_t)blob_type::object, get_pg_name().c_str(),
+    ctx->remaining = (use_aos && use_blob) ? 2 : 1;
+    ctx->free_buf = use_blob;
+
+    SPDK_DEBUGLOG(osd, "write obj %s pg: %s raft_idx %lu aos=%d blob=%d core %u\n",
+        obj_name.c_str(), get_pg_name().c_str(), raft_write_index,
+        use_aos ? 1 : 0, use_blob ? 1 : 0,
         core_sharded::get_core_sharded().this_shard_id());
-    _store.write(xattr, obj_name, offset, buf, data.size(), write_obj_done, ctx);
+
+    if (use_aos) {
+        _aos->apply(_pool_id, _pg_id, obj_name, offset, data.data(), data.size(),
+                    raft_write_index, /*image_snap_seq=*/0, write_obj_done, ctx);
+    }
+    if (use_blob) {
+        std::map<std::string, xattr_val_type> xattr;
+        xattr["type"] = blob_type::object;
+        xattr["pg"] = get_pg_name();
+        _store.write(xattr, obj_name, offset, buf, data.size(), write_obj_done,
+                     ctx);
+    }
 }
 
-void osd_stm::delete_obj(const std::string& obj_name, utils::context *complete){
-    delete_obj_ctx * ctx = new delete_obj_ctx{this, obj_name, complete};
-    _store.delete_object(obj_name, delete_obj_done, ctx);
+void osd_stm::delete_obj(const std::string& obj_name, uint64_t raft_write_index,
+                         utils::context *complete){
+    if (_aos != nullptr &&
+        (_engine_mode == object_engine_mode::aos ||
+         _engine_mode == object_engine_mode::shadow)) {
+        struct del_ctx {
+            osd_stm* stm;
+            std::string name;
+            utils::context* complete;
+        };
+        auto* d = new del_ctx{this, obj_name, complete};
+        _aos->remove(
+            _pool_id, _pg_id, obj_name, raft_write_index, /*image*/ 0,
+            [](void* a, int err) {
+                auto* c = static_cast<del_ctx*>(a);
+                c->stm->unlock(c->name, utils::operation_type::DELETE);
+                c->complete->complete(err);
+                delete c;
+            },
+            d);
+        return;
+    }
+    // Legacy blob path: delete is still a no-op at object layer.
+    _object_rw_lock.unlock(obj_name, utils::operation_type::DELETE);
+    complete->complete(err::E_SUCCESS);
 }
 
 
@@ -232,6 +295,16 @@ void osd_stm::read_and_wait(
         char* buf = (char*)spdk_zmalloc(len, 0x1000, NULL, _sockid, SPDK_MALLOC_DMA);
         read_obj_ctx * ctx = new read_obj_ctx{buf, read_complete, response, request->length()};
 
+        const bool use_aos =
+            (_aos != nullptr) &&
+            (_engine_mode == object_engine_mode::aos ||
+             _engine_mode == object_engine_mode::shadow);
+        if (use_aos) {
+            _aos->read(_pool_id, _pg_id, request->object_name(),
+                       request->offset(), buf, request->length(),
+                       read_obj_done, ctx);
+            return;
+        }
         std::map<std::string, xattr_val_type> xattr;
         xattr["type"] = blob_type::object;
         xattr["pg"] = get_pg_name();
