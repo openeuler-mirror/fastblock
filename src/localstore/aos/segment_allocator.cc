@@ -81,6 +81,21 @@ void segment_allocator::seal_open() {
   open_cursor_ = 0;
 }
 
+int segment_allocator::free_sealed(uint32_t id) {
+  if (id >= states_.size()) {
+    return -EINVAL;
+  }
+  if (id == open_id_) {
+    return -EBUSY;
+  }
+  if (states_[id] != segment_state::sealed &&
+      states_[id] != segment_state::gc_candidate) {
+    return -EBUSY;
+  }
+  states_[id] = segment_state::free;
+  return 0;
+}
+
 int segment_allocator::open_free_unlocked() {
   for (uint32_t i = 0; i < states_.size(); ++i) {
     if (states_[i] == segment_state::free) {
