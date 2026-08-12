@@ -24,3 +24,4 @@ compile_library(
 )
 
 add_subdirectory(demo)
+add_subdirectory(aos)
