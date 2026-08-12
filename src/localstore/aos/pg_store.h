@@ -173,6 +173,20 @@ public:
   }
 
   /**
+   * Durable install-snapshot markers on this PG epoch (M5 follower staging).
+   * seal: staging ready; activate: generation promoted to active.
+   */
+  void mark_install_seal(uint64_t snapshot_index, uint64_t snapshot_term,
+                         op_complete cb, void* arg);
+  void mark_install_activate(uint64_t snapshot_index, op_complete cb,
+                             void* arg);
+
+  bool install_sealed() const { return install_sealed_; }
+  bool install_activated() const { return install_activated_; }
+  uint64_t install_snapshot_index() const { return install_snapshot_index_; }
+  uint64_t install_snapshot_term() const { return install_snapshot_term_; }
+
+  /**
    * Append a durable checkpoint_marker (ObjectMap snapshot) and flush.
    * generation bumps on success. Half-written markers are ignored on recover
    * (checksum fail → torn stop; prior complete checkpoint remains valid).
@@ -335,6 +349,12 @@ private:
   // image_snap_seq -> pin count (clone / image snapshot reader)
   std::map<uint64_t, uint32_t> image_snapshot_pins_;
   uint32_t total_image_snapshot_pins_{0};
+
+  // Install-snapshot staging markers (rebuilt on recover via apply_record).
+  bool install_sealed_{false};
+  bool install_activated_{false};
+  uint64_t install_snapshot_index_{0};
+  uint64_t install_snapshot_term_{0};
 
   void* scratch_ptr_{nullptr};
   uint64_t scratch_cap_{0};

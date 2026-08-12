@@ -17,6 +17,7 @@ compile_library(
     pg_store.cc
     osd_store.cc
     snapshot_reader.cc
+    snapshot_ingest.cc
   DEPS
     spdk::spdk
   COPTS
