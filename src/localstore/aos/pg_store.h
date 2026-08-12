@@ -88,7 +88,7 @@ public:
    * data is copied into an internal DMA/aligned I/O buffer before submit.
    */
   void write(const std::string& object_name, uint64_t offset, const void* data,
-             uint64_t len, uint64_t raft_apply_index, uint64_t image_snap_seq,
+             uint64_t len, uint64_t raft_write_index, uint64_t image_snap_seq,
              op_complete cb, void* arg);
 
   /**
