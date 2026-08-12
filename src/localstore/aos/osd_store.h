@@ -99,6 +99,13 @@ public:
    */
   void recover(op_complete cb, void* arg);
 
+  /**
+   * One GC pass (design §11 skeleton): free sealed segments that have no live
+   * head extents from any in-memory PG. Does not rewrite data or compact.
+   * Returns number of segments freed. Optional persist_manifest after success.
+   */
+  uint32_t gc_once(bool persist = true);
+
 private:
   using pg_key = std::tuple<uint64_t, uint64_t, uint64_t>; // pool, pg, epoch
 
