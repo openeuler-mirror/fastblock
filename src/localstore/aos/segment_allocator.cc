@@ -92,6 +92,26 @@ int segment_allocator::open_free_unlocked() {
   return -ENOSPC;
 }
 
+uint64_t segment_allocator::remaining_in_open() const {
+  if (open_id_ == kInvalidSeg) {
+    return 0;
+  }
+  if (open_cursor_ >= segment_size_) {
+    return 0;
+  }
+  return segment_size_ - open_cursor_;
+}
+
+bool segment_allocator::would_roll(uint64_t nbytes) const {
+  if (nbytes == 0 || nbytes > segment_size_) {
+    return false;
+  }
+  if (open_id_ == kInvalidSeg) {
+    return false;
+  }
+  return open_cursor_ + nbytes > segment_size_;
+}
+
 int segment_allocator::ensure_open() {
   if (open_id_ != kInvalidSeg) {
     return 0;
