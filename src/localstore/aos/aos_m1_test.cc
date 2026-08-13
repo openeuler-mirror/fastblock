@@ -13,23 +13,23 @@
  * I/O uses mem_device_backend (callback model); production uses spdk_bdev_backend.
  */
 
+#include "aos_dump.h"
+#include "aos_runtime.h"
 #include "checkpoint.h"
 #include "crc32.h"
 #include "extent_map.h"
+#include "kv_engine.h"
 #include "layout.h"
+#include "log_store.h"
 #include "mem_device_backend.h"
 #include "osd_store.h"
 #include "pg_store.h"
 #include "record.h"
 #include "segment_allocator.h"
-#include "aos_runtime.h"
-#include "kv_engine.h"
-#include "log_store.h"
 #include "snapshot_ingest.h"
 #include "snapshot_reader.h"
 #include "superblock.h"
 #include "types.h"
-#include "crc32.h"
 
 #include <algorithm>
 #include <cassert>
@@ -1628,6 +1628,145 @@ void test_kv_engine_put_commit_get() {
   EXPECT_TRUE(*t2 == "7");
 }
 
+void test_kv_engine_delete_and_checkpoint_replay() {
+  mem_device_backend dev(8 * 1024 * 1024);
+  auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
+                                                   dev.block_size());
+  EXPECT_EQ(alloc->ensure_open(), 0);
+  kv_engine kv(&dev, alloc, buffer_mode::heap);
+  kv.put("k1", "v1");
+  kv.put("k2", "v2");
+  sync_result r;
+  kv.commit(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  kv.remove("k1");
+  r = {};
+  kv.commit(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(!kv.get("k1").has_value());
+  EXPECT_TRUE(kv.get("k2").has_value());
+
+  // Force a full-table checkpoint via enough ops (kCheckpointEvery=64).
+  for (int i = 0; i < 70; ++i) {
+    kv.put("bulk" + std::to_string(i), "x");
+  }
+  r = {};
+  kv.commit(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  std::vector<uint8_t> image(static_cast<size_t>(dev.write_pointer()));
+  r = {};
+  dev.read(0, image.data(), image.size(), on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  auto alloc2 = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
+                                                    dev.block_size());
+  kv_engine kv2(&dev, alloc2, buffer_mode::heap);
+  kv2.rebuild_from_image(image.data(), image.size());
+  EXPECT_TRUE(!kv2.get("k1").has_value());
+  auto k2 = kv2.get("k2");
+  EXPECT_TRUE(k2.has_value());
+  EXPECT_TRUE(*k2 == "v2");
+  auto bulk0 = kv2.get("bulk0");
+  EXPECT_TRUE(bulk0.has_value());
+}
+
+void test_log_store_truncate_from() {
+  mem_device_backend dev(4 * 1024 * 1024);
+  auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
+                                                   dev.block_size());
+  EXPECT_EQ(alloc->ensure_open(), 0);
+  log_store log(&dev, pg_id{3, 1, 1}, alloc, buffer_mode::heap);
+  for (uint64_t i = 1; i <= 5; ++i) {
+    log_entry e;
+    e.term = 2;
+    e.index = i;
+    e.type = 0;
+    e.meta = "m";
+    e.data = "d" + std::to_string(i);
+    sync_result r;
+    log.append(e, on_done, &r);
+    EXPECT_EQ(r.err, 0);
+  }
+  EXPECT_EQ(log.last_index(), 5);
+  sync_result r;
+  log.truncate_from(3, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(log.last_index(), 2);
+  EXPECT_EQ(log.entry_count(), 2);
+  EXPECT_EQ(log.get_term(2), 2u);
+  EXPECT_EQ(log.get_term(3), 0u);
+}
+
+void test_aos_dump_empty_and_formatted() {
+  // Empty / garbage image fails cleanly.
+  {
+    std::vector<uint8_t> junk(kMetaSize, 0);
+    auto rep = scan_image(junk.data(), junk.size(), 4096);
+    EXPECT_TRUE(!rep.ok());
+    EXPECT_TRUE(!rep.has_chosen);
+  }
+
+  // Format + create_pg → dump sees superblock, manifest, zero data records.
+  mem_device_backend dev(16 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, 1024 * 1024);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  auto& storage = dev.storage();
+  auto rep = scan_image(storage.data(), storage.size(), dev.block_size());
+  EXPECT_TRUE(rep.has_chosen);
+  EXPECT_TRUE(rep.sb_a_ok || rep.sb_b_ok);
+  EXPECT_TRUE(rep.manifest_ok);
+  EXPECT_TRUE(rep.man.pgs.size() >= 1u);
+  EXPECT_TRUE(rep.ok());
+  auto text = format_report(rep);
+  EXPECT_TRUE(text.find("AOS dump") != std::string::npos);
+  EXPECT_TRUE(text.find("OK") != std::string::npos);
+}
+
+void test_aos_dump_counts_kv_and_log_records() {
+  mem_device_backend dev(16 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, 1024 * 1024);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(2, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  auto alloc = osd.shared_allocator();
+  kv_engine kv(&dev, alloc, buffer_mode::heap);
+  kv.put("term", "1");
+  r = {};
+  kv.commit(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  auto* lg = osd.get_or_create_log(2, 0, osd.serving_epoch(2, 0));
+  EXPECT_TRUE(lg != nullptr);
+  log_entry e;
+  e.term = 1;
+  e.index = 1;
+  e.type = 0;
+  e.meta = "m";
+  e.data = "payload";
+  r = {};
+  lg->append(e, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  auto rep = scan_image(dev.storage().data(), dev.storage().size(),
+                        dev.block_size());
+  EXPECT_TRUE(rep.has_chosen);
+  EXPECT_TRUE(rep.record_count >= 2u);
+  EXPECT_TRUE(rep.records_by_type.count(
+                  static_cast<uint8_t>(record_type::kv_put)) > 0);
+  EXPECT_TRUE(rep.records_by_type.count(
+                  static_cast<uint8_t>(record_type::raft_log_entry)) > 0);
+}
+
 } // namespace
 
 int main() {
@@ -1671,7 +1810,11 @@ int main() {
   test_log_store_append_read_trim();
   test_log_store_rebuild_from_image();
   test_kv_engine_put_commit_get();
+  test_kv_engine_delete_and_checkpoint_replay();
+  test_log_store_truncate_from();
   test_osd_store_list_pg_ids();
+  test_aos_dump_empty_and_formatted();
+  test_aos_dump_counts_kv_and_log_records();
 
   if (g_failures != 0) {
     std::fprintf(stderr, "aos_m1_test: %d failure(s)\n", g_failures);
