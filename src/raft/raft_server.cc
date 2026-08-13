@@ -1888,13 +1888,15 @@ public:
         char *buf;
         std::size_t size;
     };
-    write_ctx(int count, raft_server_t* raft, write_complete cb_fn)
+    write_ctx(int count, raft_server_t* raft, write_complete cb_fn,
+              uint64_t snapshot_index = 0)
     : utils::context(false)
     , _count(count)
     , _num(0)
     , _rerrno(0)
     , _raft(raft)
-    , _fn(std::move(cb_fn)) {}
+    , _fn(std::move(cb_fn))
+    , _snapshot_index(snapshot_index) {}
 
     ~write_ctx(){
         for(auto &obj : _objects){
@@ -1935,12 +1937,21 @@ public:
     int _rerrno;
     raft_server_t* _raft;
     write_complete _fn;
+    uint64_t _snapshot_index{0};
 };
 
 static void write_snapshot(write_ctx *wc){
     int num = std::min(wc->_count - wc->_num, SNAPSHOT_MAX_CONCURRENT);
-    auto store = wc->_raft->get_machine()->get_object_store();
+    auto machine = wc->_raft->get_machine();
     int index = 0;
+    // Prefer request last_idx; fall back to raft snapshot / current index.
+    uint64_t snap_idx = wc->_snapshot_index;
+    if (snap_idx == 0) {
+        snap_idx = static_cast<uint64_t>(
+            wc->_raft->get_snapshot_index() > 0
+                ? wc->_raft->get_snapshot_index()
+                : wc->_raft->raft_get_current_idx());
+    }
 
     auto write_done = [](void *arg, int obj_errno){
         write_ctx *wct = (write_ctx *)arg;
@@ -1950,12 +1961,10 @@ static void write_snapshot(write_ctx *wc){
     for(int i = 0; i < num; i++){
         index = wc->_num + i;
         auto &object = wc->_objects[index];
-        SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, write object %s size %ld\n",
+        SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, write object %s size %ld (install via stm)\n",
                 wc->_raft->raft_get_pool_id(), wc->_raft->raft_get_pg_id(), object.object_name.c_str(), object.size);
-        std::map<std::string, xattr_val_type> xattr;
-        xattr["type"] = blob_type::object;
-        xattr["pg"] = wc->_raft->raft_get_pg_name();
-        store->write(xattr, object.object_name, 0, object.buf, object.size, write_done, wc);
+        machine->write_install_object(object.object_name, object.buf, object.size,
+                                      snap_idx, write_done, wc);
     }
 }
 
@@ -2023,7 +2032,8 @@ int raft_server_t::raft_recv_installsnapshot(raft_node_id_t node_id,
         write_fn(0);
         return 0;
     }
-    write_ctx *wc = new write_ctx(object_size, this, std::move(write_fn));
+    write_ctx *wc = new write_ctx(object_size, this, std::move(write_fn),
+                                  static_cast<uint64_t>(request->last_idx()));
 
     for(int i = 0; i < object_size; i++){
         const object_data_info& object = request->objects(i);
@@ -2141,18 +2151,16 @@ public:
         ctx->idx = get_iter_idx();
         auto obj_name = iter_next_name();
 
-        auto obs = _raft->get_machine()->get_object_store();
-        if(!obs->is_exist(obj_name)){
+        auto machine = _raft->get_machine();
+        if(!machine->object_exists(obj_name)){
             SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, object %s is not exist\n", _raft->raft_get_pool_id(), _raft->raft_get_pg_id(), obj_name.c_str());
             auto object = _response->add_objects();
             object->set_obj_name(obj_name);
             object->set_exist(false);
             read_continue(ctx, err::E_ENOENT);
         }else{
-            std::map<std::string, xattr_val_type> xattr;
-            xattr["type"] = blob_type::object;
-            xattr["pg"] = _raft->raft_get_pg_name();
-            obs->read(xattr, obj_name, 0, ctx->buf, object_unit_size, read_continue, ctx);
+            machine->read_recovery_object(obj_name, ctx->buf, object_unit_size,
+                                          read_continue, ctx);
         }
     }
 
@@ -2588,9 +2596,10 @@ int raft_server_t::_recovery_by_snapshot(std::shared_ptr<raft_node> node){
     raft_set_snapshot_in_progress(true);
     node->raft_set_suppress_heartbeats(true);
 
-    SPDK_NOTICELOG("pg: %lu.%lu, recovery by snapshot to node %d\n", _pool_id, _pg_id, node->raft_node_get_id());
-    auto obs = _machine->get_object_store();
-    _obr = new object_recovery(obs);
+    SPDK_NOTICELOG("pg: %lu.%lu, recovery by snapshot to node %d (aos=%d)\n",
+                   _pool_id, _pg_id, node->raft_node_get_id(),
+                   _machine->uses_aos_objects() ? 1 : 0);
+    _obr = new object_recovery(_machine.get());
 
     auto handle_error = [this, node](){
         delete _obr;
@@ -2599,22 +2608,24 @@ int raft_server_t::_recovery_by_snapshot(std::shared_ptr<raft_node> node){
         node->raft_node_set_recovering(false);
     };
 
-    uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
-    auto snap_fn = [this, node, shard_id, handle_error = std::move(handle_error)](void *arg, int rerrno){
-        //创建完对象的snapshot后就需要设置_snapshot_in_progress为false
+    _snapshot_index = _machine->get_last_applied_idx();
+    raft_term_t term = 0;
+    if (_snapshot_index > 0 && !raft_get_entry_term(_snapshot_index, term)) {
+        // Index may come from applied-only metadata; fall back to current term.
+        term = raft_get_current_term();
+    } else if (_snapshot_index == 0) {
+        term = raft_get_current_term();
+    }
+    _snapshot_term = term;
+
+    auto snap_fn = [this, node, handle_error = std::move(handle_error)](void *arg, int rerrno){
+        (void)arg;
         raft_set_snapshot_in_progress(false);
         if(rerrno != 0){
             handle_error();
             SPDK_ERRLOG("pg: %lu.%lu, create raft snapshot failed, rerrno: %d\n", _pool_id, _pg_id, rerrno);
             return;
         }
-        _snapshot_index = _machine->get_last_applied_idx();
-        raft_term_t term;
-        if(!raft_get_entry_term(_snapshot_index, term)){
-            handle_error();
-            return;
-        }
-        _snapshot_term = term;
         SPDK_NOTICELOG("pg: %lu.%lu, _snapshot_index %ld _snapshot_term %ld\n",
                        _pool_id, _pg_id, _snapshot_index, _snapshot_term);
         _obr->iter_start();
@@ -2626,10 +2637,9 @@ int raft_server_t::_recovery_by_snapshot(std::shared_ptr<raft_node> node){
         }
     };
 
-    std::map<std::string, xattr_val_type> xattr;
-    xattr["type"] = blob_type::object;
-    xattr["pg"] = raft_get_pg_name();
-    _obr->recovery_create(std::move(xattr), std::move(snap_fn), nullptr);
+    _obr->recovery_create(static_cast<uint64_t>(_snapshot_index),
+                          static_cast<uint64_t>(_snapshot_term),
+                          std::move(snap_fn), nullptr);
     return 0;
 }
 
