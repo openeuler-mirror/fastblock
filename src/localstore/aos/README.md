@@ -59,7 +59,16 @@ cmake --build build --target aos_m1_test fastblock-osd -j$(nproc)
 ## dump / light fsck
 
 库：`aos_dump.h` — `scan_image(image, len)` 解析 superblock A/B、manifest、扫 data 区 record，输出 `dump_report` / `format_report`。  
-不依赖 SPDK reactor，可在单测与后续 CLI 中复用。
+不依赖 SPDK reactor。扫描策略与 `osd_store::recover` 一致：扫满 data 区上界（不截断在可能滞后的 `data_high_water`）。
+
+CLI：
+
+```bash
+cmake --build build --target fastblock-aos-dump -j$(nproc)
+./build/src/localstore/aos/fastblock-aos-dump [--align 4096] /path/to/aos.img
+```
+
+Exit 0 = `report.ok()`，1 = hard errors，2 = 用法/读盘失败。
 
 ## vibe 约束
 
