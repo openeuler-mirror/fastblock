@@ -3023,10 +3023,18 @@ void raft_server_t::load(raft_node_id_t current_node, raft_complete cb_fn, void 
         raft_set_current_idx(_log->get_next_idx() - 1);
         load_current_term();
         load_vote_for();
-        if(!_configuration_manager.load_node_configuration()){
-            SPDK_WARNLOG("load_node_configuration failed\n");
+        if (!_configuration_manager.load_node_configuration()) {
+            // Config missing (kv not durable / recover missed tail WAL).
+            // Seed single-node cfg so get_last does not assert.
+            SPDK_WARNLOG(
+                "load_node_configuration failed for pg %lu.%lu; seed self cfg\n",
+                _pool_id, _pg_id);
+            node_configuration empty_cfg;
+            std::string addr;
+            empty_cfg.add_node(current_node, addr, 0);
+            _configuration_manager.add_node_configuration(std::move(empty_cfg));
         }
-        auto &cfg = _configuration_manager.get_last_node_configuration();
+        auto& cfg = _configuration_manager.get_last_node_configuration();
         update_nodes_stat(cfg);
 
         raft_set_commit_idx(raft_get_current_idx());
