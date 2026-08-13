@@ -1728,6 +1728,97 @@ void test_aos_dump_empty_and_formatted() {
   EXPECT_TRUE(text.find("OK") != std::string::npos);
 }
 
+void test_pg_store_flatten_image() {
+  mem_device_backend dev(32 * 1024 * 1024);
+  pg_store store(&dev, pg_id{1, 0, 1});
+  std::vector<char> a(4096, 'A');
+  std::vector<char> b(4096, 'B');
+  sync_result r;
+
+  store.write("o1", 0, a.data(), a.size(), 1, /*image*/ 5, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  store.write("o2", 0, a.data(), a.size(), 2, 5, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  r = {};
+  store.create_image_snapshot(5, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(store.image_snapshot_pin_count(5), 1u);
+
+  // Child image overwrites at seq 10; parent snap still A.
+  r = {};
+  store.write("o1", 0, b.data(), b.size(), 3, 10, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  // Flatten parent view 5 into seq 20 (independent materialization).
+  r = {};
+  store.flatten_image(/*parent*/ 5, /*new*/ 20, /*raft_base*/ 100, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  // Head after flatten: o1 still B (head was seq 10); flatten writes under 20
+  // so head should become A for extents rewritten at 20...
+  // write at raft 100+ with image 20 overwrites o1 head to A.
+  std::vector<char> out(4096, 0);
+  r = {};
+  store.read("o1", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'A');
+
+  r = {};
+  out.assign(4096, 0);
+  store.read("o2", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'A');
+
+  // Parent pin still valid; release (clone drop).
+  r = {};
+  store.release_image_snapshot(5, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(store.image_snapshot_pin_count(5), 0u);
+}
+
+void test_osd_store_image_snap_and_gc_pass() {
+  mem_device_backend dev(32 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, 1024 * 1024);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  std::vector<char> a(4096, 'X');
+  r = {};
+  osd.apply(1, 0, "x", 0, a.data(), a.size(), 1, /*image*/ 7, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  r = {};
+  osd.create_image_snapshot(1, 0, 7, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  r = {};
+  osd.clone_image(1, 0, 7, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  std::vector<char> out(4096, 0);
+  r = {};
+  osd.read(1, 0, "x", 0, out.data(), 4096, /*raft*/ 0, /*image*/ 7, on_done,
+           &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'X');
+
+  auto st = osd.gc_pass();
+  (void)st;
+
+  r = {};
+  osd.release_image_snapshot(1, 0, 7, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.release_image_snapshot(1, 0, 7, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+}
+
 void test_aos_dump_counts_kv_and_log_records() {
   mem_device_backend dev(16 * 1024 * 1024);
   osd_store osd(&dev, buffer_mode::heap, 1024 * 1024);
@@ -1815,6 +1906,8 @@ int main() {
   test_osd_store_list_pg_ids();
   test_aos_dump_empty_and_formatted();
   test_aos_dump_counts_kv_and_log_records();
+  test_pg_store_flatten_image();
+  test_osd_store_image_snap_and_gc_pass();
 
   if (g_failures != 0) {
     std::fprintf(stderr, "aos_m1_test: %d failure(s)\n", g_failures);
