@@ -1800,11 +1800,11 @@ void raft_server_t::raft_destroy(raft_complete cb_fn, void* arg)
             cb_fn(arg, serrno);
             return;
         }
-        auto shard_id = core_sharded::get_core_sharded().this_shard_id();
+        // AOS-only: no per-PG log blob; log_destroy is a no-op (disk_log::remove_blob).
         _log->log_destroy(
-          global_blobstore(shard_id),
+          nullptr,
           [this, cb_fn = std::move(cb_fn)](void* arg, int rberrno){
-            SPDK_INFOLOG(pg_group, "remove log blob done: %s\n", spdk_strerror(rberrno));
+            SPDK_INFOLOG(pg_group, "remove log (AOS) done: %s\n", spdk_strerror(rberrno));
             if(rberrno == 0){
                 _log.reset();
                 _machine.reset();
