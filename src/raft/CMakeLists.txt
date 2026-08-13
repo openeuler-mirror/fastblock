@@ -6,6 +6,7 @@ compile_library(
     raft_node.cc
     raft_server.cc
     state_machine.cc
+    object_recovery.cc
     raft_client_protocol.cc
     append_entry_buffer.cc
     configuration_manager.cc
