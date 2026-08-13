@@ -540,83 +540,87 @@ int partition_manager::create_partition(
       });
 }
 
-void partition_manager::load_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob,
-                            object_store::container objects, pm_complete cb_fn, void *arg){
-    disk_log* dlog = nullptr;
+void partition_manager::load_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id,
+                                pm_complete cb_fn, void* arg) {
     auto* store = aos_store(shard_id);
     if (store == nullptr) {
-        SPDK_ERRLOG("load_pg %lu.%lu: AOS store not ready (blob log removed)\n",
-                    pool_id, pg_id);
+        SPDK_ERRLOG("load_pg %lu.%lu: AOS store not ready\n", pool_id, pg_id);
         if (cb_fn) {
             cb_fn(arg, -ENODEV);
         }
         return;
     }
-    // design v2 P3: log recovered with AOS only.
     uint64_t epoch = store->serving_epoch(pool_id, pg_id);
     if (epoch == 0) {
         epoch = store->latest_epoch(pool_id, pg_id);
     }
     auto* lg = store->get_or_create_log(pool_id, pg_id, epoch);
-    dlog = new disk_log(lg);
+    auto* dlog = new disk_log(lg);
     dlog->start();
-    (void)blob;
-    // TODO:为什么要先创建osd_stm，然后再load呢？直接创建的时候构造object_store不可以吗？
     auto sm = std::make_shared<osd_stm>();
 
-    get_pg_group().load_pg(sm, shard_id, pool_id, pg_id, dlog,
-      [this, cb_fn = std::move(cb_fn), objects = std::move(objects), sm, pool_id, pg_id, shard_id](void *arg, int lerrno){
-        if(lerrno != 0){
+    get_pg_group().load_pg(
+        sm, shard_id, pool_id, pg_id, dlog,
+        [this, cb_fn = std::move(cb_fn), sm, pool_id, pg_id,
+         shard_id](void* arg, int lerrno) {
+          if (lerrno != 0) {
             cb_fn(arg, lerrno);
             return;
-        }
-        // note: Put PG string directly into the object to avoid passing it later
-        std::string pg = pg_id_to_name(pool_id, pg_id);
-        SPDK_INFOLOG(osd, "[test] create pg:%s!\n", pg.c_str());
-        sm->set_pg(pg);
-        (void)objects; // blob object trees ignored (AOS-only object path)
-        ensure_aos_pg(
-            shard_id, pool_id, pg_id, sm,
-            [this, pool_id, pg_id, shard_id, sm, cb_fn = std::move(cb_fn),
-             arg](void* /*a*/, int aerr) {
-              if (aerr != 0) {
-                SPDK_ERRLOG("load pg %lu.%lu ensure_aos_pg failed: %d\n",
-                            pool_id, pg_id, aerr);
-                cb_fn(arg, aerr);
-                return;
-              }
-              add_osd_stm(pool_id, pg_id, shard_id, sm);
-              SPDK_INFOLOG(osd, "load pg done (aos attached=%d)\n",
-                           sm->aos_attached() ? 1 : 0);
-              cb_fn(arg, 0);
-            },
-            nullptr);
-      },
-      arg, _mon_client);
+          }
+          std::string pg = pg_id_to_name(pool_id, pg_id);
+          SPDK_INFOLOG(osd, "load pg %s (AOS)\n", pg.c_str());
+          sm->set_pg(pg);
+          ensure_aos_pg(
+              shard_id, pool_id, pg_id, sm,
+              [this, pool_id, pg_id, shard_id, sm, cb_fn = std::move(cb_fn),
+               arg](void* /*a*/, int aerr) {
+                if (aerr != 0) {
+                  SPDK_ERRLOG("load pg %lu.%lu ensure_aos_pg failed: %d\n",
+                              pool_id, pg_id, aerr);
+                  cb_fn(arg, aerr);
+                  return;
+                }
+                add_osd_stm(pool_id, pg_id, shard_id, sm);
+                SPDK_INFOLOG(osd, "load pg %lu.%lu done (aos attached=%d)\n",
+                             pool_id, pg_id, sm->aos_attached() ? 1 : 0);
+                cb_fn(arg, 0);
+              },
+              nullptr);
+        },
+        arg, _mon_client);
 }
 
-int partition_manager::load_partition(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob,
-                            object_store::container objects, pm_complete&& cb_fn, void *arg){
+int partition_manager::load_partition(uint32_t shard_id, uint64_t pool_id,
+                                      uint64_t pg_id, pm_complete&& cb_fn,
+                                      void* arg) {
     auto cur_thread = spdk_get_thread();
-    partition_op_ctx* ctx = new partition_op_ctx{.cb_fn = std::move(cb_fn), .arg = arg, .pool_id = pool_id,
-                    .pg_id = pg_id, .shard_id = shard_id, .revision_id = 0, .pm = this, .op = 1};
+    partition_op_ctx* ctx = new partition_op_ctx{
+        .cb_fn = std::move(cb_fn),
+        .arg = arg,
+        .pool_id = pool_id,
+        .pg_id = pg_id,
+        .shard_id = shard_id,
+        .revision_id = 0,
+        .pm = this,
+        .op = 1};
 
-    auto load_pg_done = [cur_thread](void *arg, int perrno){
-        partition_op_ctx* ctx = (partition_op_ctx *)arg;
+    auto load_pg_done = [cur_thread](void* arg, int perrno) {
+        partition_op_ctx* ctx = (partition_op_ctx*)arg;
         ctx->perrno = perrno;
-        if(spdk_get_thread() != cur_thread)
+        if (spdk_get_thread() != cur_thread)
             spdk_thread_send_msg(cur_thread, partition_op_done, arg);
         else
             partition_op_done(arg);
     };
 
     return _shard.invoke_on(
-      shard_id,
-      [this, pool_id, pg_id, blob, shard_id, ctx, load_pg_done = std::move(load_pg_done), objects = std::move(objects)](){
-        SPDK_INFOLOG(osd, "load pg in core %u  shard_id %u pg %lu.%lu \n",
-            spdk_env_get_current_core(), shard_id, pool_id, pg_id);
-        load_pg(shard_id, pool_id, pg_id, blob, std::move(objects), std::move(load_pg_done), ctx);
-    });
+        shard_id,
+        [this, pool_id, pg_id, shard_id, ctx,
+         load_pg_done = std::move(load_pg_done)]() {
+          SPDK_INFOLOG(osd, "load pg in core %u shard_id %u pg %lu.%lu\n",
+                       spdk_env_get_current_core(), shard_id, pool_id, pg_id);
+          load_pg(shard_id, pool_id, pg_id, std::move(load_pg_done), ctx);
+        });
 }
 
 void partition_manager::delete_pg(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id, pm_complete cb_fn, void *arg){
