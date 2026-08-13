@@ -23,6 +23,7 @@
 #include "localstore/blob_manager.h"
 #include "localstore/storage_manager.h"
 #include "localstore/aos/aos_runtime.h"
+#include "base/shard_service.h"
 #include "data_statistics.h"
 #include "utils/get_core.h"
 #include "mon_client.h"
