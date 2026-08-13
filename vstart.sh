@@ -450,12 +450,13 @@ function createNewDevCluster() {
         uuid=`uuidgen`
         id=$(allocateOsdId "$uuid")
         addNewOsd "" $id $uuid $bdevtype ""
-        sleep 30
+        # Wait for OSD boot; shorter when using local build (ASan is slow).
+        sleep "${FASTBLOCK_VSTART_OSD_BOOT_SLEEP:-30}"
     done
     echo "all osds started!"
 
     echo "create default pool fb"
-    sleep 20
+    sleep "${FASTBLOCK_VSTART_POOL_SLEEP:-20}"
     "$clientBinary" -conf="$defaultConfigFile" -op=createpool -poolname=fb -pgcount=$pgcount -pgsize=$replica
 }
 
@@ -678,6 +679,8 @@ function addNewOsd() {
         mkdir -p "$dataDir"/osd-"$_osdid"
         bdev_type_path="$dataDir"/osd-"$_osdid"/bdev_type
         disk_path="$dataDir"/osd-"$_osdid"/disk
+        # AOS object/log/kv device (knife-1 / design v2): required alongside legacy disk file.
+        aos_disk_path="$dataDir"/osd-"$_osdid"/aos_disk
         echo $_bdev_type > $bdev_type_path
 
         if [ "$_disk_path" = "" ];then
@@ -686,6 +689,9 @@ function addNewOsd() {
         else
             echo $_disk_path > $disk_path
         fi
+        # Always prepare a local AOS backing file in dev/pro local path (P3 AOS-only store).
+        prepareAioBackingFile "$dataDir"/osd-"$_osdid"/aos_file
+        echo "$dataDir"/osd-"$_osdid"/aos_file > "$aos_disk_path"
 
         echo intializing localstore of osd-"$_osdid"
         "$osdBinary" -C "$defaultConfigFile" --id "$_osdid" --mkfs --force --uuid "$_uuid" -S "$cores"
@@ -709,6 +715,9 @@ function addNewOsd() {
         else
             ssh $_remote_ip "echo $_disk_path > /var/lib/fastblock/osd-$_osdid/disk"
         fi
+        # AOS backing file for remote OSD (design v2).
+        remotePrepareAioBackingFile $_remote_ip /var/lib/fastblock/osd-$_osdid/aos_file
+        ssh $_remote_ip "echo /var/lib/fastblock/osd-$_osdid/aos_file > /var/lib/fastblock/osd-$_osdid/aos_disk"
 
         if [ "$_bdev_type" = "nvme" ] ;then
             ssh $_remote_ip "rm -f /var/tmp/spdk_pci_lock_$_disk_path"
