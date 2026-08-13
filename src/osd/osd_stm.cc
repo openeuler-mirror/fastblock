@@ -16,9 +16,11 @@
 #include "fastblock/utils/utils.h"
 #include "fastblock/utils/err_num.h"
 #include "localstore/aos/osd_store.h"
+#include "localstore/aos/pg_store.h"
 #include <errno.h>
 #include <concepts>
 #include <cstring>
+#include <vector>
 
 // Write 8 units at a time, i.e. 4K
 #define BLOCK_UNITS 8
@@ -31,13 +33,106 @@ osd_stm::osd_stm()
 }
 
 void osd_stm::attach_aos(fastblock::aos::osd_store* store, uint64_t pool_id,
-                         uint64_t pg_id, object_engine_mode mode) {
+                         uint64_t pg_id) {
     _aos = store;
     _pool_id = pool_id;
     _pg_id = pg_id;
-    _engine_mode = mode;
-    SPDK_INFOLOG(osd, "osd_stm attach_aos pool %lu pg %lu mode %u\n",
-                 pool_id, pg_id, static_cast<unsigned>(mode));
+    SPDK_NOTICELOG("osd_stm attach_aos pool %lu pg %lu (object path=AOS only)\n",
+                   pool_id, pg_id);
+}
+
+bool osd_stm::uses_aos_objects() const { return _aos != nullptr; }
+
+std::vector<std::string> osd_stm::list_live_objects() {
+    std::vector<std::string> names;
+    if (_aos == nullptr) {
+        return names;
+    }
+    auto* pg = _aos->get_active_pg(_pool_id, _pg_id);
+    if (pg == nullptr) {
+        return names;
+    }
+    pg->list_live_object_names(&names);
+    return names;
+}
+
+bool osd_stm::object_exists(const std::string& name) {
+    if (_aos == nullptr) {
+        return false;
+    }
+    auto* pg = _aos->get_active_pg(_pool_id, _pg_id);
+    return pg != nullptr && pg->object_exists(name);
+}
+
+void osd_stm::pin_recovery_view(uint64_t raft_apply_index, uint64_t raft_term,
+                                object_rw_complete cb_fn, void* arg) {
+    if (_aos == nullptr) {
+        if (cb_fn) {
+            cb_fn(arg, -ENODEV);
+        }
+        return;
+    }
+    auto* pg = _aos->get_active_pg(_pool_id, _pg_id);
+    if (pg == nullptr) {
+        if (cb_fn) {
+            cb_fn(arg, -ENOENT);
+        }
+        return;
+    }
+    _recovery_snap_index = raft_apply_index;
+    _recovery_pinned = true;
+    if (raft_apply_index == 0) {
+        // Empty PG / nothing applied: still OK for install of empty state.
+        if (cb_fn) {
+            cb_fn(arg, 0);
+        }
+        return;
+    }
+    pg->create_raft_snapshot(raft_apply_index, raft_term, std::move(cb_fn), arg);
+}
+
+void osd_stm::unpin_recovery_view(object_rw_complete cb_fn, void* arg) {
+    if (_aos == nullptr || !_recovery_pinned) {
+        _recovery_pinned = false;
+        _recovery_snap_index = 0;
+        if (cb_fn) {
+            cb_fn(arg, 0);
+        }
+        return;
+    }
+    auto* pg = _aos->get_active_pg(_pool_id, _pg_id);
+    const uint64_t idx = _recovery_snap_index;
+    _recovery_pinned = false;
+    _recovery_snap_index = 0;
+    if (pg == nullptr || idx == 0) {
+        if (cb_fn) {
+            cb_fn(arg, 0);
+        }
+        return;
+    }
+    pg->release_raft_snapshot(idx, std::move(cb_fn), arg);
+}
+
+void osd_stm::read_recovery_object(const std::string& object_name, char* buf,
+                                   uint64_t len, object_rw_complete cb_fn,
+                                   void* arg) {
+    if (_aos == nullptr) {
+        if (cb_fn) {
+            cb_fn(arg, -ENODEV);
+        }
+        return;
+    }
+    // Prefer pinned recovery view; else head.
+    const uint64_t raft_idx = _recovery_pinned ? _recovery_snap_index : 0;
+    auto* pg = _aos->get_active_pg(_pool_id, _pg_id);
+    if (pg == nullptr) {
+        if (cb_fn) {
+            cb_fn(arg, -ENOENT);
+        }
+        return;
+    }
+    pg->read(object_name, 0, buf, len, raft_idx, /*image*/ 0, std::move(cb_fn),
+             arg);
 }
 
 void osd_stm::apply(std::shared_ptr<raft_entry_t> entry, utils::context *complete){
@@ -59,103 +154,72 @@ void osd_stm::apply(std::shared_ptr<raft_entry_t> entry, utils::context *complet
 struct write_obj_ctx{
     osd_stm* stm;
     std::string obj_name;
-    char* buf;
     utils::context *complete;
-    int remaining{1}; // dual-write (shadow) completion barrier
-    int first_err{0};
-    bool free_buf{true};
 };
 
 static void write_obj_done(void *arg, int obj_errno){
     write_obj_ctx * ctx = (write_obj_ctx *)arg;
-    if (obj_errno != 0 && ctx->first_err == 0) {
-        ctx->first_err = obj_errno;
-    }
-    if (--ctx->remaining > 0) {
-        return;
-    }
     SPDK_DEBUGLOG(osd, "write obj %s pg: %s done in core: %u err %d\n",
         ctx->obj_name.c_str(), ctx->stm->get_pg_name().c_str(),
-        core_sharded::get_core_sharded().this_shard_id(), ctx->first_err);
+        core_sharded::get_core_sharded().this_shard_id(), obj_errno);
     ctx->stm->unlock(ctx->obj_name, utils::operation_type::WRITE);
-    ctx->complete->complete(ctx->first_err);
-    if (ctx->free_buf && ctx->buf) {
-        spdk_free(ctx->buf);
-    }
+    ctx->complete->complete(obj_errno);
     delete ctx;
 }
 
 void osd_stm::write_obj(const std::string& obj_name, uint64_t offset,
                         const std::string& data, uint64_t raft_write_index,
                         utils::context *complete){
-    const bool use_aos =
-        (_aos != nullptr) &&
-        (_engine_mode == object_engine_mode::aos ||
-         _engine_mode == object_engine_mode::shadow);
-    const bool use_blob =
-        (_engine_mode == object_engine_mode::blob) ||
-        (_engine_mode == object_engine_mode::shadow) ||
-        (_aos == nullptr);
-
-    // Blob path needs DMA-aligned buffer; AOS path copies internally.
-    char* buf = nullptr;
-    if (use_blob) {
-        uint64_t len = utils::align_up<uint64_t>(data.size(), 512 * BLOCK_UNITS);
-        buf = (char*)spdk_zmalloc(len, 0x1000, NULL, _sockid, SPDK_MALLOC_DMA);
-        if (buf == nullptr) {
-            complete->complete(-ENOMEM);
-            return;
-        }
-        memcpy(buf, data.c_str(), data.size());
+    if (_aos == nullptr) {
+        SPDK_ERRLOG("write_obj without AOS pg %s\n", get_pg_name().c_str());
+        complete->complete(-ENODEV);
+        return;
     }
 
-    write_obj_ctx * ctx = new write_obj_ctx{this, obj_name, buf, complete};
-    ctx->remaining = (use_aos && use_blob) ? 2 : 1;
-    ctx->free_buf = use_blob;
-
-    SPDK_DEBUGLOG(osd, "write obj %s pg: %s raft_idx %lu aos=%d blob=%d core %u\n",
+    write_obj_ctx * ctx = new write_obj_ctx{this, obj_name, complete};
+    SPDK_DEBUGLOG(osd, "write obj %s pg: %s raft_idx %lu aos core %u\n",
         obj_name.c_str(), get_pg_name().c_str(), raft_write_index,
-        use_aos ? 1 : 0, use_blob ? 1 : 0,
         core_sharded::get_core_sharded().this_shard_id());
 
-    if (use_aos) {
-        _aos->apply(_pool_id, _pg_id, obj_name, offset, data.data(), data.size(),
-                    raft_write_index, /*image_snap_seq=*/0, write_obj_done, ctx);
-    }
-    if (use_blob) {
-        std::map<std::string, xattr_val_type> xattr;
-        xattr["type"] = blob_type::object;
-        xattr["pg"] = get_pg_name();
-        _store.write(xattr, obj_name, offset, buf, data.size(), write_obj_done,
-                     ctx);
-    }
+    _aos->apply(_pool_id, _pg_id, obj_name, offset, data.data(), data.size(),
+                raft_write_index, /*image_snap_seq=*/0, write_obj_done, ctx);
 }
 
 void osd_stm::delete_obj(const std::string& obj_name, uint64_t raft_write_index,
                          utils::context *complete){
-    if (_aos != nullptr &&
-        (_engine_mode == object_engine_mode::aos ||
-         _engine_mode == object_engine_mode::shadow)) {
-        struct del_ctx {
-            osd_stm* stm;
-            std::string name;
-            utils::context* complete;
-        };
-        auto* d = new del_ctx{this, obj_name, complete};
-        _aos->remove(
-            _pool_id, _pg_id, obj_name, raft_write_index, /*image*/ 0,
-            [](void* a, int err) {
-                auto* c = static_cast<del_ctx*>(a);
-                c->stm->unlock(c->name, utils::operation_type::DELETE);
-                c->complete->complete(err);
-                delete c;
-            },
-            d);
+    if (_aos == nullptr) {
+        _object_rw_lock.unlock(obj_name, utils::operation_type::DELETE);
+        complete->complete(-ENODEV);
         return;
     }
-    // Legacy blob path: delete is still a no-op at object layer.
-    _object_rw_lock.unlock(obj_name, utils::operation_type::DELETE);
-    complete->complete(err::E_SUCCESS);
+    struct del_ctx {
+        osd_stm* stm;
+        std::string name;
+        utils::context* complete;
+    };
+    auto* d = new del_ctx{this, obj_name, complete};
+    _aos->remove(
+        _pool_id, _pg_id, obj_name, raft_write_index, /*image*/ 0,
+        [](void* a, int err) {
+            auto* c = static_cast<del_ctx*>(a);
+            c->stm->unlock(c->name, utils::operation_type::DELETE);
+            c->complete->complete(err);
+            delete c;
+        },
+        d);
+}
+
+void osd_stm::write_install_object(const std::string& obj_name, char* buf,
+                                   std::size_t size, uint64_t snapshot_index,
+                                   object_rw_complete cb_fn, void* arg) {
+    if (_aos == nullptr) {
+        if (cb_fn) {
+            cb_fn(arg, -ENODEV);
+        }
+        return;
+    }
+    _aos->apply(_pool_id, _pg_id, obj_name, /*offset*/ 0, buf, size,
+                snapshot_index, /*image*/ 0, std::move(cb_fn), arg);
 }
 
 
@@ -253,15 +317,15 @@ void osd_stm::write_and_wait(
 }
 
 struct read_obj_ctx{
-    char* buf;
-    utils::context *complete;
-    osd::read_reply* response;
-    uint64_t size;
+    char* buf{nullptr};
+    utils::context *complete{nullptr};
+    osd::read_reply* response{nullptr};
+    uint64_t size{0};
 };
 
 void read_obj_done(void *arg, int obj_errno){
     read_obj_ctx * ctx = (read_obj_ctx *)arg;
-    if(obj_errno == 0){
+    if (obj_errno == 0) {
         ctx->response->set_data(ctx->buf, ctx->size);
     }
     ctx->complete->complete(obj_errno);
@@ -279,8 +343,6 @@ void osd_stm::read_and_wait(
         request->length(), response, done);
 
     auto read_func = [this, request, response, read_complete](){
-        //Whether to need to wait until first commit applied in the new term？ todo
-
         if(!linearization()){
             SPDK_INFOLOG(osd, "!linearization\n");
             read_complete->complete(err::RAFT_ERR_NOT_LEADER);
@@ -291,24 +353,26 @@ void osd_stm::read_and_wait(
                      request->pool_id(), request->pg_id(), request->object_name().c_str(), request->offset(),
                      request->length());
 
-        uint64_t len = utils::align_up<uint64_t>(request->length(), 512 * BLOCK_UNITS);
-        char* buf = (char*)spdk_zmalloc(len, 0x1000, NULL, _sockid, SPDK_MALLOC_DMA);
-        read_obj_ctx * ctx = new read_obj_ctx{buf, read_complete, response, request->length()};
-
-        const bool use_aos =
-            (_aos != nullptr) &&
-            (_engine_mode == object_engine_mode::aos ||
-             _engine_mode == object_engine_mode::shadow);
-        if (use_aos) {
-            _aos->read(_pool_id, _pg_id, request->object_name(),
-                       request->offset(), buf, request->length(),
-                       read_obj_done, ctx);
+        if (_aos == nullptr) {
+            read_complete->complete(-ENODEV);
             return;
         }
-        std::map<std::string, xattr_val_type> xattr;
-        xattr["type"] = blob_type::object;
-        xattr["pg"] = get_pg_name();
-        _store.read(xattr, request->object_name(), request->offset(), buf, request->length(), read_obj_done, ctx);
+
+        uint64_t len = utils::align_up<uint64_t>(request->length(), 512 * BLOCK_UNITS);
+        char* buf = (char*)spdk_zmalloc(len, 0x1000, NULL, _sockid, SPDK_MALLOC_DMA);
+        if (buf == nullptr) {
+            read_complete->complete(-ENOMEM);
+            return;
+        }
+        read_obj_ctx * ctx = new read_obj_ctx{};
+        ctx->buf = buf;
+        ctx->complete = read_complete;
+        ctx->response = response;
+        ctx->size = request->length();
+
+        _aos->read(_pool_id, _pg_id, request->object_name(),
+                   request->offset(), buf, request->length(),
+                   read_obj_done, ctx);
     };
 
     lock_complete *complete = new lock_complete(std::move(read_func));
@@ -344,5 +408,31 @@ void osd_stm::delete_and_wait(
 }
 
 void osd_stm::destroy_objects(object_complete cb_fn, void *arg){
-    _store.destroy(std::move(cb_fn), arg);
+    // Object data lives in AOS; drop PG epoch. Blob object_store is unused.
+    if (_aos != nullptr) {
+        _aos->delete_pg(
+            _pool_id, _pg_id,
+            [cb_fn = std::move(cb_fn)](void* a, int err) {
+                if (cb_fn) {
+                    cb_fn(a, err);
+                }
+            },
+            arg);
+        return;
+    }
+    if (cb_fn) {
+        cb_fn(arg, 0);
+    }
+}
+
+void osd_stm::stop(object_rw_complete cb_fn, void* arg) {
+    state_machine::stop();
+    // Do not touch blob object_store lifecycle for object data.
+    if (cb_fn) {
+        cb_fn(arg, 0);
+    }
+}
+
+void osd_stm::load_object(object_store::container /*objects*/) {
+    // Knife-1: blob object trees are ignored; AOS recovers from its own device.
 }
