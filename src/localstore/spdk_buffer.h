@@ -64,9 +64,9 @@ public:
     size_t remain() { return _size > _used ? _size - _used : 0; }
 
 private:
-    char*  _buf;
-    size_t _size;
-    size_t _used;
+    char*  _buf{nullptr};
+    size_t _size{0};
+    size_t _used{0};
 };
 
 
