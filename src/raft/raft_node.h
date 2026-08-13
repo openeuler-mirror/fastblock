@@ -19,7 +19,7 @@
 // #include "raft/configuration_manager.h"
 #include "rpc/raft_msg.pb.h"
 
-#include <absl/container/node_hash_map.h>
+#include <unordered_map>
 
 #define RAFT_NODE_VOTED_FOR_ME        (1 << 0)
 
@@ -178,9 +178,13 @@ class node_configuration;
 using each_node_func = std::function<void (std::shared_ptr<raft_node>)>;
 
 class raft_nodes{
-    using nodes_type = absl::node_hash_map<raft_node_id_t, std::shared_ptr<raft_node>>;
+    // Use std::unordered_map rather than absl::node_hash_map: under Debug
+    // builds with ASan, Abseil headers enable swisstable "generations" while
+    // system libabsl is typically built without ASan → ABI/layout mismatch
+    // that crashes on first contains/find of a default map (vstart create_pg).
+    using nodes_type = std::unordered_map<raft_node_id_t, std::shared_ptr<raft_node>>;
 public:
-    raft_nodes(){}
+    raft_nodes() = default;
 
     void update_with_node_configuration(node_configuration& cfg, 
             std::vector<std::shared_ptr<raft_node>> new_add_nodes = {});
