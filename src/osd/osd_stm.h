@@ -12,12 +12,13 @@
 #pragma once
 #include <string>
 #include <cstdint>
+#include <memory>
+#include <unordered_map>
+#include <vector>
 
 #include "raft/state_machine.h"
 #include "fastblock/rpc/osd_msg.pb.h"
 #include "localstore/aos/types.h"
-
-#include <vector>
 
 namespace fastblock::aos {
 class osd_store;
@@ -218,7 +219,9 @@ public:
     }
 
 private:
-    absl::flat_hash_map<std::string, std::unique_ptr<lock_type>> _lock_map;
+    // std::unordered_map: Abseil flat_hash_map under ASan+system-libabsl
+    // crashes on empty-map contains (swisstable generations ABI mismatch).
+    std::unordered_map<std::string, std::unique_ptr<lock_type>> _lock_map;
     const bool _disable_flag;
 };
 
