@@ -10,14 +10,240 @@
  */
 
 #include "partition_manager.h"
+#include "spdk/bdev.h"
 #include "spdk/env.h"
 #include "spdk/log.h"
 #include "localstore/blob_manager.h"
 #include "localstore/disk_log.h"
+#include "localstore/storage_manager.h"
+#include "localstore/aos/aos_runtime.h"
 #include "raft/pg_group.h"
 #include "mon_client.h"
 
+#include <atomic>
+#include <cerrno>
+
 SPDK_LOG_REGISTER_COMPONENT(osd)
+
+void partition_manager::configure_aos(std::string aos_bdev_name,
+                                      uint64_t segment_size) {
+  _aos_bdev_name = std::move(aos_bdev_name);
+  if (segment_size > 0) {
+    _aos_segment_size = segment_size;
+  }
+  SPDK_NOTICELOG("partition_manager configure_aos bdev=%s segment=%lu (AOS-only objects)\n",
+                 _aos_bdev_name.c_str(), _aos_segment_size);
+}
+
+// After AOS open/format/recover, attach shard KV to AOS engine (design v2 P2).
+static void attach_aos_kv_all_shards(partition_manager* pm, pm_complete cb_fn,
+                                     void* arg) {
+  const uint32_t shard_num =
+      static_cast<uint32_t>(core_sharded::get_core_sharded().count());
+  if (shard_num == 0) {
+    if (cb_fn) {
+      cb_fn(arg, 0);
+    }
+    return;
+  }
+  struct actx {
+    pm_complete cb;
+    void* arg{nullptr};
+    std::atomic<int> first_err{0};
+    std::atomic<uint32_t> remaining{0};
+  };
+  auto* c = new actx;
+  c->cb = std::move(cb_fn);
+  c->arg = arg;
+  c->remaining.store(shard_num);
+
+  auto one_done = [](void* a, int err) {
+    auto* c = static_cast<actx*>(a);
+    if (err != 0) {
+      int expected = 0;
+      c->first_err.compare_exchange_strong(expected, err);
+    }
+    if (c->remaining.fetch_sub(1) == 1) {
+      if (c->cb) {
+        c->cb(c->arg, c->first_err.load());
+      }
+      delete c;
+    }
+  };
+
+  for (uint32_t sid = 0; sid < shard_num; ++sid) {
+    pm->get_shard().invoke_on(sid, [pm, sid, c, one_done]() {
+      auto* rt = pm->aos_runtime(sid);
+      if (rt == nullptr || rt->kv() == nullptr) {
+        one_done(c, -ENODEV);
+        return;
+      }
+      global_storage(sid).attach_aos_kv(rt->kv(), one_done, c);
+    });
+  }
+}
+
+void partition_manager::start_aos(bool format, pm_complete cb_fn, void* arg) {
+  if (_aos_bdev_name.empty()) {
+    SPDK_ERRLOG("AOS bdev name is empty (object path requires AOS)\n");
+    if (cb_fn) {
+      cb_fn(arg, -EINVAL);
+    }
+    return;
+  }
+
+  struct spdk_bdev* bdev = spdk_bdev_get_by_name(_aos_bdev_name.c_str());
+  if (bdev == nullptr) {
+    SPDK_ERRLOG("aos bdev %s not found\n", _aos_bdev_name.c_str());
+    if (cb_fn) {
+      cb_fn(arg, -ENODEV);
+    }
+    return;
+  }
+  const uint32_t block_size = spdk_bdev_get_block_size(bdev);
+  const uint64_t capacity =
+      spdk_bdev_get_num_blocks(bdev) * static_cast<uint64_t>(block_size);
+  const uint32_t shard_num = static_cast<uint32_t>(_aos_runtime.size());
+  if (shard_num == 0) {
+    if (cb_fn) {
+      cb_fn(arg, -EINVAL);
+    }
+    return;
+  }
+
+  struct start_ctx {
+    partition_manager* pm{nullptr};
+    pm_complete cb;
+    void* arg{nullptr};
+    std::atomic<int> first_err{0};
+    std::atomic<uint32_t> remaining{0};
+  };
+  auto* ctx = new start_ctx;
+  ctx->pm = this;
+  ctx->cb = std::move(cb_fn);
+  ctx->arg = arg;
+  ctx->remaining.store(shard_num);
+
+  auto finish_one = [](void* a, int err) {
+    auto* c = static_cast<start_ctx*>(a);
+    if (err != 0) {
+      int expected = 0;
+      c->first_err.compare_exchange_strong(expected, err);
+    }
+    if (c->remaining.fetch_sub(1) == 1) {
+      const int open_err = c->first_err.load();
+      if (open_err != 0) {
+        if (c->cb) {
+          c->cb(c->arg, open_err);
+        }
+        delete c;
+        return;
+      }
+      // Wire global_storage kv to AOS engines.
+      attach_aos_kv_all_shards(c->pm, std::move(c->cb), c->arg);
+      delete c;
+    }
+  };
+
+  for (uint32_t shard_id = 0; shard_id < shard_num; ++shard_id) {
+    uint64_t off = 0;
+    uint64_t len = 0;
+    if (!fastblock::aos::compute_shard_region(capacity, shard_num, shard_id,
+                                              &off, &len)) {
+      SPDK_ERRLOG("aos region too small capacity=%lu shards=%u\n", capacity,
+                  shard_num);
+      finish_one(ctx, -ENOSPC);
+      continue;
+    }
+    _shard.invoke_on(
+        shard_id,
+        [this, shard_id, off, len, format, finish_one, ctx]() {
+          auto* rt = _aos_runtime[shard_id].get();
+          int rc = rt->open(_aos_bdev_name, off, len, _aos_segment_size);
+          if (rc != 0) {
+            finish_one(ctx, rc);
+            return;
+          }
+          if (format) {
+            rt->format(finish_one, ctx);
+          } else {
+            rt->recover(finish_one, ctx);
+          }
+        });
+  }
+}
+
+void partition_manager::stop_aos(pm_complete cb_fn, void* arg) {
+  if (_aos_bdev_name.empty()) {
+    if (cb_fn) {
+      cb_fn(arg, 0);
+    }
+    return;
+  }
+  const uint32_t shard_num = static_cast<uint32_t>(_aos_runtime.size());
+  if (shard_num == 0) {
+    if (cb_fn) {
+      cb_fn(arg, 0);
+    }
+    return;
+  }
+  struct stop_ctx {
+    pm_complete cb;
+    void* arg{nullptr};
+    std::atomic<uint32_t> remaining{0};
+  };
+  auto* ctx = new stop_ctx;
+  ctx->cb = std::move(cb_fn);
+  ctx->arg = arg;
+  ctx->remaining.store(shard_num);
+  for (uint32_t shard_id = 0; shard_id < shard_num; ++shard_id) {
+    _shard.invoke_on(shard_id, [this, shard_id, ctx]() {
+      if (shard_id < _aos_runtime.size() && _aos_runtime[shard_id]) {
+        _aos_runtime[shard_id]->close();
+      }
+      if (ctx->remaining.fetch_sub(1) == 1) {
+        if (ctx->cb) {
+          ctx->cb(ctx->arg, 0);
+        }
+        delete ctx;
+      }
+    });
+  }
+}
+
+void partition_manager::ensure_aos_pg(uint32_t shard_id, uint64_t pool_id,
+                                     uint64_t pg_id,
+                                     std::shared_ptr<osd_stm> sm,
+                                     pm_complete cb_fn, void* arg) {
+  auto* store = aos_store(shard_id);
+  if (store == nullptr || !sm) {
+    SPDK_ERRLOG("ensure_aos_pg: aos not ready shard %u pg %lu.%lu\n", shard_id,
+                pool_id, pg_id);
+    if (cb_fn) {
+      cb_fn(arg, -ENODEV);
+    }
+    return;
+  }
+
+  auto attach = [sm, store, pool_id, pg_id, cb_fn = std::move(cb_fn),
+                 arg](int err) {
+    if (err == 0) {
+      sm->attach_aos(store, pool_id, pg_id);
+    }
+    if (cb_fn) {
+      cb_fn(arg, err);
+    }
+  };
+
+  if (store->get_active_pg(pool_id, pg_id) != nullptr) {
+    attach(0);
+    return;
+  }
+  store->create_pg(
+      pool_id, pg_id,
+      [attach = std::move(attach)](void* /*a*/, int err) { attach(err); },
+      nullptr);
+}
 
 bool partition_manager::get_pg_shard(uint64_t pool_id, uint64_t pg_id, uint32_t &shard_id){
     std::string name = pg_id_to_name(pool_id, pg_id);
@@ -100,11 +326,26 @@ static void make_log_done(void *arg, struct disk_log* dlog, int rberrno){
 
     auto sm = std::make_shared<osd_stm>();
     sm->set_pg(pg);
-    pm->add_osd_stm(mlc->pool_id, mlc->pg_id, mlc->shard_id, sm);
-    pm->get_pg_group().create_pg(sm, mlc->shard_id, mlc->pool_id, mlc->pg_id, std::move(mlc->osds),
-            dlog, pm->get_mon_client());
-    mlc->cb_fn(mlc->arg, rberrno);
-    delete mlc;
+    // Attach AOS (if enabled) before raft PG is created so apply path is ready.
+    pm->ensure_aos_pg(
+        mlc->shard_id, mlc->pool_id, mlc->pg_id, sm,
+        [mlc, sm, dlog, pg = std::move(pg)](void* /*a*/, int aerr) {
+          if (aerr != 0) {
+            SPDK_ERRLOG("pg %lu.%lu ensure_aos_pg failed: %d\n", mlc->pool_id,
+                        mlc->pg_id, aerr);
+            delete dlog;
+            mlc->cb_fn(mlc->arg, aerr);
+            delete mlc;
+            return;
+          }
+          mlc->pm->add_osd_stm(mlc->pool_id, mlc->pg_id, mlc->shard_id, sm);
+          mlc->pm->get_pg_group().create_pg(
+              sm, mlc->shard_id, mlc->pool_id, mlc->pg_id, std::move(mlc->osds),
+              dlog, mlc->pm->get_mon_client());
+          mlc->cb_fn(mlc->arg, 0);
+          delete mlc;
+        },
+        nullptr);
 }
 
 void partition_manager::create_pg(
@@ -113,7 +354,31 @@ void partition_manager::create_pg(
     make_log_context *ctx = new make_log_context{.pool_id = pool_id, .pg_id = pg_id, .osds = std::move(osds),
                     .shard_id = shard_id, .revision_id = revision_id, .pm = this, .cb_fn = std::move(cb_fn), .arg = arg};
     std::string pg = pg_id_to_name(pool_id, pg_id);
-    make_disk_log(global_blobstore(shard_id), global_io_channel(shard_id), pg, make_log_done, ctx, shard_id);
+    // design v2 P3: AOS log_store only (no blob disk_log production path).
+    auto* store = aos_store(shard_id);
+    if (store == nullptr) {
+        SPDK_ERRLOG("create_pg %lu.%lu: AOS store not ready (blob log removed)\n",
+                    pool_id, pg_id);
+        ctx->cb_fn(ctx->arg, -ENODEV);
+        delete ctx;
+        return;
+    }
+    store->create_pg(
+        pool_id, pg_id,
+        [store, ctx, pool_id, pg_id](void* /*a*/, int err) {
+          if (err != 0) {
+            SPDK_ERRLOG("aos create_pg for log failed pg %lu.%lu: %d\n",
+                        pool_id, pg_id, err);
+            ctx->cb_fn(ctx->arg, err);
+            delete ctx;
+            return;
+          }
+          const uint64_t epoch = store->serving_epoch(pool_id, pg_id);
+          auto* lg = store->get_or_create_log(pool_id, pg_id, epoch);
+          make_aos_disk_log(lg, make_log_done, ctx);
+        },
+        nullptr);
+    (void)pg;
 }
 
 int partition_manager::osd_state_is_not_active(){
@@ -277,8 +542,26 @@ int partition_manager::create_partition(
 
 void partition_manager::load_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob,
                             object_store::container objects, pm_complete cb_fn, void *arg){
-    auto dlog = make_disk_log(global_blobstore(shard_id), global_io_channel(shard_id), blob);
-    // TODO: Why create osd_stm first and then load? Could we construct object_store directly during creation?
+    disk_log* dlog = nullptr;
+    auto* store = aos_store(shard_id);
+    if (store == nullptr) {
+        SPDK_ERRLOG("load_pg %lu.%lu: AOS store not ready (blob log removed)\n",
+                    pool_id, pg_id);
+        if (cb_fn) {
+            cb_fn(arg, -ENODEV);
+        }
+        return;
+    }
+    // design v2 P3: log recovered with AOS only.
+    uint64_t epoch = store->serving_epoch(pool_id, pg_id);
+    if (epoch == 0) {
+        epoch = store->latest_epoch(pool_id, pg_id);
+    }
+    auto* lg = store->get_or_create_log(pool_id, pg_id, epoch);
+    dlog = new disk_log(lg);
+    dlog->start();
+    (void)blob;
+    // TODO:为什么要先创建osd_stm，然后再load呢？直接创建的时候构造object_store不可以吗？
     auto sm = std::make_shared<osd_stm>();
 
     get_pg_group().load_pg(sm, shard_id, pool_id, pg_id, dlog,
@@ -291,10 +574,23 @@ void partition_manager::load_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg
         std::string pg = pg_id_to_name(pool_id, pg_id);
         SPDK_INFOLOG(osd, "[test] create pg:%s!\n", pg.c_str());
         sm->set_pg(pg);
-        sm->load_object(std::move(objects));
-        add_osd_stm(pool_id, pg_id, shard_id, sm);
-        SPDK_INFOLOG(osd, "load pg done\n");
-        cb_fn(arg, lerrno);
+        (void)objects; // blob object trees ignored (AOS-only object path)
+        ensure_aos_pg(
+            shard_id, pool_id, pg_id, sm,
+            [this, pool_id, pg_id, shard_id, sm, cb_fn = std::move(cb_fn),
+             arg](void* /*a*/, int aerr) {
+              if (aerr != 0) {
+                SPDK_ERRLOG("load pg %lu.%lu ensure_aos_pg failed: %d\n",
+                            pool_id, pg_id, aerr);
+                cb_fn(arg, aerr);
+                return;
+              }
+              add_osd_stm(pool_id, pg_id, shard_id, sm);
+              SPDK_INFOLOG(osd, "load pg done (aos attached=%d)\n",
+                           sm->aos_attached() ? 1 : 0);
+              cb_fn(arg, 0);
+            },
+            nullptr);
       },
       arg, _mon_client);
 }
