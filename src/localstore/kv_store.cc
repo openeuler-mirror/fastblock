@@ -144,3 +144,18 @@ void load_kvstore(spdk_blob_id blob_id, spdk_blob_id checkpoint_blob_id,
                                   .shard_id = shard_id};
   open_rolling_blob(blob_id, bs, channel, open_rolling_blob_done, ctx);
 }
+
+void make_aos_kvstore(fastblock::aos::kv_engine* eng, make_kvs_complete cb_fn,
+                      void* arg) {
+  if (eng == nullptr) {
+    if (cb_fn) {
+      cb_fn(arg, nullptr, -EINVAL);
+    }
+    return;
+  }
+  auto* kvs = new kvstore(eng);
+  kvs->start();
+  if (cb_fn) {
+    cb_fn(arg, kvs, 0);
+  }
+}

@@ -12,6 +12,8 @@
 
 #include "device_backend.h"
 #include "layout.h"
+#include "kv_engine.h"
+#include "log_store.h"
 #include "pg_store.h"
 #include "segment_allocator.h"
 #include "superblock.h"
@@ -23,6 +25,7 @@
 #include <memory>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 namespace fastblock::aos {
 
@@ -65,6 +68,12 @@ public:
 
   size_t pg_count() const { return pgs_.size(); }
 
+  /**
+   * Distinct (pool_id, pg_id) known after recover/manifest (latest_epoch > 0).
+   * Used by OSD load to rebuild raft PGs without blobstore scan (design v2 P3).
+   */
+  std::vector<std::pair<uint64_t, uint64_t>> list_pg_ids() const;
+
   // Latest store_epoch for (pool, pg), or 0 if none.
   uint64_t latest_epoch(uint64_t pool_id, uint64_t pg_id) const;
 
@@ -81,6 +90,20 @@ public:
   pg_store* get_latest_pg(uint64_t pool_id, uint64_t pg_id);
   /** Active serving PG (install-aware). */
   pg_store* get_active_pg(uint64_t pool_id, uint64_t pg_id);
+
+  /**
+   * Raft log stream for PG (design v2 §6). Shares segment allocator with objects.
+   * Creates on first use; recovered from raft_log_entry records on recover().
+   */
+  log_store* get_or_create_log(uint64_t pool_id, uint64_t pg_id,
+                               uint64_t store_epoch);
+  log_store* get_log(uint64_t pool_id, uint64_t pg_id, uint64_t store_epoch);
+  /** Log for active/serving epoch of (pool,pg). */
+  log_store* get_active_log(uint64_t pool_id, uint64_t pg_id);
+
+  /** Optional shard-level KV for recover routing (not owned). */
+  void set_kv_engine(kv_engine* kv) { kv_ = kv; }
+  kv_engine* kv_engine_ptr() const { return kv_; }
 
   /** Drop one epoch instance from memory (install abort / post-activate). */
   void drop_pg_epoch(uint64_t pool_id, uint64_t pg_id, uint64_t epoch);
@@ -128,14 +151,16 @@ public:
   uint32_t gc_once(bool persist = true);
 
   /**
-   * One GC rewrite pass (design §11.4 skeleton): pick the first sealed segment
-   * that still has live head extents, rewrite those extents out via
-   * pg_store::rewrite_extent (gc_rewrite records), then free the segment if
-   * no live refs remain (pins may block free — correct).
+   * One GC rewrite pass (design §11.4): pick the sealed segment with the
+   * lowest live-byte ratio (among those with live heads), rewrite up to
+   * max_extents head extents out via pg_store::rewrite_extent, then free
+   * fully dead sealed segments (pins may block free — correct).
    * Returns number of extents rewritten. Optional persist after free.
    * Mem backend completes inline; SPDK path should be driven on reactor.
+   *
+   * max_extents: rate-limit (0 => rewrite all live heads in victim).
    */
-  uint32_t gc_rewrite_once(bool persist = true);
+  uint32_t gc_rewrite_once(bool persist = true, uint32_t max_extents = 0);
 
   /**
    * Raft/OSD STM paths against the serving (active) generation (M4).
@@ -179,6 +204,8 @@ private:
   uint64_t manifest_generation_{0};
   std::shared_ptr<segment_allocator> alloc_;
   std::map<pg_key, std::unique_ptr<pg_store>> pgs_;
+  std::map<pg_key, std::unique_ptr<log_store>> logs_;
+  kv_engine* kv_{nullptr}; // not owned
   // (pool, pg) -> max epoch ever created (from manifest + create_pg)
   std::map<std::pair<uint64_t, uint64_t>, uint64_t> latest_epoch_;
   // (pool, pg) -> serving epoch for reads (0 => use latest_epoch)

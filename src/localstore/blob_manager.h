@@ -49,6 +49,9 @@ blob_tree& global_blob_tree(uint32_t shard_id);
 
 blob_pool& global_blob_pool(uint32_t shard_id);
 
+/** False when OSD runs AOS-only and never called blobstore_init/load (P3). */
+bool blobstore_is_initialized();
+
 extern std::vector<std::pair<uint64_t, uint64_t>> g_bs_space;
 
 using bm_complete = std::function<void (void *, int)>;

@@ -1,3 +1,5 @@
+add_subdirectory(aos)
+
 compile_library(
   NAME localstore
   SRCS
@@ -16,6 +18,7 @@ compile_library(
   spdk::spdk
   absl::flat_hash_map
   fastblock_base
+  aos
 
   COPTS
   -Wno-error=unused-variable
@@ -24,4 +27,3 @@ compile_library(
 )
 
 add_subdirectory(demo)
-add_subdirectory(aos)
