@@ -15,17 +15,13 @@
 
 #include "raft/state_machine.h"
 #include "fastblock/rpc/osd_msg.pb.h"
+#include "localstore/aos/types.h"
+
+#include <vector>
 
 namespace fastblock::aos {
 class osd_store;
 }
-
-// Object data engine selection for osd_stm apply path (design M4).
-enum class object_engine_mode : uint8_t {
-  blob = 0,   // legacy blobstore object_store (default)
-  aos = 1,    // append-only store primary
-  shadow = 2, // write AOS + blob; read from AOS (divergence logged later)
-};
 
 
 // Allows READ-READ, or WRITE-WRITE.
@@ -243,31 +239,45 @@ public:
     void delete_and_wait(const osd::delete_request* request, osd::delete_reply* response, google::protobuf::Closure* done);
 
     /**
-     * Attach AppendOnlyStore for this PG (M4). Lifetime of store must outlive
-     * the stm. pool_id/pg_id identify the serving generation in osd_store.
-     * Default mode remains blob until this is called.
+     * Attach AppendOnlyStore for this PG. Required for all object I/O (knife-1:
+     * AOS is the only object path; no blob object fallback).
      */
     void attach_aos(fastblock::aos::osd_store* store, uint64_t pool_id,
-                    uint64_t pg_id, object_engine_mode mode = object_engine_mode::aos);
+                    uint64_t pg_id);
 
-    object_engine_mode engine_mode() const { return _engine_mode; }
     bool aos_attached() const { return _aos != nullptr; }
+    fastblock::aos::osd_store* aos_store() { return _aos; }
+    uint64_t aos_pool_id() const { return _pool_id; }
+    uint64_t aos_pg_id() const { return _pg_id; }
+
+    bool uses_aos_objects() const override;
+    std::vector<std::string> list_live_objects() override;
+    bool object_exists(const std::string& name) override;
+    void pin_recovery_view(uint64_t raft_apply_index, uint64_t raft_term,
+                           object_rw_complete cb_fn, void* arg) override;
+    void unpin_recovery_view(object_rw_complete cb_fn, void* arg) override;
+    void read_recovery_object(const std::string& object_name, char* buf,
+                              uint64_t len, object_rw_complete cb_fn,
+                              void* arg) override;
+
+    void write_install_object(const std::string& obj_name, char* buf,
+                              std::size_t size, uint64_t snapshot_index,
+                              object_rw_complete cb_fn, void* arg) override;
+
+    void load_object(object_store::container objects) override;
 
     auto unlock(const std::string& key, const utils::operation_type type){
         return _object_rw_lock.unlock(key, type);
     }
 
-    void stop(object_rw_complete cb_fn, void* arg){
-        state_machine::stop();
-        _store.stop(cb_fn, arg);
-    }
+    void stop(object_rw_complete cb_fn, void* arg);
 
     void destroy_objects(object_complete cb_fn, void *arg);
+
 private:
     lock_manager<op_type_excl_lock<utils::operation_type>>   _object_rw_lock;
     uint32_t  _sockid;
     fastblock::aos::osd_store* _aos{nullptr};
     uint64_t _pool_id{0};
     uint64_t _pg_id{0};
-    object_engine_mode _engine_mode{object_engine_mode::blob};
 };
