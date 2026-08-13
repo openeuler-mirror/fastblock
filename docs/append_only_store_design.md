@@ -88,7 +88,8 @@ v2 进一步要求：**一条盘栈服务全部本地持久状态**，而不是�
 - [x] demo-only 标注：`make_disk_log` / `make_kvstore` / `blobstore_init`  
 - [ ] 从仓库物理删除 `object_store`/`rolling_blob`（仍被 demo 链接）  
 - [ ] 部署文档与 mkfs 仅 AOS 布局  
-- [ ] fsck / dump / scrub 工具  
+- [x] dump / light fsck 库：`aos_dump`（`scan_image` + `format_report`）；CLI/scrub 后续  
+
 
 ### 2.4 非目标（仍适用）
 
@@ -538,7 +539,7 @@ Checkpoint **不是唯一真相**；record 自描述 + 扫盘可重建。
 - [x] `storage_manager` 永不建 blob kv；demo 仍可直调 `make_kvstore`  
 - [x] 文档：`aos/README`、`localstore/README`、设计 v2 状态  
 - [ ] 物理删除 `object_store.cc` / `rolling_blob` / blob_manager 生产依赖（需迁移 demo）  
-- [ ] fsck/dump  
+- [x] dump/fsck 库 `aos_dump.{h,cc}` + 单测；独立 CLI 后续  
 - [ ] 部署脚本仅 AOS 盘  
 
 ### P5+ — image/CSI、ZNS、性能
