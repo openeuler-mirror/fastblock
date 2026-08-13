@@ -22,6 +22,7 @@
 #include "rpc/server.h"
 #include "localstore/blob_manager.h"
 #include "localstore/storage_manager.h"
+#include "localstore/aos/aos_runtime.h"
 #include "data_statistics.h"
 #include "utils/get_core.h"
 #include "mon_client.h"
@@ -51,6 +52,7 @@ enum class stop_state {
     raw_server,
     monitor_client,
     partition_manager,
+    aos_store,
     connection_cache,
     rpc_server,
     blobstore
@@ -72,6 +74,11 @@ typedef struct
     spdk_thread *cur_thread;
     std::string bdev_addr;
     std::string bdev_type;
+    // Append-only object data plane (required; knife-1 AOS-only objects).
+    std::string aos_bdev_disk; // SPDK bdev name
+    std::string aos_bdev_addr; // aio path or nvme BDF
+    std::string aos_bdev_type; // "aio" | "nvme"
+    uint64_t aos_segment_size{fastblock::aos::kDefaultSegmentSize};
     int raft_heartbeat_period_time_msec;
     int raft_lease_time_msec;
     int raft_election_timeout_msec;
@@ -105,6 +112,8 @@ static constexpr const char *k_osd_iobuf_large_pool_count_key = "osd_iobuf_large
 
 static int save_rpc_port(uint32_t shard_id, uint32_t port);
 static std::optional<uint32_t> get_rpc_port(uint32_t shard_id);
+static std::optional<std::string> get_file_data(std::string &file_name);
+static bool check_disk_addr_valid(std::string type, std::string addr);
 
 static void
 block_usage(void) {
@@ -116,6 +125,7 @@ block_usage(void) {
     printf("-U, --uuid <uuid> the uuid of the osd, used with --mkfs\n");
     printf("-S, --core-num <num> the number of cpu core\n");
     printf("-N, --numa-node <id> the id of numa node\n");
+    printf("json aos_disk / conf aos_disk file: required device for AOS object data\n");
 }
 
 static struct option g_cmdline_opts[] = {
@@ -420,6 +430,19 @@ static void pm_init(void *arg){
     );
 }
 
+static void aos_mkfs_done(void* arg, int aerr) {
+    if (aerr != 0) {
+        SPDK_ERRLOG("AOS format failed: %d\n", aerr);
+        osd_exit_code = aerr;
+        std::raise(SIGINT);
+        return;
+    }
+    SPDK_NOTICELOG("mkfs done (AOS-only), thread id %lu\n",
+                   utils::get_spdk_thread_id());
+    osd_exit_code = 0;
+    std::raise(SIGINT);
+}
+
 void storage_init_complete(void *arg, int rberrno){
     if(rberrno != 0){
 		SPDK_ERRLOG("Failed to initialize the storage system: %s. thread id %lu\n",
@@ -429,9 +452,11 @@ void storage_init_complete(void *arg, int rberrno){
 		return;
 	}
 
-    SPDK_NOTICELOG("mkfs done, thread id %lu\n", utils::get_spdk_thread_id());
-    osd_exit_code = 0;
-    std::raise(SIGINT);
+    server_t* server = static_cast<server_t*>(arg);
+    // mkfs path: format AOS after kv, then exit.
+    pm_init(server);
+    global_pm->configure_aos(server->aos_bdev_disk, server->aos_segment_size);
+    global_pm->start_aos(/*format=*/true, aos_mkfs_done, server);
 }
 
 static inline std::string get_bdev_disk_addr_file();
@@ -566,8 +591,18 @@ public:
             objects = std::move(iter->second);
         }
 
-        auto blob_size = spdk_blob_get_num_clusters(blob) * spdk_bs_get_cluster_size(global_blobstore(shard_id));
-        SPDK_INFOLOG(osd, "load blob, blob id %ld blob size %lu\n", spdk_blob_get_id(blob), blob_size);
+        if (blob != nullptr) {
+          auto* bs = global_blobstore(shard_id);
+          if (bs != nullptr) {
+            auto blob_size = spdk_blob_get_num_clusters(blob) *
+                             spdk_bs_get_cluster_size(bs);
+            SPDK_INFOLOG(osd, "load blob, blob id %ld blob size %lu\n",
+                         spdk_blob_get_id(blob), blob_size);
+          }
+        } else {
+          SPDK_INFOLOG(osd, "load AOS pg %lu.%lu on shard %u\n", pool_id, pg_id,
+                       shard_id);
+        }
         load_op_ctx *op_ctx = new load_op_ctx{.ctx = ctx, .load = this,
                                             .complete = complete, .shard_id = shard_id};
         ctx->pm->load_partition(shard_id, pool_id, pg_id, blob, std::move(objects), start_continue, op_ctx);
@@ -724,11 +759,22 @@ struct pm_load_context : public utils::context{
             shard.invoke_on(
               shard_id,
               [this, shard_id, ctx, complete](){
-                auto &blobs = global_blob_tree(shard_id);
-                std::map<std::string, struct spdk_blob*> log_blobs = std::exchange(blobs.log_blobs, {});
-                std::map<std::string, object_store::container> object_blobs = std::exchange(blobs.object_blobs, {});
-                ctx->loads.on_shard(shard_id).set_blobs(std::move(log_blobs), std::move(object_blobs));
-
+                // design v2 P3: discover PGs from AOS recover, not blob xattr scan.
+                std::map<std::string, struct spdk_blob*> log_blobs;
+                std::map<std::string, object_store::container> object_blobs;
+                auto* store = ctx->pm->aos_store(shard_id);
+                if (store != nullptr) {
+                  for (const auto& id : store->list_pg_ids()) {
+                    const std::string name =
+                        pg_id_to_name(id.first, id.second);
+                    // nullptr blob: load_pg uses AOS log only.
+                    log_blobs.emplace(name, nullptr);
+                    SPDK_INFOLOG(osd, "AOS load discover pg %s on shard %u\n",
+                                 name.c_str(), shard_id);
+                  }
+                }
+                ctx->loads.on_shard(shard_id).set_blobs(std::move(log_blobs),
+                                                        std::move(object_blobs));
                 ctx->loads.on_shard(shard_id).start_load(shard_id, complete, ctx);
               });
         }
@@ -737,10 +783,19 @@ struct pm_load_context : public utils::context{
 
 static void osd_service_load(void *arg){
     server_t *server = (server_t *)arg;
-    pm_init(arg);
-
     pm_load_context *ctx = new pm_load_context{server, global_pm.get()};
 	global_pm->start(ctx, g_monitor_client);
+}
+
+static void aos_load_done(void* arg, int aerr) {
+    if (aerr != 0) {
+        SPDK_ERRLOG("AOS recover failed: %d\n", aerr);
+        osd_exit_code = aerr;
+        std::raise(SIGINT);
+        return;
+    }
+    SPDK_NOTICELOG("AOS recover done, continuing OSD load\n");
+    osd_service_load(arg);
 }
 
 void storage_load_complete(void *arg, int rberrno){
@@ -752,7 +807,10 @@ void storage_load_complete(void *arg, int rberrno){
 		return;
 	}
 
-    osd_service_load(arg);
+    server_t* server = static_cast<server_t*>(arg);
+    pm_init(server);
+    global_pm->configure_aos(server->aos_bdev_disk, server->aos_segment_size);
+    global_pm->start_aos(/*format=*/false, aos_load_done, server);
 }
 
 void disk_load_complete(void *arg, int rberrno){
@@ -820,19 +878,22 @@ static void block_started(server_t *server) {
     remove_bdev_json_file();
     if(server->bdev_type == "nvme")
         server->bdev_disk = server->bdev_disk + "n1";
+    if (server->aos_bdev_type == "nvme" && !server->aos_bdev_disk.empty()) {
+        server->aos_bdev_disk = server->aos_bdev_disk + "n1";
+    }
 
     buffer_pool_init();
     SPDK_INFOLOG(osd, "buffer_pool_init done, current g_mkfs is %d\n", g_mkfs);
+    // design v2 P3: production path is AOS-only. Skip blobstore_init/load;
+    // storage_manager defers kv to attach_aos_kv after start_aos.
     if (g_mkfs) {
-        // Initialize log disk
-        SPDK_INFOLOG(osd, "start calling blobstore_init\n");
-        blobstore_init(server->bdev_disk, server->osd_uuid, g_force,
-                disk_init_complete, server);
+        SPDK_NOTICELOG("AOS-only mkfs: skip blobstore_init, storage_init + AOS format\n");
+        storage_init(storage_init_complete, server);
         return;
     }
 
-    SPDK_INFOLOG(osd, "start calling blobstore_load\n");
-    blobstore_load(server->bdev_disk, disk_load_complete, server, &(server->osd_uuid));
+    SPDK_NOTICELOG("AOS-only load: skip blobstore_load, storage_load + AOS recover\n");
+    storage_load(storage_load_complete, server);
 }
 
 static void on_app_started(void* arg) {
@@ -850,6 +911,31 @@ static void on_app_started(void* arg) {
 // #endif
 }
 
+static void write_one_bdev_json(std::ofstream& ofs, const std::string& type,
+                                const std::string& name, const std::string& addr,
+                                bool trailing_comma) {
+    ofs << "             {\n";
+    if (type == "nvme") {
+        ofs << "               \"method\": \"bdev_nvme_attach_controller\",\n";
+        ofs << "               \"params\": {\n";
+        ofs << "                  \"name\": \"" << name << "\",\n";
+        ofs << "                  \"trtype\": \"pcie\",\n";
+        ofs << "                  \"traddr\": \"" << addr << "\"\n";
+    } else {
+        ofs << "               \"method\": \"bdev_aio_create\",\n";
+        ofs << "               \"params\": {\n";
+        ofs << "                  \"name\": \"" << name << "\",\n";
+        ofs << "                  \"block_size\": 512,\n";
+        ofs << "                  \"filename\": \"" << addr << "\"\n";
+    }
+    ofs << "               }\n";
+    ofs << "             }";
+    if (trailing_comma) {
+        ofs << ",";
+    }
+    ofs << "\n";
+}
+
 static void save_bdev_json(std::string& bdev_json_file, server_t& server){
     std::ofstream ofs(bdev_json_file);
 
@@ -859,34 +945,27 @@ static void save_bdev_json(std::string& bdev_json_file, server_t& server){
         ofs << "       {\n";
         ofs << "         \"subsystem\": \"bdev\",\n";
         ofs << "         \"config\": [\n";
-        ofs << "             {\n";
-      if(server.bdev_type == "nvme"){
-        ofs << "               \"method\": \"bdev_nvme_attach_controller\",\n";
-        ofs << "               \"params\": {\n";
-        ofs << "                  \"name\": \"";
-        ofs << server.bdev_disk;
-        ofs << "\",\n";
-        ofs << "                  \"trtype\": \"pcie\",\n";
-        ofs << "                  \"traddr\": \"";
-      }else{
-        ofs << "               \"method\": \"bdev_aio_create\",\n";
-        ofs << "               \"params\": {\n";
-        ofs << "                  \"name\": \"";
-        ofs << server.bdev_disk;
-        ofs << "\",\n";
-        ofs << "                  \"block_size\": 512,\n";
-        ofs << "                  \"filename\": \"";
-      }
-        ofs << server.bdev_addr;
-        ofs << "\"\n";
-        ofs << "               }\n";
-        ofs << "             }\n";
+        const bool has_aos = !server.aos_bdev_disk.empty() &&
+                             !server.aos_bdev_addr.empty();
+        write_one_bdev_json(ofs, server.bdev_type, server.bdev_disk,
+                            server.bdev_addr, has_aos);
+        if (has_aos) {
+            std::string aos_type =
+                server.aos_bdev_type.empty() ? server.bdev_type
+                                            : server.aos_bdev_type;
+            write_one_bdev_json(ofs, aos_type, server.aos_bdev_disk,
+                                server.aos_bdev_addr, false);
+        }
         ofs << "         ]\n";
         ofs << "       }\n";
         ofs << "    ]\n";
         ofs << "}\n";
         ofs.close();
     }
+}
+
+static inline std::string get_aos_disk_addr_file() {
+    return g_conf_path + "/osd-" + std::to_string(g_id) + "/aos_disk";
 }
 
 static int from_configuration(server_t* server) {
@@ -905,9 +984,50 @@ static int from_configuration(server_t* server) {
     server->node_id = g_id;
 
     std::string rdma_device_name = pt.get_child("rdma_device_name").get_value<std::string>();
+    (void)rdma_device_name;
 
     server->bdev_disk = g_bdev_type + current_osd_id;
     server->bdev_type = g_bdev_type;
+
+    if (pt.count("aos_segment_size") > 0) {
+        server->aos_segment_size = pt.get<uint64_t>("aos_segment_size");
+    }
+
+    // AOS object device is required (knife-1: no blob object path).
+    {
+        std::string aos_addr;
+        if (pt.count("aos_disk") > 0) {
+            aos_addr = pt.get<std::string>("aos_disk");
+        } else {
+            auto path = get_aos_disk_addr_file();
+            auto data = get_file_data(path);
+            if (data) {
+                aos_addr = data.value();
+            }
+        }
+        if (aos_addr.empty()) {
+            std::cerr << "aos_disk is required (json key or "
+                      << get_aos_disk_addr_file()
+                      << "); object data uses AppendOnlyStore only\n";
+            return -1;
+        }
+        server->aos_bdev_type =
+            pt.count("aos_bdev_type") > 0 ? pt.get<std::string>("aos_bdev_type")
+                                          : g_bdev_type;
+        if (server->aos_bdev_type != "aio" && server->aos_bdev_type != "nvme") {
+            std::cerr << "aos_bdev_type must be 'aio' or 'nvme'\n";
+            return -1;
+        }
+        if (!check_disk_addr_valid(server->aos_bdev_type, aos_addr)) {
+            return -1;
+        }
+        server->aos_bdev_addr = aos_addr;
+        server->aos_bdev_disk = server->aos_bdev_type + "_aos" + current_osd_id;
+        SPDK_NOTICELOG(
+            "AOS object device bdev=%s addr=%s segment=%lu\n",
+            server->aos_bdev_disk.c_str(), server->aos_bdev_addr.c_str(),
+            server->aos_segment_size);
+    }
 
     if (pt.count("mon_host") == 0) {
         std::cerr << "No monitor cluster is specified" << std::endl;
@@ -1014,10 +1134,20 @@ static void osd_stop(void *arg) noexcept {
         [[fallthrough]];
     }
     case stop_state::partition_manager: {
-        cur_stop_state = stop_state::connection_cache;
+        cur_stop_state = stop_state::aos_store;
         if (global_pm) {
             SPDK_NOTICELOG("Stopping the partition manager\n");
             global_pm->stop(on_pm_closed, nullptr);
+            return;
+        }
+        [[fallthrough]];
+    }
+    case stop_state::aos_store: {
+        cur_stop_state = stop_state::connection_cache;
+        if (global_pm) {
+            SPDK_NOTICELOG("Stopping AppendOnlyStore\n");
+            global_pm->stop_aos(
+                [](void* /*a*/, int /*err*/) { on_osd_stop(); }, nullptr);
             return;
         }
         [[fallthrough]];
