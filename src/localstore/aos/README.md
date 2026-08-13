@@ -16,9 +16,9 @@
 
 ```text
 osd_store / aos_runtime
-  ├── pg_store          # object_engine（已落地）
-  ├── log_store         # log_engine（P1，进行中）
-  ├── kv_engine         # kv_engine（P2，未做）
+  ├── pg_store          # object_engine ✅
+  ├── log_store         # log_engine ✅
+  ├── kv_engine         # kv_engine ✅
   ├── segment_allocator
   ├── superblock/manifest
   └── device_backend → spdk_bdev_backend
@@ -31,13 +31,13 @@ osd_store / aos_runtime
 | 引擎 | 状态 |
 |------|------|
 | object | **生产唯一路径**；强制 `aos_disk` |
-| log | **P1 已接入**：`log_store` + `disk_log(AOS)`；create/load PG 优先 AOS log |
-| kv | 设计已写（meta WAL+checkpoint）；仍 rolling_blob |
-| blobstore | 仍服务 **kv**（及无 AOS 时的 fallback log）；阶段 C 删除 |
+| log | **生产路径** `log_store` + `disk_log(AOS)` |
+| kv | **生产路径** `kv_engine` + `attach_aos_kv` |
+| blobstore | **生产不再 init/load**；代码库仍保留供 demo/test |
 
-Object 子系统细节见设计文档 §5；历史模块表见 git 历史 README。
+Object 子系统细节见设计文档 §5。
 
-## 启用（knife-1）
+## 启用
 
 ```json
 {
@@ -52,7 +52,7 @@ Object 子系统细节见设计文档 §5；历史模块表见 git 历史 README
 ## 构建与测试
 
 ```bash
-cmake --build build --target aos_m1_test -j$(nproc)
+cmake --build build --target aos_m1_test fastblock-osd -j$(nproc)
 ./build/src/localstore/aos/aos_m1_test
 ```
 
@@ -62,6 +62,6 @@ cmake --build build --target aos_m1_test -j$(nproc)
 - 设计：docs/append_only_store_design.md v2
 - 框架：SPDK reactor + device_backend
 - object：4K 对齐、max 4MiB
-- 无 blob object 生产路径
+- 生产无 blobstore / 无 blob object/log/kv
 - 无 POSIX 生产 IO
 ```
