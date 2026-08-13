@@ -182,7 +182,7 @@ void osd_stm::write_obj(const std::string& obj_name, uint64_t offset,
         core_sharded::get_core_sharded().this_shard_id());
 
     _aos->apply(_pool_id, _pg_id, obj_name, offset, data.data(), data.size(),
-                raft_write_index, /*image_snap_seq=*/0, write_obj_done, ctx);
+                raft_write_index, _image_snap_seq, write_obj_done, ctx);
 }
 
 void osd_stm::delete_obj(const std::string& obj_name, uint64_t raft_write_index,
@@ -199,7 +199,7 @@ void osd_stm::delete_obj(const std::string& obj_name, uint64_t raft_write_index,
     };
     auto* d = new del_ctx{this, obj_name, complete};
     _aos->remove(
-        _pool_id, _pg_id, obj_name, raft_write_index, /*image*/ 0,
+        _pool_id, _pg_id, obj_name, raft_write_index, _image_snap_seq,
         [](void* a, int err) {
             auto* c = static_cast<del_ctx*>(a);
             c->stm->unlock(c->name, utils::operation_type::DELETE);
@@ -207,6 +207,43 @@ void osd_stm::delete_obj(const std::string& obj_name, uint64_t raft_write_index,
             delete c;
         },
         d);
+}
+
+void osd_stm::create_image_snapshot(uint64_t image_snap_seq,
+                                    object_rw_complete cb, void* arg) {
+    if (_aos == nullptr) {
+        if (cb) {
+            cb(arg, -ENODEV);
+        }
+        return;
+    }
+    _aos->create_image_snapshot(_pool_id, _pg_id, image_snap_seq, std::move(cb),
+                                arg);
+}
+
+void osd_stm::release_image_snapshot(uint64_t image_snap_seq,
+                                     object_rw_complete cb, void* arg) {
+    if (_aos == nullptr) {
+        if (cb) {
+            cb(arg, -ENODEV);
+        }
+        return;
+    }
+    _aos->release_image_snapshot(_pool_id, _pg_id, image_snap_seq,
+                                 std::move(cb), arg);
+}
+
+void osd_stm::flatten_image(uint64_t parent_image_seq, uint64_t new_image_seq,
+                            uint64_t raft_write_index, object_rw_complete cb,
+                            void* arg) {
+    if (_aos == nullptr) {
+        if (cb) {
+            cb(arg, -ENODEV);
+        }
+        return;
+    }
+    _aos->flatten_image(_pool_id, _pg_id, parent_image_seq, new_image_seq,
+                        raft_write_index, std::move(cb), arg);
 }
 
 void osd_stm::write_install_object(const std::string& obj_name, char* buf,
