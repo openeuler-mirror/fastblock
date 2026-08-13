@@ -427,12 +427,7 @@ void osd_stm::destroy_objects(object_complete cb_fn, void *arg){
 
 void osd_stm::stop(object_rw_complete cb_fn, void* arg) {
     state_machine::stop();
-    // Do not touch blob object_store lifecycle for object data.
     if (cb_fn) {
         cb_fn(arg, 0);
     }
-}
-
-void osd_stm::load_object(object_store::container /*objects*/) {
-    // Knife-1: blob object trees are ignored; AOS recovers from its own device.
 }
