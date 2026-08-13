@@ -1,7 +1,7 @@
 # fastblock Append-Only Store（AOS）统一 Localstore 设计
 
 日期：2026-08-12（v2：AOS 管一切）  
-状态：**object + log + kv 引擎已落地；启动路径 AOS-only；P4 生产路径清理完成**（blob 实现仍留 demo）  
+状态：**object + log + kv 引擎已落地；启动路径 AOS-only；P4 工具/文档完成**（blob 实现仍留 demo，物理删库待做）  
 
 
 实现目录：`src/localstore/aos/`  
@@ -87,8 +87,9 @@ v2 进一步要求：**一条盘栈服务全部本地持久状态**，而不是�
 - [x] load PG API 去掉 blob/`object_store` 参数；`osd_load` 仅扫 `list_pg_ids`  
 - [x] demo-only 标注：`make_disk_log` / `make_kvstore` / `blobstore_init`  
 - [ ] 从仓库物理删除 `object_store`/`rolling_blob`（仍被 demo 链接）  
-- [ ] 部署文档与 mkfs 仅 AOS 布局  
-- [x] dump / light fsck 库：`aos_dump`（`scan_image` + `format_report`）；CLI/scrub 后续  
+- [x] 部署文档与 mkfs 仅 AOS 布局（`src/osd/readme.md`、`vstart` 建 `aos_disk`）  
+- [x] dump / light fsck 库：`aos_dump` + CLI `fastblock-aos-dump`  
+- [x] recover 不截断在滞后 `data_high_water`；recover 后必要时回写 high_water 
 
 
 ### 2.4 非目标（仍适用）
@@ -533,14 +534,15 @@ Checkpoint **不是唯一真相**；record 自描述 + 扫盘可重建。
 - 全新集群：无 blobstore 进程可起、可写、可恢复  
 - 实现：`block_started` 跳过 bs；`storage_*` defer kv；`list_pg_ids` load；create/load PG 仅 AOS
 
-### P4 — 清理与工具（生产入口 ✅；物理删库 / 工具 ⏳）
+### P4 — 清理与工具（生产入口 ✅；物理删库 ⏳）
 
 - [x] 删除 production 对 `rolling_blob` / blob object 的调用与 load API 参数  
 - [x] `storage_manager` 永不建 blob kv；demo 仍可直调 `make_kvstore`  
-- [x] 文档：`aos/README`、`localstore/README`、设计 v2 状态  
+- [x] 文档：`aos/README`、`localstore/README`、`osd/readme`、设计 v2 状态  
 - [ ] 物理删除 `object_store.cc` / `rolling_blob` / blob_manager 生产依赖（需迁移 demo）  
-- [x] dump/fsck 库 `aos_dump.{h,cc}` + 单测；独立 CLI 后续  
-- [ ] 部署脚本仅 AOS 盘  
+- [x] dump/fsck 库 `aos_dump` + 单测 + CLI `fastblock-aos-dump`  
+- [x] 部署 / vstart 仅 AOS 盘；recover 全 data 区扫描 + 回写 high_water  
+
 
 ### P5+ — image/CSI、ZNS、性能
 
