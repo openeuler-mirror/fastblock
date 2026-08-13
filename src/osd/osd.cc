@@ -55,7 +55,7 @@ enum class stop_state {
     aos_store,
     connection_cache,
     rpc_server,
-    blobstore
+    storage // storage_manager (+ optional legacy blobstore_fini no-op)
 };
 
 typedef struct
@@ -459,225 +459,60 @@ void storage_init_complete(void *arg, int rberrno){
     global_pm->start_aos(/*format=*/true, aos_mkfs_done, server);
 }
 
-static inline std::string get_bdev_disk_addr_file();
-
-static bool save_bs_disk_space(){
-    auto path = get_bdev_disk_addr_file();
-    if(!std::filesystem::exists(path)){
-        SPDK_ERRLOG("path %s is not exist.\n", path.c_str());
-        return false;
-    }
-
-    std::ofstream ofs(path, std::ios::app);
-    if(ofs.is_open()){
-        for(uint32_t index = 0; index < g_bs_space.size(); index++){
-            ofs << g_bs_space[index].first << " " << g_bs_space[index].second << "\n";
-        }
-        ofs.close();
-    } else {
-        SPDK_ERRLOG("path %s can not be opened.\n", path.c_str());
-        return false;
-    }
-    return true;
-}
-
-static void get_bs_disk_space(uint32_t core_size){
-    auto path = get_bdev_disk_addr_file();
-    if(!std::filesystem::exists(path)){
-        std::cerr << "path " << path << " is not exist" << std::endl;
-        return;
-    }
-
-    std::ifstream ifs(path);
-
-    if(!ifs.is_open()){
-        return ;
-    }
-
-    std::string data;
-    if(!getline(ifs, data)){
-        ifs.close();
-        return;
-    }
-    for(uint32_t index = 0; index < core_size; index++){
-        std::string data;
-        char *save_ctx = nullptr;
-        if(!getline(ifs, data)){
-            break;
-        }
-
-        auto r = spdk_strarray_from_string(data.c_str(), " ");
-        if((r[0] == "" || r[0] == nullptr) || (r[1] == "" || r[1] == nullptr)){
-            spdk_strarray_free(r);
-            break;
-        }
-        uint64_t start_offset = spdk_strtoll(r[0], 10);
-        uint64_t len = spdk_strtoll(r[1], 10);
-        g_bs_space.push_back(std::make_pair(start_offset, len));
-        spdk_strarray_free(r);
-    }
-
-    ifs.close();
-}
-
-void disk_init_complete(void *arg, int rberrno) {
-    if(rberrno != 0){
-		SPDK_NOTICELOG("Failed to initialize the disk: %s. thread id %lu\n",
-            err::string_status(rberrno), utils::get_spdk_thread_id());
-        osd_exit_code = rberrno;
-        std::raise(SIGINT);
-		return;
-	}
-
-    if(!save_bs_disk_space()){
-        SPDK_ERRLOG("save the disk space of the blobstore failed.\n");
-        osd_exit_code = -EINVAL;
-        std::raise(SIGINT);
-        return;
-    }
-
-    SPDK_INFOLOG(osd, "Initialize the disk completed, thread id %lu\n",
-                       utils::get_spdk_thread_id());
-    storage_init(storage_init_complete, arg);
-}
-
-class osd_load;
-struct osd_load_ctx{
-    server_t *server;
-    partition_manager* pm;
-    sharded<osd_load>  loads;
-};
-
-struct load_op_ctx{
-    osd_load_ctx* ctx;
-    osd_load* load;
-    utils::context* complete;
-    uint32_t shard_id;
-};
-
-class osd_load{
+/** Per-shard AOS PG loader (design v2 P4: no blob xattr scan). */
+class osd_load {
 public:
-    osd_load(std::map<std::string, struct spdk_blob*>&& log_blobs,
-            std::map<std::string, object_store::container>&& object_blobs)
-    : _log_blobs(std::move(log_blobs))
-    , _object_blobs(std::move(object_blobs)) {}
+  void set_pgs(std::vector<std::pair<uint64_t, uint64_t>> pgs) {
+    _pgs = std::move(pgs);
+  }
 
-    osd_load() {}
+  void start_load(uint32_t shard_id, utils::context* complete, partition_manager* pm) {
+    _shard_id = shard_id;
+    _complete = complete;
+    _pm = pm;
+    _idx = 0;
+    load_next();
+  }
 
-    void set_blobs(std::map<std::string, struct spdk_blob*>&& log_blobs,
-            std::map<std::string, object_store::container>&& object_blobs) {
-        _log_blobs = std::move(log_blobs);
-        _object_blobs = std::move(object_blobs);
+private:
+  void load_next() {
+    if (_idx >= _pgs.size()) {
+      if (_complete) {
+        _complete->complete(0);
+      }
+      return;
     }
-
-    void start_load(uint32_t shard_id, utils::context* complete, osd_load_ctx* ctx){
-        iter_start();
-        if(iter_is_end()){
-            complete->complete(0);
+    const auto pool_id = _pgs[_idx].first;
+    const auto pg_id = _pgs[_idx].second;
+    SPDK_INFOLOG(osd, "load AOS pg %lu.%lu on shard %u (%zu/%zu)\n", pool_id,
+                 pg_id, _shard_id, _idx + 1, _pgs.size());
+    _pm->load_partition(
+        _shard_id, pool_id, pg_id,
+        [](void* a, int err) {
+          auto* self = static_cast<osd_load*>(a);
+          if (err != 0) {
+            if (self->_complete) {
+              self->_complete->complete(err);
+            }
             return;
-        }
-        auto pg = iter->first;
-        struct spdk_blob* blob = iter->second;
-        uint64_t pool_id;
-        uint64_t pg_id;
-        if(!pg_to_id(pg, pool_id, pg_id)){
-            complete->complete(err::E_INVAL);
-            return;
-        }
-
-        object_store::container objects;
-        auto iter = _object_blobs.find(pg);
-        if(iter != _object_blobs.end()){
-            objects = std::move(iter->second);
-        }
-
-        if (blob != nullptr) {
-          auto* bs = global_blobstore(shard_id);
-          if (bs != nullptr) {
-            auto blob_size = spdk_blob_get_num_clusters(blob) *
-                             spdk_bs_get_cluster_size(bs);
-            SPDK_INFOLOG(osd, "load blob, blob id %ld blob size %lu\n",
-                         spdk_blob_get_id(blob), blob_size);
           }
-        } else {
-          SPDK_INFOLOG(osd, "load AOS pg %lu.%lu on shard %u\n", pool_id, pg_id,
-                       shard_id);
-        }
-        load_op_ctx *op_ctx = new load_op_ctx{.ctx = ctx, .load = this,
-                                            .complete = complete, .shard_id = shard_id};
-        ctx->pm->load_partition(shard_id, pool_id, pg_id, blob, std::move(objects), start_continue, op_ctx);
-    }
+          ++self->_idx;
+          self->load_next();
+        },
+        this);
+  }
 
-    static void start_continue(void *arg, int lerrno){
-        load_op_ctx* ctx = (load_op_ctx *)arg;
-        if(lerrno){
-            ctx->complete->complete(lerrno);
-            delete ctx;
-            return;
-        }
+  std::vector<std::pair<uint64_t, uint64_t>> _pgs;
+  size_t _idx{0};
+  uint32_t _shard_id{0};
+  utils::context* _complete{nullptr};
+  partition_manager* _pm{nullptr};
+};
 
-        auto iter = ctx->load->iter_next();
-        if(!ctx->load->iter_is_end()){
-            auto pg = iter->first;
-            struct spdk_blob* blob = iter->second;
-            uint64_t pool_id;
-            uint64_t pg_id;
-            if(!ctx->load->pg_to_id(pg, pool_id, pg_id)){
-                ctx->complete->complete(err::E_INVAL);
-                delete ctx;
-                return;
-            }
-
-            SPDK_INFOLOG(osd, "pg %s\n", pg.c_str());
-            object_store::container objects;
-            auto it = ctx->load->_object_blobs.find(pg);
-            if(it != ctx->load->_object_blobs.end()){
-                objects = std::move(it->second);
-            }
-
-            ctx->ctx->pm->load_partition(ctx->shard_id, pool_id, pg_id, blob, std::move(objects), start_continue, ctx);
-            return;
-        }
-
-        ctx->complete->complete(0);
-        delete ctx;
-    }
-
-    void iter_start() {
-        iter = _log_blobs.begin();
-    }
-
-    std::map<std::string, struct spdk_blob*>::iterator iter_next(){
-        iter++;
-        return iter;
-    }
-    bool iter_is_end() { return iter == _log_blobs.end(); }
-
-    std::map<std::string, object_store::container>::iterator find_objects(std::string pg){
-        return _object_blobs.find(pg);
-    }
-
-    bool pg_to_id(std::string pg, uint64_t& pool_id, uint64_t& pg_id){
-        auto pos = pg.find(".");
-        if(pos == std::string::npos)
-            return false;
-
-        try{
-            std::string val1 = pg.substr(0, pos);
-            std::string val2 = pg.substr(pos + 1, pg.size());
-            pool_id = stoull(val1);
-            pg_id = stoull(val2);
-        }
-        catch (std::invalid_argument){
-            return false;
-        }
-        return true;
-    }
-public:
-
-    std::map<std::string, struct spdk_blob*> _log_blobs;
-    std::map<std::string, object_store::container> _object_blobs;
-    std::map<std::string, struct spdk_blob*>::iterator iter;
+struct osd_load_ctx {
+  server_t* server{nullptr};
+  partition_manager* pm{nullptr};
+  sharded<osd_load> loads;
 };
 
 struct pm_load_context : public utils::context{
@@ -754,29 +589,22 @@ struct pm_load_context : public utils::context{
         auto shard_num = core_sharded::get_core_sharded().count();
         utils::multi_complete *complete = new utils::multi_complete(shard_num, shard_num, load_done, ctx);
 
-        auto &shard = core_sharded::get_core_sharded();
-        for(shard_id = 0; shard_id < shard_num; shard_id++){
-            shard.invoke_on(
-              shard_id,
-              [this, shard_id, ctx, complete](){
-                // design v2 P3: discover PGs from AOS recover, not blob xattr scan.
-                std::map<std::string, struct spdk_blob*> log_blobs;
-                std::map<std::string, object_store::container> object_blobs;
-                auto* store = ctx->pm->aos_store(shard_id);
-                if (store != nullptr) {
-                  for (const auto& id : store->list_pg_ids()) {
-                    const std::string name =
-                        pg_id_to_name(id.first, id.second);
-                    // nullptr blob: load_pg uses AOS log only.
-                    log_blobs.emplace(name, nullptr);
-                    SPDK_INFOLOG(osd, "AOS load discover pg %s on shard %u\n",
-                                 name.c_str(), shard_id);
-                  }
+        auto& shard = core_sharded::get_core_sharded();
+        for (shard_id = 0; shard_id < shard_num; shard_id++) {
+            shard.invoke_on(shard_id, [this, shard_id, ctx, complete]() {
+              std::vector<std::pair<uint64_t, uint64_t>> pgs;
+              auto* store = ctx->pm->aos_store(shard_id);
+              if (store != nullptr) {
+                pgs = store->list_pg_ids();
+                for (const auto& id : pgs) {
+                  SPDK_INFOLOG(osd, "AOS load discover pg %lu.%lu on shard %u\n",
+                               id.first, id.second, shard_id);
                 }
-                ctx->loads.on_shard(shard_id).set_blobs(std::move(log_blobs),
-                                                        std::move(object_blobs));
-                ctx->loads.on_shard(shard_id).start_load(shard_id, complete, ctx);
-              });
+              }
+              ctx->loads.on_shard(shard_id).set_pgs(std::move(pgs));
+              ctx->loads.on_shard(shard_id).start_load(shard_id, complete,
+                                                      ctx->pm);
+            });
         }
     }
 };
@@ -811,22 +639,6 @@ void storage_load_complete(void *arg, int rberrno){
     pm_init(server);
     global_pm->configure_aos(server->aos_bdev_disk, server->aos_segment_size);
     global_pm->start_aos(/*format=*/false, aos_load_done, server);
-}
-
-void disk_load_complete(void *arg, int rberrno){
-    if(rberrno != 0){
-		SPDK_NOTICELOG("Failed to initialize the disk: %s. thread id %lu\n",
-            err::string_status(rberrno), utils::get_spdk_thread_id());
-        osd_exit_code = rberrno;
-        std::raise(SIGINT);
-		return;
-	}
-
-    server_t *server = (server_t *)arg;
-    SPDK_INFOLOG(osd, "load blobstore done, uuid %s, thread id %lu\n",
-                       server->osd_uuid.c_str(), utils::get_spdk_thread_id());
-
-    storage_load(storage_load_complete, arg);
 }
 
 static inline std::string get_bdev_json_file_name(){
@@ -1099,7 +911,7 @@ static void on_pm_closed([[maybe_unused]] void *cb_arg, int bserrno) {
 
 static void rpc_server_stoped([[maybe_unused]] void *cb_arg, int bserrno) {
     SPDK_NOTICELOG("The rpc servers have been stop, return code is %d\n", bserrno);
-    cur_stop_state = stop_state::blobstore;
+    cur_stop_state = stop_state::storage;
     on_osd_stop();
 }
 
@@ -1163,7 +975,7 @@ static void osd_stop(void *arg) noexcept {
     }
     case stop_state::rpc_server: {
         if (osd_server.rpc_servers.empty()) {
-            cur_stop_state = stop_state::blobstore;
+            cur_stop_state = stop_state::storage;
         } else {
             auto shard_num = core_sharded::system::capacity();
             if(shard_num > 0){
@@ -1186,8 +998,8 @@ static void osd_stop(void *arg) noexcept {
 
         [[fallthrough]];
     }
-    case stop_state::blobstore: {
-        SPDK_NOTICELOG("Stopping the blobstore\n");
+    case stop_state::storage: {
+        SPDK_NOTICELOG("Stopping storage (AOS kv + legacy blobstore_fini if any)\n");
         if (global_osd_service) {
             global_osd_service->stop();
         }
@@ -1500,7 +1312,8 @@ main(int argc, char *argv[])
             return -EINVAL;
         }
         reactor_mask = core_mask.value();
-        get_bs_disk_space(core_size);
+        // P4: no blobstore region map; AOS uses aos_disk exclusively.
+        (void)core_size;
     }
 
     opts.reactor_mask = reactor_mask.c_str();
