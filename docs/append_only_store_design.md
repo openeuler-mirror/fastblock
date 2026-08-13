@@ -1,7 +1,8 @@
 # fastblock Append-Only Store（AOS）统一 Localstore 设计
 
 日期：2026-08-12（v2：AOS 管一切）  
-状态：**object + log + kv 引擎已落地；启动路径 AOS-only（P3 进行中）**；**P4 清 blob 死代码**  
+状态：**object + log + kv 引擎已落地；启动路径 AOS-only；P4 生产路径清理完成**（blob 实现仍留 demo）  
+
 
 实现目录：`src/localstore/aos/`  
 历史评审：`docs/append_only_store_design_comments*.md`（针对 v1 草案，仅作档案）
@@ -82,7 +83,10 @@ v2 进一步要求：**一条盘栈服务全部本地持久状态**，而不是�
 
 ### 2.3 终态（阶段 C / P4）
 
-- [ ] 进程无 `spdk_bs_*` 初始化、无 object/log/kv 的 blob 生产代码  
+- [x] 生产进程无 `blobstore_init/load`；无 object/log/kv 的 blob **生产入口**  
+- [x] load PG API 去掉 blob/`object_store` 参数；`osd_load` 仅扫 `list_pg_ids`  
+- [x] demo-only 标注：`make_disk_log` / `make_kvstore` / `blobstore_init`  
+- [ ] 从仓库物理删除 `object_store`/`rolling_blob`（仍被 demo 链接）  
 - [ ] 部署文档与 mkfs 仅 AOS 布局  
 - [ ] fsck / dump / scrub 工具  
 
@@ -528,11 +532,14 @@ Checkpoint **不是唯一真相**；record 自描述 + 扫盘可重建。
 - 全新集群：无 blobstore 进程可起、可写、可恢复  
 - 实现：`block_started` 跳过 bs；`storage_*` defer kv；`list_pg_ids` load；create/load PG 仅 AOS
 
-### P4 — 清理与工具
+### P4 — 清理与工具（生产入口 ✅；物理删库 / 工具 ⏳）
 
-- 删除 `rolling_blob` 生产路径、blob object 死代码  
-- fsck/dump  
-- 文档与部署脚本  
+- [x] 删除 production 对 `rolling_blob` / blob object 的调用与 load API 参数  
+- [x] `storage_manager` 永不建 blob kv；demo 仍可直调 `make_kvstore`  
+- [x] 文档：`aos/README`、`localstore/README`、设计 v2 状态  
+- [ ] 物理删除 `object_store.cc` / `rolling_blob` / blob_manager 生产依赖（需迁移 demo）  
+- [ ] fsck/dump  
+- [ ] 部署脚本仅 AOS 盘  
 
 ### P5+ — image/CSI、ZNS、性能
 
