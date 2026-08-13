@@ -1,6 +1,5 @@
 /* Copyright (c) 2023-2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
- * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
  *          http://license.coscl.org.cn/MulanPSL2
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
@@ -11,637 +10,194 @@
 
 #pragma once
 
-#include "rolling_blob.h"
+/**
+ * disk_log — AOS-only production facade over log_store (design v2 P1/P4).
+ * Blob/rolling_blob path removed from the production library.
+ */
+
 #include "buffer_pool.h"
 #include "log_entry.h"
+#include "types.h"
 #include "fastblock/base/core_sharded.h"
 #include "utils/units.h"
-#include "utils/varint.h"
 #include "fastblock/utils/utils.h"
 #include "localstore/aos/log_store.h"
 
-#include <spdk/blob.h>
-#include <spdk/blob_bdev.h>
 #include <spdk/env.h>
-#include <spdk/event.h>
+#include <spdk/log.h>
 #include <spdk/string.h>
 
-#include <absl/container/flat_hash_map.h>
-#include <memory>
-#include <vector>
-#include <utility>
-#include <errno.h>
-#include <algorithm>
-#include <cstdlib>
-#include <string>
+#include <cstdint>
+#include <functional>
+#include <map>
 #include <sstream>
+#include <string>
+#include <utility>
+#include <vector>
 
 class disk_log;
 
-using log_op_complete = std::function<void (void *arg, int rberrno)>;
-using log_op_with_entry_complete = std::function<void (void *arg, std::vector<log_entry_t>&&, int rberrno)>;
-
-//blob使用空间率超过此值，会触发trim
-constexpr float  TRIM_TRIGGER_PERCENTAGE  =  0.5;
-//此值为一次trim掉blob总空间的比例
-constexpr float  TRIM_PERCENTAGE  =  0.2;
-
-struct log_append_ctx {
-  std::vector<std::tuple<uint64_t,uint64_t,uint64_t,uint64_t>> idx_pos;
-  buffer_list bl;
-
-  log_op_complete cb_fn;
-  void* arg;
-  disk_log* log;
-};
-
-struct log_read_ctx {
-  buffer_list bl;
-  std::vector<log_entry_t> entries;
-
-  uint64_t start_index;
-  uint64_t end_index;
-
-  log_op_with_entry_complete cb_fn;
-  void* arg;
-};
-
-struct log_op_ctx {
-  log_op_complete cb_fn;
-  void* arg;
-};
+using log_op_complete =
+    std::function<void(void* arg, int rberrno)>;
+using log_op_with_entry_complete =
+    std::function<void(void* arg, std::vector<log_entry_t>&&, int rberrno)>;
 
 class disk_log {
-    static constexpr uint64_t header_size = 4_KB;
-    static constexpr uint64_t default_trim_keep_entries = 1000;
-    static constexpr uint64_t default_trim_trigger_entries = 1500;
-
 public:
-    disk_log(rolling_blob* rblob) : _rblob(rblob) {}
+  /** Does not own log_store (osd_store owns it). */
+  explicit disk_log(fastblock::aos::log_store* aos_log) : _aos_log(aos_log) {}
 
-    /** AOS platform path (design v2): does not own log_store (osd_store owns it). */
-    explicit disk_log(fastblock::aos::log_store* aos_log)
-        : _rblob(nullptr), _aos_log(aos_log) {}
+  ~disk_log() = default;
 
-    ~disk_log() {
-      if (_trim_poller) {
-          spdk_poller_unregister(&_trim_poller);
+  bool is_aos() const { return _aos_log != nullptr; }
+
+  void start() {
+    // AOS log has no rolling-blob trim poller.
+  }
+
+  void append(std::vector<log_entry_t>& entries, log_op_complete cb_fn,
+              void* arg) {
+    append_aos(entries, std::move(cb_fn), arg);
+  }
+
+  void append(log_entry_t& entry, log_op_complete cb_fn, void* arg) {
+    std::vector<log_entry_t> v;
+    v.push_back(std::move(entry));
+    append_aos(v, std::move(cb_fn), arg);
+  }
+
+  void read(uint64_t index, log_op_with_entry_complete cb_fn, void* arg) {
+    read(index, index, std::move(cb_fn), arg);
+  }
+
+  void read(uint64_t start_index, uint64_t end_index,
+            log_op_with_entry_complete cb_fn, void* arg) {
+    read_aos(start_index, end_index, std::move(cb_fn), arg);
+  }
+
+  void stop(log_op_complete cb_fn, void* arg) {
+    if (cb_fn) {
+      cb_fn(arg, 0);
+    }
+  }
+
+  /** AOS: log lives in shared segments; nothing to delete per-blob. */
+  void remove_blob(struct spdk_blob_store* /*bs*/, log_op_complete cb_fn,
+                   void* arg) {
+    if (cb_fn) {
+      cb_fn(arg, 0);
+    }
+  }
+
+  uint64_t get_term_id(uint64_t index) {
+    if (_aos_log) {
+      return _aos_log->get_term(index);
+    }
+    return 0;
+  }
+
+  bool maybe_trim() { return false; }
+
+  void trim_back(uint64_t /*start_index*/, uint64_t end_index,
+                 log_op_complete cb_fn, void* arg) {
+    if (_aos_log) {
+      _aos_log->trim_to(end_index);
+      _lowest_index = _aos_log->base_index() == 0 ? end_index + 1
+                                                  : _aos_log->base_index();
+    }
+    if (cb_fn) {
+      cb_fn(arg, 0);
+    }
+  }
+
+  void truncate(uint64_t start_index, log_op_complete cb_fn, void* arg) {
+    if (_aos_log) {
+      _aos_log->truncate_from(start_index, std::move(cb_fn), arg);
+      return;
+    }
+    if (cb_fn) {
+      cb_fn(arg, -EINVAL);
+    }
+  }
+
+  void advance_trim_index(uint64_t index) {
+    _trim_index = std::max(_trim_index, index);
+    if (_aos_log && index > 1000) {
+      _aos_log->trim_to(index - 1000);
+    }
+  }
+
+  std::string dump_state() {
+    std::stringstream sstream;
+    if (_aos_log) {
+      sstream << "\naos_log base:" << _aos_log->base_index()
+              << " last:" << _aos_log->last_index()
+              << " count:" << _aos_log->entry_count()
+              << " trim_index:" << _trim_index << std::endl;
+    }
+    return sstream.str();
+  }
+
+  uint64_t get_lowest_index() {
+    if (_aos_log) {
+      return _aos_log->base_index() == 0 ? 1 : _aos_log->base_index();
+    }
+    return _lowest_index;
+  }
+
+  uint64_t get_highest_index() {
+    if (_aos_log) {
+      return _aos_log->last_index();
+    }
+    return _highest_index;
+  }
+
+  void set_index(uint64_t index, log_op_complete cb_fn, void* arg) {
+    if (_aos_log) {
+      if (_aos_log->entry_count() > 0) {
+        _aos_log->truncate_from(_aos_log->base_index(), [](void*, int) {},
+                                nullptr);
       }
-      delete _rblob;
-      _rblob = nullptr;
-      // _aos_log not owned
+      _trim_index = index;
+      _lowest_index = index + 1;
+      _highest_index = index;
     }
-
-    bool is_aos() const { return _aos_log != nullptr; }
-
-    void start(){
-      if (_aos_log) {
-        // AOS log has no rolling-blob trim poller; trim via advance_trim_index.
-        return;
-      }
-      _trim_poller = SPDK_POLLER_REGISTER(trim_poller, this, 5000);
+    if (cb_fn) {
+      cb_fn(arg, 0);
     }
+  }
 
-    void append(std::vector<log_entry_t>& entries, log_op_complete cb_fn, void* arg) {
-        if (_aos_log) {
-            append_aos(entries, std::move(cb_fn), arg);
-            return;
-        }
-        struct log_append_ctx* ctx = new log_append_ctx{ .cb_fn = cb_fn, .arg = arg, .log = this};
-
-        uint64_t pos = _rblob->front_pos();
-        for (auto& entry : entries) {
-            auto sbuf = buffer_pool_get();
-            EncodeLogHeader(sbuf, entry);
-
-            ctx->bl.append_buffer(sbuf);
-            ctx->bl.append_buffer(entry.data);
-            /// NOTE: 这个vector是写完之后要往map里保存的，从raft_index到rblob中pos和size的映射，
-            ///    为了方便读取，这里保存的size，是包括了header长度(4_KB)和数据长度的。
-            ctx->idx_pos.emplace_back(entry.index, pos, entry.size + 4_KB, entry.term_id);
-            pos += (entry.size + 4_KB);
-        }
-
-        _rblob->append(ctx->bl, log_append_done, ctx);
+  void set_blob_xattr(std::map<std::string, xattr_val_type>& /*xattr*/,
+                      log_op_complete&& cb_fn, void* arg) {
+    if (cb_fn) {
+      cb_fn(arg, 0);
     }
+  }
 
-    void append(log_entry_t& entry, log_op_complete cb_fn, void* arg) {
-        if (_aos_log) {
-            std::vector<log_entry_t> v;
-            v.push_back(std::move(entry));
-            append_aos(v, std::move(cb_fn), arg);
-            return;
-        }
-        struct log_append_ctx* ctx = new log_append_ctx{ .cb_fn = cb_fn, .arg = arg, .log = this};
-
-        uint64_t pos = _rblob->front_pos();
-        auto sbuf = buffer_pool_get();
-        EncodeLogHeader(sbuf, entry);
-
-        ctx->bl.append_buffer(sbuf);
-        ctx->bl.append_buffer(entry.data);
-        ctx->idx_pos.emplace_back(entry.index, pos, entry.size + 4_KB, entry.term_id);
-
-        _rblob->append(ctx->bl, log_append_done, ctx);
+  void load(log_op_complete cb_fn, void* arg) {
+    // Already recovered with osd_store::recover (raft_log_entry replay).
+    _lowest_index = get_lowest_index();
+    _highest_index = get_highest_index();
+    if (cb_fn) {
+      cb_fn(arg, 0);
     }
-
-    // TODO(sunyifang): 改成用reader类来读，因为有些状态是只属于本次读取的。
-    void read(uint64_t index, log_op_with_entry_complete cb_fn, void* arg) {
-        read(index, index, cb_fn, arg);
-    }
-
-    // 读取范围 [start_index, end_index]，包括 end_index 在内也会读到
-    void read(uint64_t start_index, uint64_t end_index, log_op_with_entry_complete cb_fn, void* arg) {
-        if (_aos_log) {
-            read_aos(start_index, end_index, std::move(cb_fn), arg);
-            return;
-        }
-        struct log_read_ctx* ctx;
-
-        if (end_index < start_index) {
-            SPDK_ERRLOG("end_index litter than start_index. start:%lu end:%lu\n", start_index, end_index);
-            cb_fn(arg, {}, -EINVAL);
-            return;
-        }
-
-        auto start_it = _index_map.find(start_index);
-        auto end_it = _index_map.find(end_index);
-        if (start_it == _index_map.end() || end_it == _index_map.end()) {
-            SPDK_ERRLOG("can not find index. start:%lu end:%lu\n", start_index, end_index);
-            cb_fn(arg, {}, -EINVAL);
-            return;
-        }
-
-        auto [pos, size, _] = start_it->second;
-        start_it++;
-        end_it++;
-        for (auto it = start_it; it != end_it; it++) {
-            size += it->second.size;
-        }
-
-        ctx = new log_read_ctx{ .cb_fn = cb_fn, .arg = arg};
-        ctx->start_index = start_index;
-        ctx->end_index = end_index;
-        ctx->bl = std::move(make_buffer_list(size / 4096));
-        // 注意:read的时候，buffer_list整体都是在这里申请的。
-        //     其中header部分在decode后马上就free了，而data部分会放在log_entry.data中返回给调用者
-        _rblob->read(pos, size, ctx->bl, log_read_done, ctx);
-    }
-
-    // TODO(sunyifang): 不应该这样free。
-    // 但现在rblob是在外面用户new出来，然后传进来的。
-    void stop(log_op_complete cb_fn, void* arg) {
-        if (_trim_poller) {
-            spdk_poller_unregister(&_trim_poller);
-        }
-        if (_aos_log) {
-            if (cb_fn) {
-                cb_fn(arg, 0);
-            }
-            return;
-        }
-        // 始终记住cb_fn是上面一层传入的函数，我们传入的lambda会在close之后调用
-        // 调用时，里面会把arg传进lambda的第一个参数
-        _rblob->close(
-          [cb_fn, this](void* arg, int rberrno){
-            SPDK_NOTICELOG("disklog stop\n");
-            _rblob->stop();
-            cb_fn(arg, rberrno);
-          },
-          arg);
-
-    }
-
-    //删除blob
-    void remove_blob(struct spdk_blob_store *bs, log_op_complete cb_fn, void* arg) {
-        if (_aos_log) {
-            // AOS: log lives in shared segments; nothing to delete per-blob.
-            if (cb_fn) {
-                cb_fn(arg, 0);
-            }
-            return;
-        }
-        _rblob->remove_blob(bs, std::move(cb_fn), arg);
-    }
-
-    uint64_t get_term_id(uint64_t index) {
-        if (_aos_log) {
-            return _aos_log->get_term(index);
-        }
-        if (auto it = _index_map.find(index); it != _index_map.end()) {
-            return it->second.term_id;
-        }
-        return 0;
-    }
+  }
 
 private:
-    // 传进rolling_blob的回调函数
-    static void log_append_done(void *arg, rblob_rw_result result, int rberrno) {
-        struct log_append_ctx* ctx = (struct log_append_ctx*)arg;
+  fastblock::aos::log_store* _aos_log{nullptr}; // not owned
+  uint64_t _lowest_index = 1;
+  uint64_t _trim_index = 1;
+  uint64_t _highest_index = 0;
 
-        if (rberrno) {
-            SPDK_ERRLOG("log append fail. start:%lu len:%lu error:%s\n", result.start_pos, result.len, spdk_strerror(rberrno));
-            free_buffer_list(ctx->bl);
-            ctx->cb_fn(ctx->arg, rberrno);
-            delete ctx;
-            return;
-        }
-
-        free_buffer_list(ctx->bl);
-
-        // 保存每个index到pos和size的映射
-        for (auto [idx, pos, size, term_id] : ctx->idx_pos) {
-            SPDK_INFOLOG(disk_log, "++++ disk log append: index %lu pos %lu term_id %lu size %lu\n", idx, pos, term_id, size);
-            ctx->log->maybe_index(idx, log_position{pos, size, term_id});
-        }
-
-        ctx->cb_fn(ctx->arg, 0);
-        delete ctx;
-    }
-
-    static void log_read_done(void *arg, rblob_rw_result result, int rberrno) {
-        struct log_read_ctx* ctx = (struct log_read_ctx*)arg;
-
-        if (rberrno) {
-            SPDK_ERRLOG("log append start_index:%lu end_index:%lu (rblob pos:%lu len:%lu) read failed:%s\n",
-                        ctx->start_index, ctx->end_index, result.start_pos, result.len, spdk_strerror(rberrno));
-            free_buffer_list(ctx->bl);
-            ctx->cb_fn(ctx->arg, {}, rberrno);
-            delete ctx;
-            return;
-        }
-
-        auto index_size = ctx->end_index - ctx->start_index + 1;
-        ctx->entries.reserve(index_size);
-        for (uint64_t i = 0; i < index_size; i++) {
-            ctx->entries.emplace_back();
-            auto& entry = ctx->entries[i];
-
-            spdk_buffer sbuf = ctx->bl.pop_front();
-            sbuf.reset();
-            DecodeLogHeader(sbuf, entry);
-            buffer_pool_put(sbuf);
-
-            auto bl = ctx->bl.pop_front_list(entry.size / 4096);
-            entry.data = std::move(bl);
-        }
-
-        if (ctx->bl.bytes()) {
-            SPDK_ERRLOG("bl remain byutes:%lu\n", ctx->bl.bytes());
-            free_buffer_list(ctx->bl);
-        }
-        ctx->cb_fn(ctx->arg, std::move(ctx->entries), 0);
-        delete ctx;
-    }
-
-public:
-    static int trim_poller(void *arg) {
-        disk_log* ctx = (disk_log*)arg;
-        return ctx->maybe_trim() ? SPDK_POLLER_BUSY : SPDK_POLLER_IDLE;
-    }
-
-    // 只保留apply_index前面的1000条，超过1500条就trim一次
-    bool maybe_trim() {
-      if (_aos_log) {
-        return false;
-      }
-      _polls_count++;
-      auto trim_keep_entries = get_env_u64(
-        "FASTBLOCK_RAFT_LOG_TRIM_KEEP_ENTRIES", default_trim_keep_entries);
-      auto trim_trigger_entries = get_env_u64(
-        "FASTBLOCK_RAFT_LOG_TRIM_TRIGGER_ENTRIES", default_trim_trigger_entries);
-      const bool trim_hook_enabled =
-        std::getenv("FASTBLOCK_RAFT_LOG_TRIM_KEEP_ENTRIES") ||
-        std::getenv("FASTBLOCK_RAFT_LOG_TRIM_TRIGGER_ENTRIES");
-      if (trim_keep_entries >= trim_trigger_entries) {
-          trim_keep_entries = default_trim_keep_entries;
-          trim_trigger_entries = default_trim_trigger_entries;
-      }
-      if (_trim_index > trim_trigger_entries + _lowest_index) {
-          // trim前： lowest_index: 100  apply_index: 1700
-          //   trim:  从 100 到 700
-          // trim后： lowest_index: 701  apply_index: 1700 (一共保留1000条)
-          if (trim_hook_enabled) {
-              SPDK_NOTICELOG("raft log test trim [%lu, %lu], applied %lu, trigger %lu, keep %lu\n",
-                             _lowest_index, _trim_index - trim_keep_entries,
-                             _trim_index, trim_trigger_entries, trim_keep_entries);
-          }
-          SPDK_INFOLOG(disk_log, "do trim [%lu, %lu]\n", _lowest_index, _trim_index - trim_keep_entries);
-          trim_back(_lowest_index, _trim_index - trim_keep_entries, [](void *, int){}, nullptr);
-          _trims_count++;
-          return true;
-      } else if(_rblob->should_trim(TRIM_TRIGGER_PERCENTAGE)) {
-          auto trim_pos = _rblob->get_trim_pos(TRIM_PERCENTAGE);
-          auto index = get_near_up_index(trim_pos);
-          if(index > _trim_index)
-              index = _trim_index;
-          if(index != 0){
-              SPDK_INFOLOG(disk_log, "do trim [%lu, %lu]\n", _lowest_index, index);
-              trim_back(_lowest_index, index, [](void *, int){}, nullptr);
-          }
-      }
-      return false;
-    }
-
-    /**
-     * trim范围 [start_index, end_index]，包括 end_index 在内也会读到
-     */
-    void trim_back(uint64_t start_index, uint64_t end_index, log_op_complete cb_fn, void* arg) {
-        if (_aos_log) {
-            _aos_log->trim_to(end_index);
-            _lowest_index = _aos_log->base_index() == 0 ? end_index + 1
-                                                        : _aos_log->base_index();
-            if (cb_fn) {
-                cb_fn(arg, 0);
-            }
-            return;
-        }
-        if (end_index < start_index) {
-            SPDK_ERRLOG("end_index little than start_index. start:%lu end:%lu\n", start_index, end_index);
-            cb_fn(arg, -EINVAL);
-            return;
-        }
-        auto start_it = _index_map.find(start_index);
-        auto end_it = _index_map.find(end_index);
-        if (start_it == _index_map.end() || end_it == _index_map.end()) {
-            SPDK_ERRLOG("can not find index. start:%lu end:%lu\n", start_index, end_index);
-            cb_fn(arg, -EINVAL);
-            return;
-        }
-
-        end_it++;
-        uint64_t trim_length = 0;
-        for (auto it = start_it; it != end_it; it++) {
-            trim_length += it->second.size;
-        }
-
-        // 处理 disklog 中保存的数据
-        _index_map.erase(start_it, end_it);
-        _lowest_index = end_index + 1;
-
-        _rblob->trim_back(trim_length, cb_fn, arg);
-    }
-
-    /* 截断start_index（包括start_index）之后的log */
-    void truncate(uint64_t start_index, log_op_complete cb_fn, void* arg){
-        if (_aos_log) {
-            _aos_log->truncate_from(start_index, std::move(cb_fn), arg);
-            return;
-        }
-        auto start_it = _index_map.find(start_index);
-        auto end_it = _index_map.end();
-
-        if(start_it == _index_map.end()){
-            SPDK_ERRLOG("can not find index :%lu \n", start_index);
-            cb_fn(arg, -EINVAL);
-            return;
-        }
-
-        uint64_t trim_length = 0;
-        for (auto it = start_it; it != end_it; it++) {
-            trim_length += it->second.size;
-        }
-
-        // 处理 disklog 中保存的数据
-        _index_map.erase(start_it, end_it);
-        _highest_index = start_index - 1;
-
-        _rblob->trim_front(trim_length, cb_fn, arg);
-    }
-
-    void advance_trim_index(uint64_t index) {
-        _trim_index = std::max(_trim_index, index);
-        if (_aos_log) {
-            // Keep last ~1000 like blob path maybe_trim intent.
-            if (index > 1000) {
-                _aos_log->trim_to(index - 1000);
-            }
-        }
-    }
-
-    std::string dump_state() {
-      std::stringstream sstream;
-      if (_aos_log) {
-        sstream << "\naos_log base:" << _aos_log->base_index()
-                << " last:" << _aos_log->last_index()
-                << " count:" << _aos_log->entry_count()
-                << " trim_index:" << _trim_index << std::endl;
-        return sstream.str();
-      }
-      sstream << "\nlowest_index:" << _lowest_index
-              << " apply_index:" << _trim_index
-              << " highest_index:" << _highest_index
-              << "\nhold:" << _highest_index - _lowest_index + 1
-              << " index_map size:" << _index_map.size()
-              << "\nindex_map begin:" << _index_map.begin()->first
-              << " index_map rbegin:" << _index_map.rbegin()->first
-              << " _polls_count:" << _polls_count
-              << " _trims_count:" << _trims_count
-              << "\nrblob state:" << _rblob->dump_state()
-              << std::endl;
-      return sstream.str();
-    }
-
-    uint64_t get_lowest_index(){
-        if (_aos_log) {
-            return _aos_log->base_index() == 0 ? 1 : _aos_log->base_index();
-        }
-        return _lowest_index;
-    }
-
-    uint64_t get_highest_index(){
-        if (_aos_log) {
-            return _aos_log->last_index();
-        }
-        return _highest_index;
-    }
-    /*
-     * follower节点在接收完leader的快照后，才能调用
-     * index之前（包括index）的对象都是通过快照发过来的，没有log，相当于在index的位置做了一个快照，
-     * index之前（包括index）的log可以trim掉了。但根据raft协议，这里follower都需要通过snapshot恢复数据了，log
-     * 中index（包括index）之后的数据（正常情况下不应该有数据）也需要删除了
-     */
-    void set_index(uint64_t index, log_op_complete cb_fn, void* arg){
-        if (_aos_log) {
-            // Drop all log entries; raft continues after snapshot index.
-            if (_aos_log->entry_count() > 0) {
-                _aos_log->truncate_from(_aos_log->base_index(),
-                                       [](void*, int) {}, nullptr);
-            }
-            _trim_index = index;
-            _lowest_index = index + 1;
-            _highest_index = index;
-            if (cb_fn) {
-                cb_fn(arg, 0);
-            }
-            return;
-        }
-        auto trim_done = [this, cb_fn = std::move(cb_fn), index](void *arg, int rberrno){
-            _lowest_index = std::max(_lowest_index, index + 1);
-            _trim_index = std::max(_trim_index, index);
-            _highest_index = std::max(_highest_index, index);
-            cb_fn(arg, rberrno);
-        };
-
-        if(_index_map.empty()){
-            trim_done(arg, 0);
-        }else{
-            trim_back(_lowest_index, _highest_index, std::move(trim_done), arg);
-        }
-    }
-
-    void set_blob_xattr(std::map<std::string, xattr_val_type>& xattr, log_op_complete&& cb_fn, void* arg){
-        if (_aos_log) {
-            if (cb_fn) {
-                cb_fn(arg, 0);
-            }
-            return;
-        }
-        _rblob->set_blob_xattr(xattr, std::move(cb_fn), arg);
-    }
-
-    void load(log_op_complete cb_fn, void* arg){
-        if (_aos_log) {
-            // Already recovered with osd_store::recover (raft_log_entry replay).
-            _lowest_index = get_lowest_index();
-            _highest_index = get_highest_index();
-            if (cb_fn) {
-                cb_fn(arg, 0);
-            }
-            return;
-        }
-        auto check_data = [this](buffer_list &bl, uint64_t pos) -> std::tuple<bool, uint64_t, uint64_t> {
-            auto bytes = bl.bytes();
-            size_t i = 0;
-
-            while(i < bytes){
-                log_entry_t entry;
-                spdk_buffer sbuf = bl.pop_front();
-                sbuf.reset();
-                DecodeLogHeader(sbuf, entry);
-                buffer_pool_put(sbuf);
-
-                /* 任期不能为0. 任期为0，表示这条log为空，或者是错误的 */
-                if(entry.term_id == 0){
-                    SPDK_INFOLOG(disk_log, "invalid log entry, pos %lu\n", pos);
-                    return std::make_tuple(false, i, 0);
-                }
-
-                /*
-                 *  header固定大小是4096
-                 *
-                 */
-                if(entry.size > bytes - i - 4_KB){
-                    SPDK_INFOLOG(disk_log, "incomplete log entry, pos %lu\n", pos);
-                    //剩余大小不足以解析出data
-                    return std::make_tuple(true, i, entry.size + 4_KB);
-                }
-                auto data_bl = bl.pop_front_list(entry.size / 4096);
-                free_buffer_list(data_bl);
-                log_position log_pos{.pos = pos, .size = entry.size + 4_KB, .term_id = entry.term_id};
-                SPDK_INFOLOG(disk_log, "--- disk log load: index %lu pos %lu term_id %lu size %lu\n", entry.index, pos, log_pos.term_id, log_pos.size);
-                maybe_index(entry.index, std::move(log_pos));
-                pos += entry.size + 4_KB;
-                i += entry.size + 4_KB;
-            }
-            return std::make_tuple(true, i, 0);
-        };
-
-        auto load_done = [this, cb_fn = std::move(cb_fn)](void *arg, int rberrno){
-            auto it = _index_map.begin();
-            if(it != _index_map.end()){
-                _lowest_index = it->first;
-            }
-            SPDK_INFOLOG(disk_log, "disk log load done, _lowest_index %lu _highest_index %lu\n", _lowest_index, _highest_index);
-
-            if(rberrno != 0){
-                SPDK_ERRLOG("disk log load failed:%s\n", spdk_strerror(rberrno));
-                cb_fn(arg, rberrno);
-                return;
-            }
-            cb_fn(arg, 0);
-        };
-
-        SPDK_INFOLOG(disk_log, "in disk log load, _lowest_index %lu _highest_index %lu\n", _lowest_index, _highest_index);
-        _rblob->load(std::move(load_done), arg, std::move(check_data));
-    }
-private:
-    rolling_blob* _rblob{nullptr};
-    fastblock::aos::log_store* _aos_log{nullptr}; // not owned; osd_store owns
-    struct spdk_poller *_trim_poller{nullptr};
-    uint64_t _polls_count = 0;
-    uint64_t _trims_count = 0;
-
-    uint64_t _lowest_index = 1; //只有trim_back和set_index时候会改
-    uint64_t _trim_index = 1;
-    uint64_t _highest_index = 0;
-    struct log_position {
-        uint64_t pos;
-        uint64_t size; // data.size + header size(4_KB)
-        uint64_t term_id;
-    };
-    std::map<uint64_t, log_position> _index_map;
-
-    void append_aos(std::vector<log_entry_t>& entries, log_op_complete cb_fn,
-                    void* arg);
-    void read_aos(uint64_t start_index, uint64_t end_index,
-                  log_op_with_entry_complete cb_fn, void* arg);
-
-private:
-    static uint64_t get_env_u64(const char* name, uint64_t fallback) {
-        const char* value = std::getenv(name);
-        if (!value || value[0] == '\0') {
-            return fallback;
-        }
-
-        char* end = nullptr;
-        errno = 0;
-        const auto parsed = std::strtoull(value, &end, 10);
-        if (errno != 0 || end == value || *end != '\0' || parsed == 0) {
-            return fallback;
-        }
-        return parsed;
-    }
-
-    void maybe_index(uint64_t index, log_position&& log_pos) {
-        _highest_index = std::max(_highest_index, index);
-        _index_map.emplace(index, std::move(log_pos));
-    }
-
-    //获取最接近且大于等于pos位置的index
-    uint64_t get_near_up_index(uint64_t pos){
-        auto it =  _index_map.begin();
-        while(it != _index_map.end()){
-            if(it->second.pos >= pos){
-                break;
-            }
-            it++;
-        }
-        if(it == _index_map.end() && !_index_map.empty()){
-            it--;
-        }
-        if(it != _index_map.end()){
-            return it->first;
-        }
-        return 0;
-    }
+  void append_aos(std::vector<log_entry_t>& entries, log_op_complete cb_fn,
+                  void* arg);
+  void read_aos(uint64_t start_index, uint64_t end_index,
+                log_op_with_entry_complete cb_fn, void* arg);
 };
 
-using make_disklog_complete = std::function<void (void *arg, struct disk_log* dlog, int rberrno)>;
+using make_disklog_complete =
+    std::function<void(void* arg, struct disk_log* dlog, int rberrno)>;
 
-/**
- * Blob-backed constructors — **demo / residual tests only**.
- * Production OSD uses make_aos_disk_log exclusively (design v2 P4).
- */
-void make_disk_log(struct spdk_blob_store *bs, struct spdk_io_channel *channel,
-    std::string pg, make_disklog_complete cb_fn, void* arg, uint32_t shard_id);
-
-disk_log* make_disk_log(struct spdk_blob_store *bs, struct spdk_io_channel *channel,
-                    struct spdk_blob* blob);
-
-/**
- * Production: disk_log backed by AOS log_store (design v2 P1/P4).
- * log_store lifetime must outlive the returned disk_log (owned by osd_store).
- */
-void make_aos_disk_log(fastblock::aos::log_store* log, make_disklog_complete cb_fn,
-                       void* arg);
+/** Production: disk_log backed by AOS log_store. log_store not owned. */
+void make_aos_disk_log(fastblock::aos::log_store* log,
+                       make_disklog_complete cb_fn, void* arg);

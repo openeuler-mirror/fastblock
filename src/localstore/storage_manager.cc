@@ -112,21 +112,12 @@ storage_fini(storage_op_complete cb_fn, void* arg){
 
 static void
 _storage_load(utils::context *ctx, uint32_t shard_id){
-  auto &blobs = global_blob_tree(shard_id);
-  spdk_blob_id kv_blob_id = blobs.kv_blob;
-  spdk_blob_id checkpoint_blob_id = blobs.kv_checkpoint_blob;
-  spdk_blob_id new_checkpoint_blob_id = blobs.kv_new_checkpoint_blob;
-
-  SPDK_INFOLOG(storage_log, "storage load in shard %u, kv_blob_id %lu, checkpoint_blob_id %lu, \
-      new_checkpoint_blob_id %lu, thread id %lu\n",
-      shard_id, kv_blob_id, checkpoint_blob_id, new_checkpoint_blob_id,
-      utils::get_spdk_thread_id());
+  // AOS-only: blob tree no longer exists; load defers kv to attach_aos_kv.
+  SPDK_INFOLOG(storage_log, "storage load (AOS-only) in shard %u, thread id %lu\n",
+      shard_id, utils::get_spdk_thread_id());
 
   g_st_mgr.on_shard(shard_id).load(
     shard_id,
-    kv_blob_id,
-    checkpoint_blob_id,
-    new_checkpoint_blob_id,
     [shard_id](void *arg, int error){
       utils::context *ctx = (utils::context *)arg;
       SPDK_INFOLOG(storage_log, "storage load done in shard %u.\n", shard_id);

@@ -1,6 +1,5 @@
 /* Copyright (c) 2023-2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
- * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
  *          http://license.coscl.org.cn/MulanPSL2
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
@@ -11,63 +10,43 @@
 
 #pragma once
 
-#include "fastblock/base/core_sharded.h"
-#include "base/shard_service.h"
-#include "object_store.h"
-#include "blob_pool.h"
-
-#include <spdk/blob_bdev.h>
-#include <spdk/blob.h>
-
-#include <vector>
-#include <functional>
-#include <map>
-
 /**
- * 每个shard都有一份 blob_tree，只保存这个核上的blob。
+ * Blobstore lifecycle stubs (design v2 P4).
  *
- * kv: 每个核上只有一个blob
- * log: 每个pg一个blob，根据 pg 查找到这个blob
- * object: 每个pg一个map，保存了这个pg里面的对象
+ * Production OSD is AOS-only and never opens a blobstore. These symbols remain
+ * so shutdown paths and residual includes compile; init/load fail closed.
+ * Full blob implementation archived under localstore/legacy_blob/.
  */
 
-struct blob_tree
-{
-        spdk_blob_id kv_blob;
-        spdk_blob_id kv_checkpoint_blob;
-        spdk_blob_id kv_new_checkpoint_blob;
-        std::map<std::string, struct spdk_blob *> log_blobs;
-        std::map<std::string, object_store::container> object_blobs;
-        std::vector<fb_blob> pool_blobs;
-};
+#include <cstdint>
+#include <functional>
+#include <string>
+#include <utility>
+#include <vector>
 
+struct spdk_blob_store;
+struct spdk_io_channel;
+
+/** Always null on AOS-only production path. */
 struct spdk_blob_store* global_blobstore(uint32_t shard_id);
 
+/** Always null on AOS-only production path. */
 struct spdk_io_channel* global_io_channel(uint32_t shard_id);
 
-blob_tree& global_blob_tree(uint32_t shard_id);
-
-blob_pool& global_blob_pool(uint32_t shard_id);
-
-/** False when OSD runs AOS-only and never called blobstore_init/load (P3). */
+/** Always false — blobstore never initialized in production. */
 bool blobstore_is_initialized();
 
 extern std::vector<std::pair<uint64_t, uint64_t>> g_bs_space;
 
-using bm_complete = std::function<void (void *, int)>;
+using bm_complete = std::function<void(void*, int)>;
 
-/**
- * Blobstore lifecycle — **demo / residual tests only**.
- * Production OSD never calls init/load (design v2 P3/P4 AOS-only boot).
- * blobstore_fini is still invoked on OSD stop; it is a no-op if never opened.
- */
-void
-blobstore_init(std::string &bdev_name, const std::string& uuid, bool force,
-        bm_complete cb_fn, void* args);
+/** Demo-only; production never calls. Returns -ENOTSUP. */
+void blobstore_init(std::string& bdev_name, const std::string& uuid, bool force,
+                    bm_complete cb_fn, void* args);
 
-void
-blobstore_fini(bm_complete cb_fn, void* args);
+/** No-op when never opened (production always). */
+void blobstore_fini(bm_complete cb_fn, void* args);
 
-void
-blobstore_load(std::string &bdev_name, bm_complete cb_fn,
-        void* args, std::string *osd_uuid = nullptr);
+/** Demo-only; production never calls. Returns -ENOTSUP. */
+void blobstore_load(std::string& bdev_name, bm_complete cb_fn, void* args,
+                    std::string* osd_uuid = nullptr);

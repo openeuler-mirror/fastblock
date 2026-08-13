@@ -33,7 +33,7 @@ osd_store / aos_runtime
 | object | **生产唯一路径**；强制 `aos_disk` |
 | log | **生产路径** `log_store` + `disk_log(AOS)` |
 | kv | **生产路径** `kv_engine` + `attach_aos_kv` |
-| blobstore | **生产不再 init/load**；代码库仍保留供 demo/test |
+| blobstore | **生产不再 init/load**；实现归档 `legacy_blob/`（不进生产链接） |
 
 Object 子系统细节见设计文档 §5。
 
