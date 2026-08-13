@@ -28,8 +28,9 @@ using stm_complete = std::function<void (void *, int)>;
  * Raft state machine base.
  *
  * Object data plane: production osd_stm uses AppendOnlyStore only.
- * Default methods still touch object_store for unit demos / residual tests;
- * they are not used on the OSD object path after knife-1.
+ * Default methods still touch object_store for **unit demos / residual tests
+ * only** (P4: not on the OSD production path). Prefer overriding virtuals
+ * as osd_stm does.
  */
 class state_machine{
 public:
