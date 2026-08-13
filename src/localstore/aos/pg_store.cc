@@ -234,6 +234,9 @@ void pg_store::pump_queue() {
 
 void pg_store::finish_op(op_complete cb, void* arg, int err) {
   busy_ = false;
+  // User callback runs before pump_queue. Callers must NOT destroy this
+  // pg_store inside cb (UAF on pump_queue). Defer destroy via
+  // spdk_thread_send_msg if needed (see aos_spdk_test).
   if (cb) {
     cb(arg, err);
   }
