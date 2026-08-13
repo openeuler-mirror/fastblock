@@ -267,8 +267,6 @@ public:
                               std::size_t size, uint64_t snapshot_index,
                               object_rw_complete cb_fn, void* arg) override;
 
-    void load_object(object_store::container objects) override;
-
     auto unlock(const std::string& key, const utils::operation_type type){
         return _object_rw_lock.unlock(key, type);
     }
@@ -283,4 +281,7 @@ private:
     fastblock::aos::osd_store* _aos{nullptr};
     uint64_t _pool_id{0};
     uint64_t _pg_id{0};
+    // AOS recovery pin bookkeeping (was on state_machine for blob path).
+    bool _recovery_pinned{false};
+    uint64_t _recovery_snap_index{0};
 };
