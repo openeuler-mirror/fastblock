@@ -16,17 +16,30 @@
 #include "localstore/object_store.h"
 #include "localstore/blob_manager.h"
 
+#include <map>
+#include <string>
+#include <vector>
+
 class raft_server_t;
 
 using stm_complete = std::function<void (void *, int)>;
 
+/**
+ * Raft state machine base.
+ *
+ * Object data plane: production osd_stm uses AppendOnlyStore only.
+ * Default methods still touch object_store for unit demos / residual tests;
+ * they are not used on the OSD object path after knife-1.
+ */
 class state_machine{
 public:
     state_machine()
     : _raft(nullptr)
     , _last_applied_idx(0)
     , _apply_in_progress(false)
-    , _store(global_blobstore(core_sharded::get_core_sharded().this_shard_id()), global_io_channel(core_sharded::get_core_sharded().this_shard_id())) {}
+    // P3 AOS-only: blobstore may be null; production osd_stm never uses _store.
+    , _store(global_blobstore(core_sharded::get_core_sharded().this_shard_id()),
+             global_io_channel(core_sharded::get_core_sharded().this_shard_id())) {}
 
     virtual ~state_machine() {
         stop();
@@ -69,6 +82,55 @@ public:
     int raft_apply_entries();
 
     virtual void apply(std::shared_ptr<raft_entry_t> entry, utils::context *complete) = 0;
+
+    /**
+     * Follower install-snapshot object write.
+     * Production (osd_stm): AOS apply. Default: blob (demos only).
+     */
+    virtual void write_install_object(const std::string& obj_name, char* buf,
+                                      std::size_t size, uint64_t snapshot_index,
+                                      object_rw_complete cb_fn, void* arg) {
+        (void)snapshot_index;
+        std::map<std::string, xattr_val_type> xattr;
+        xattr["type"] = blob_type::object;
+        xattr["pg"] = get_pg_name();
+        _store.write(xattr, obj_name, 0, buf, size, std::move(cb_fn), arg);
+    }
+
+    /** True when object data is AppendOnlyStore (not blob object_store). */
+    virtual bool uses_aos_objects() const { return false; }
+
+    /** Live object names for install-snapshot leader. */
+    virtual std::vector<std::string> list_live_objects() {
+        std::vector<std::string> names;
+        names.reserve(_store.table.size());
+        for (const auto& pr : _store.table) {
+            names.push_back(pr.first);
+        }
+        return names;
+    }
+
+    virtual bool object_exists(const std::string& name) {
+        return _store.is_exist(name);
+    }
+
+    /**
+     * Pin a recovery read view at raft_apply_index (AOS: O(1) pin;
+     * default blob: per-object recovery snapshots).
+     */
+    virtual void pin_recovery_view(uint64_t raft_apply_index, uint64_t raft_term,
+                                   object_rw_complete cb_fn, void* arg);
+
+    virtual void unpin_recovery_view(object_rw_complete cb_fn, void* arg);
+
+    /**
+     * Read full object for recovery/snapshot_check (up to len bytes, zero-fill rest).
+     * When recovery view is pinned, implementations should read that view.
+     */
+    virtual void read_recovery_object(const std::string& object_name, char* buf,
+                                      uint64_t len, object_rw_complete cb_fn,
+                                      void* arg);
+
     raft_server_t* get_raft(){
         return _raft;
     }
@@ -93,7 +155,8 @@ public:
         _store.set_pg(pg_name);
     }
 
-    void load_object(object_store::container objects){
+    /** Legacy blob object load — no-op for AOS-only osd_stm. */
+    virtual void load_object(object_store::container objects){
         _store.load(std::move(objects));
     }
 
@@ -111,4 +174,8 @@ private:
 
 protected:
     object_store _store;
+    // Recovery pin bookkeeping (blob default path; AOS uses pin records).
+    std::vector<std::string> _recovery_names;
+    bool _recovery_pinned{false};
+    uint64_t _recovery_snap_index{0};
 };
