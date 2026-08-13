@@ -24,6 +24,7 @@
 #include <spdk/event.h>
 #include <spdk/log.h>
 #include <spdk/string.h>
+#include <spdk/thread.h>
 
 #include <cstdio>
 #include <cstring>
@@ -64,19 +65,10 @@ void fail(test_ctx* ctx, const char* msg) {
   shutdown_app(ctx, 1);
 }
 
-void on_read(void* arg, int err) {
+// Deferred after read completion: must not destroy pg_store inside finish_op's
+// user callback (finish_op still calls pump_queue after cb returns).
+void start_recover_phase(void* arg) {
   auto* ctx = static_cast<test_ctx*>(arg);
-  if (err != 0) {
-    fail(ctx, "read failed");
-    return;
-  }
-  if (ctx->readback != ctx->pattern) {
-    fail(ctx, "read data mismatch");
-    return;
-  }
-  SPDK_NOTICELOG("aos_spdk_test: write/read verify ok\n");
-
-  // recover into a fresh pg_store on same backend
   ctx->store.reset();
   ctx->store = std::make_unique<pg_store>(&ctx->backend, pg_id{1, 1, 1},
                                           buffer_mode::spdk_dma);
@@ -101,11 +93,32 @@ void on_read(void* arg, int err) {
                 return;
               }
               SPDK_NOTICELOG("aos_spdk_test: recover verify ok\n");
-              shutdown_app(c2, c2->failures != 0 ? 1 : 0);
+              // Defer shutdown past finish_op as well.
+              spdk_thread_send_msg(
+                  spdk_get_thread(),
+                  [](void* a3) {
+                    auto* c3 = static_cast<test_ctx*>(a3);
+                    shutdown_app(c3, c3->failures != 0 ? 1 : 0);
+                  },
+                  c2);
             },
             c);
       },
       ctx);
+}
+
+void on_read(void* arg, int err) {
+  auto* ctx = static_cast<test_ctx*>(arg);
+  if (err != 0) {
+    fail(ctx, "read failed");
+    return;
+  }
+  if (ctx->readback != ctx->pattern) {
+    fail(ctx, "read data mismatch");
+    return;
+  }
+  SPDK_NOTICELOG("aos_spdk_test: write/read verify ok\n");
+  spdk_thread_send_msg(spdk_get_thread(), start_recover_phase, ctx);
 }
 
 void on_write(void* arg, int err) {
