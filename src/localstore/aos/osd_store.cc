@@ -301,6 +301,14 @@ log_store* osd_store::get_or_create_log(uint64_t pool_id, uint64_t pg_id,
   const fastblock::aos::pg_id pid{pool_id, pg_id, store_epoch};
   auto log = std::make_unique<log_store>(backend_, pid, alloc_, mode_);
   log_store* raw = log.get();
+  raw->set_name_lookup(
+      [this, pool_id, pg_id](uint64_t object_id, std::string* name) -> int {
+        pg_store* pg = get_active_pg(pool_id, pg_id);
+        if (pg == nullptr) {
+          return -ENOENT;
+        }
+        return pg->name_of(object_id, name);
+      });
   logs_.emplace(key, std::move(log));
   return raw;
 }
