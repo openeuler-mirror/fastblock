@@ -4165,6 +4165,59 @@ void test_flag0_write_still_dual_v2() {
   EXPECT_EQ(bytes.size(), static_cast<size_t>(kRecordHeaderLenV1));
 }
 
+void test_unified_log_load_commit_idx() {
+  // flag=1 load: never raise commit above current; unpublished suffix stays
+  // pending until a current-term entry (election noop) is majority-committed.
+  EXPECT_EQ(unified_log_load_commit_idx(90, 100), 90ull);
+  EXPECT_EQ(unified_log_load_commit_idx(100, 100), 100ull);
+  EXPECT_EQ(unified_log_load_commit_idx(110, 100), 100ull);
+  EXPECT_EQ(unified_log_load_commit_idx(0, 0), 0ull);
+  EXPECT_EQ(kRaftLogTypeNoop, 5ull);
+}
+
+void test_append_as_log_then_publish_no_second_data_record() {
+  unified_log_guard on(true);
+  mem_device_backend dev(8 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, 256 * 1024);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  std::vector<char> data(4096, 'P');
+  log_entry e;
+  e.term = 1;
+  e.index = 3;
+  e.type = 0;
+  e.meta = test_write_cmd("pubonly", 0, 0);
+  e.data.assign(data.begin(), data.end());
+  r = {};
+  osd.append_as_log(1, 0, e, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  const uint32_t data_before = count_typed_records(dev, record_type::data);
+  EXPECT_TRUE(data_before >= 1u);
+
+  std::vector<char> out(4096, 0);
+  r = {};
+  osd.read(1, 0, "pubonly", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 0); // unpublished
+
+  r = {};
+  osd.publish_commit(1, 0, 3, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  r = {};
+  out.assign(4096, 0);
+  osd.read(1, 0, "pubonly", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'P');
+  EXPECT_EQ(count_typed_records(dev, record_type::data), data_before);
+}
+
 void test_append_as_log_write_pending_v3() {
   unified_log_guard on(true);
   mem_device_backend dev(8 * 1024 * 1024);
@@ -4477,6 +4530,8 @@ int main() {
   test_recover_p6_pending_live_for_gc();
   test_record_default_encode_follows_flag();
   test_flag0_write_still_dual_v2();
+  test_unified_log_load_commit_idx();
+  test_append_as_log_then_publish_no_second_data_record();
   test_append_as_log_write_pending_v3();
   test_append_as_log_write_config_sequential();
   test_append_as_log_missing_name_not_published();
