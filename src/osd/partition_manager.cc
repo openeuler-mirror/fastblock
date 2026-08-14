@@ -198,15 +198,19 @@ void partition_manager::stop_aos(pm_complete cb_fn, void* arg) {
   ctx->remaining.store(shard_num);
   for (uint32_t shard_id = 0; shard_id < shard_num; ++shard_id) {
     _shard.invoke_on(shard_id, [this, shard_id, ctx]() {
-      if (shard_id < _aos_runtime.size() && _aos_runtime[shard_id]) {
-        _aos_runtime[shard_id]->close();
-      }
-      if (ctx->remaining.fetch_sub(1) == 1) {
-        if (ctx->cb) {
-          ctx->cb(ctx->arg, 0);
+      auto done = [ctx](void* /*a*/, int /*err*/) {
+        if (ctx->remaining.fetch_sub(1) == 1) {
+          if (ctx->cb) {
+            ctx->cb(ctx->arg, 0);
+          }
+          delete ctx;
         }
-        delete ctx;
+      };
+      if (shard_id < _aos_runtime.size() && _aos_runtime[shard_id]) {
+        _aos_runtime[shard_id]->stop(std::move(done), nullptr);
+        return;
       }
+      done(nullptr, 0);
     });
   }
 }
@@ -235,7 +239,7 @@ void partition_manager::ensure_aos_pg(uint32_t shard_id, uint64_t pool_id,
     }
   };
 
-  if (store->get_active_pg(pool_id, pg_id) != nullptr) {
+  if (store->bind_existing_pg(pool_id, pg_id) != nullptr) {
     attach(0);
     return;
   }
@@ -363,20 +367,25 @@ void partition_manager::create_pg(
         delete ctx;
         return;
     }
+    auto make_log = [store, ctx, pool_id, pg_id](int err) {
+      if (err != 0) {
+        SPDK_ERRLOG("aos create_pg for log failed pg %lu.%lu: %d\n",
+                    pool_id, pg_id, err);
+        ctx->cb_fn(ctx->arg, err);
+        delete ctx;
+        return;
+      }
+      const uint64_t epoch = store->serving_epoch(pool_id, pg_id);
+      auto* lg = store->get_or_create_log(pool_id, pg_id, epoch);
+      make_aos_disk_log(lg, make_log_done, ctx);
+    };
+    if (store->bind_existing_pg(pool_id, pg_id) != nullptr) {
+      make_log(0);
+      return;
+    }
     store->create_pg(
         pool_id, pg_id,
-        [store, ctx, pool_id, pg_id](void* /*a*/, int err) {
-          if (err != 0) {
-            SPDK_ERRLOG("aos create_pg for log failed pg %lu.%lu: %d\n",
-                        pool_id, pg_id, err);
-            ctx->cb_fn(ctx->arg, err);
-            delete ctx;
-            return;
-          }
-          const uint64_t epoch = store->serving_epoch(pool_id, pg_id);
-          auto* lg = store->get_or_create_log(pool_id, pg_id, epoch);
-          make_aos_disk_log(lg, make_log_done, ctx);
-        },
+        [make_log = std::move(make_log)](void* /*a*/, int err) { make_log(err); },
         nullptr);
     (void)pg;
 }
@@ -691,6 +700,30 @@ int partition_manager::delete_partition(uint64_t pool_id, uint64_t pg_id, pm_com
 void partition_manager::active_pg(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id, pm_complete cb_fn, void *arg){
     _pgs.active_pg(shard_id, pool_id, pg_id);
     cb_fn(arg, 0);
+}
+
+int partition_manager::repair_pg_membership(uint64_t pool_id, uint64_t pg_id,
+                                            std::vector<utils::osd_info_t> osds,
+                                            pm_complete&& cb_fn, void* arg) {
+    uint32_t shard_id = 0;
+    if (osds.empty() || !get_pg_shard(pool_id, pg_id, shard_id)) {
+        if (cb_fn) {
+            cb_fn(arg, 0);
+        }
+        return 0;
+    }
+    return _shard.invoke_on(
+        shard_id,
+        [this, pool_id, pg_id, shard_id, osds = std::move(osds),
+         cb = std::move(cb_fn), arg]() {
+          auto raft = get_pg_group().get_pg(shard_id, pool_id, pg_id);
+          if (raft) {
+            raft->install_membership(osds, shard_id);
+          }
+          if (cb) {
+            cb(arg, 0);
+          }
+        });
 }
 
 int partition_manager::active_partition(uint64_t pool_id, uint64_t pg_id, pm_complete&& cb_fn, void *arg) {
