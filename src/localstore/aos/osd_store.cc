@@ -11,6 +11,7 @@
 #include "osd_store.h"
 #include "checkpoint.h"
 #include "record.h"
+#include "segment.h"
 
 #include <spdk/env.h>
 #include <spdk/log.h>
@@ -898,6 +899,362 @@ void osd_store::remove(uint64_t pool_id, uint64_t pg_id,
   }
   pg->remove(object_name, raft_write_index, image_snap_seq, std::move(cb),
              arg);
+}
+
+namespace {
+
+constexpr uint64_t kRaftTypeWrite = 0;
+constexpr uint64_t kRaftTypeDelete = 1;
+
+bool proto_u64_field(const std::string& s, uint32_t field, uint64_t* out) {
+  size_t i = 0;
+  bool found = false;
+  while (i < s.size()) {
+    const uint8_t tag = static_cast<uint8_t>(s[i++]);
+    const uint32_t f = tag >> 3;
+    const uint32_t wt = tag & 7;
+    if (wt == 0) {
+      uint64_t v = 0;
+      int shift = 0;
+      while (i < s.size()) {
+        const uint8_t b = static_cast<uint8_t>(s[i++]);
+        v |= static_cast<uint64_t>(b & 0x7f) << shift;
+        if ((b & 0x80) == 0) {
+          break;
+        }
+        shift += 7;
+        if (shift > 63) {
+          return false;
+        }
+      }
+      if (f == field) {
+        *out = v;
+        found = true;
+      }
+    } else if (wt == 2) {
+      uint64_t len = 0;
+      int shift = 0;
+      while (i < s.size()) {
+        const uint8_t b = static_cast<uint8_t>(s[i++]);
+        len |= static_cast<uint64_t>(b & 0x7f) << shift;
+        if ((b & 0x80) == 0) {
+          break;
+        }
+        shift += 7;
+      }
+      if (i + static_cast<size_t>(len) > s.size()) {
+        return false;
+      }
+      i += static_cast<size_t>(len);
+    } else {
+      return false;
+    }
+  }
+  return found;
+}
+
+bool proto_bytes_field(const std::string& s, uint32_t field, std::string* out) {
+  size_t i = 0;
+  bool found = false;
+  while (i < s.size()) {
+    const uint8_t tag = static_cast<uint8_t>(s[i++]);
+    const uint32_t f = tag >> 3;
+    const uint32_t wt = tag & 7;
+    if (wt == 2) {
+      uint64_t len = 0;
+      int shift = 0;
+      while (i < s.size()) {
+        const uint8_t b = static_cast<uint8_t>(s[i++]);
+        len |= static_cast<uint64_t>(b & 0x7f) << shift;
+        if ((b & 0x80) == 0) {
+          break;
+        }
+        shift += 7;
+      }
+      if (i + static_cast<size_t>(len) > s.size()) {
+        return false;
+      }
+      if (f == field) {
+        out->assign(s.data() + i, static_cast<size_t>(len));
+        found = true;
+      }
+      i += static_cast<size_t>(len);
+    } else if (wt == 0) {
+      while (i < s.size()) {
+        const uint8_t b = static_cast<uint8_t>(s[i++]);
+        if ((b & 0x80) == 0) {
+          break;
+        }
+      }
+    } else {
+      return false;
+    }
+  }
+  return found;
+}
+
+bool parse_write_cmd(const std::string& meta, std::string* name, uint64_t* off,
+                     uint64_t* img) {
+  if (name == nullptr || off == nullptr || img == nullptr) {
+    return false;
+  }
+  *off = 0;
+  *img = 0;
+  if (!proto_bytes_field(meta, 1, name) || name->empty()) {
+    return false;
+  }
+  proto_u64_field(meta, 2, off);
+  proto_u64_field(meta, 3, img);
+  return true;
+}
+
+bool parse_delete_cmd(const std::string& meta, std::string* name,
+                      uint64_t* img) {
+  if (name == nullptr || img == nullptr) {
+    return false;
+  }
+  *img = 0;
+  if (!proto_bytes_field(meta, 1, name) || name->empty()) {
+    return false;
+  }
+  proto_u64_field(meta, 2, img);
+  return true;
+}
+
+uint64_t aligned_record_len(device_backend* backend, uint16_t header_len,
+                            uint64_t payload_len) {
+  const uint32_t bs = backend != nullptr ? backend->block_size() : 4096;
+  const uint64_t n = static_cast<uint64_t>(header_len) + payload_len;
+  if (bs == 0) {
+    return n;
+  }
+  return ((n + bs - 1) / bs) * bs;
+}
+
+} // namespace
+
+void osd_store::append_type14(pg_store* pg, log_store* lg, const log_entry& e,
+                              op_complete cb, void* arg) {
+  if (pg == nullptr || lg == nullptr || backend_ == nullptr ||
+      alloc_ == nullptr) {
+    if (cb) {
+      cb(arg, -EINVAL);
+    }
+    return;
+  }
+  data_record rec;
+  rec.type = record_type::raft_log_entry;
+  rec.pool_id = pg->id().pool_id;
+  rec.pg_id = pg->id().pg_id;
+  rec.store_epoch = pg->id().store_epoch;
+  rec.raft_apply_index = e.index;
+  rec.image_snap_seq = e.term;
+  rec.raft_term = e.term;
+  rec.payload = log_store::encode_payload(e);
+
+  segment writer(backend_, alloc_.get());
+  const uint64_t aligned =
+      writer.align_up(encode_header_len() + rec.payload.size());
+  void* dma = meta_alloc_buf(mode_, static_cast<size_t>(aligned),
+                             backend_->block_size());
+  if (dma == nullptr) {
+    cb(arg, -ENOMEM);
+    return;
+  }
+  struct t14_ctx {
+    osd_store* self;
+    segment writer;
+    log_store* lg;
+    log_entry e;
+    void* dma;
+    uint64_t aligned;
+    op_complete cb;
+    void* arg;
+    uint64_t phys{0};
+  };
+  auto* c = new (std::nothrow) t14_ctx{this,
+                                       segment(backend_, alloc_.get()),
+                                       lg,
+                                       e,
+                                       dma,
+                                       aligned,
+                                       std::move(cb),
+                                       arg,
+                                       0};
+  if (c == nullptr) {
+    meta_free_buf(dma, mode_);
+    cb(arg, -ENOMEM);
+    return;
+  }
+  c->writer.append_record(
+      rec, dma, aligned,
+      [](void* a, uint64_t phys, int err) {
+        auto* c = static_cast<t14_ctx*>(a);
+        if (err != 0) {
+          meta_free_buf(c->dma, c->self->mode_);
+          c->cb(c->arg, err);
+          delete c;
+          return;
+        }
+        c->phys = phys;
+        c->writer.flush(
+            [](void* a2, int ferr) {
+              auto* c2 = static_cast<t14_ctx*>(a2);
+              int rerr = ferr;
+              if (rerr == 0) {
+                rerr = c2->lg->register_index(c2->e.index, c2->e.term, c2->phys,
+                                              c2->aligned,
+                                              record_type::raft_log_entry);
+              }
+              meta_free_buf(c2->dma, c2->self->mode_);
+              c2->cb(c2->arg, rerr);
+              delete c2;
+            },
+            c);
+      },
+      c);
+}
+
+void osd_store::append_as_log(uint64_t pool_id, uint64_t pg_id,
+                              const log_entry& e, op_complete cb, void* arg) {
+  if (cb == nullptr) {
+    return;
+  }
+  if (e.index == 0) {
+    cb(arg, -EINVAL);
+    return;
+  }
+  pg_store* pg = get_active_pg(pool_id, pg_id);
+  if (pg == nullptr) {
+    cb(arg, -ENOENT);
+    return;
+  }
+  log_store* lg = get_or_create_log(pool_id, pg_id, serving_epoch(pool_id, pg_id));
+  if (lg == nullptr) {
+    cb(arg, -ENOENT);
+    return;
+  }
+
+  if (e.type == kRaftTypeWrite) {
+    std::string name;
+    uint64_t offset = 0;
+    uint64_t img = 0;
+    if (!parse_write_cmd(e.meta, &name, &offset, &img)) {
+      cb(arg, -EINVAL);
+      return;
+    }
+    const uint64_t index = e.index;
+    const uint64_t term = e.term;
+    const uint64_t len = e.data.size();
+    pg->append_uncommitted(
+        name, offset, e.data.data(), len, index, term, img,
+        [this, pool_id, pg_id, index, term, len, cb = std::move(cb),
+         arg](void*, int err) {
+          if (err != 0) {
+            cb(arg, err);
+            return;
+          }
+          pg_store* pg2 = get_active_pg(pool_id, pg_id);
+          log_store* lg2 = get_active_log(pool_id, pg_id);
+          uint64_t start = 0;
+          uint16_t hlen = 0;
+          if (pg2 == nullptr || lg2 == nullptr ||
+              !pg2->pending_record_start(index, &start, &hlen)) {
+            cb(arg, -EIO);
+            return;
+          }
+          const uint64_t aligned = aligned_record_len(backend_, hlen, len);
+          const int rerr =
+              lg2->register_index(index, term, start, aligned, record_type::data);
+          if (rerr != 0) {
+            SPDK_ERRLOG("aos append_as_log register WRITE idx=%lu rc=%d\n",
+                        static_cast<unsigned long>(index), rerr);
+          }
+          cb(arg, rerr);
+        },
+        nullptr);
+    return;
+  }
+
+  if (e.type == kRaftTypeDelete) {
+    std::string name;
+    uint64_t img = 0;
+    if (!parse_delete_cmd(e.meta, &name, &img)) {
+      cb(arg, -EINVAL);
+      return;
+    }
+    const uint64_t index = e.index;
+    const uint64_t term = e.term;
+    pg->append_uncommitted_remove(
+        name, index, term, img,
+        [this, pool_id, pg_id, index, term, e, cb = std::move(cb),
+         arg](void*, int err) {
+          if (err != 0) {
+            cb(arg, err);
+            return;
+          }
+          pg_store* pg2 = get_active_pg(pool_id, pg_id);
+          log_store* lg2 = get_active_log(pool_id, pg_id);
+          if (pg2 == nullptr || lg2 == nullptr) {
+            cb(arg, -EIO);
+            return;
+          }
+          uint64_t start = 0;
+          uint16_t hlen = 0;
+          if (pg2->pending_record_start(index, &start, &hlen)) {
+            const uint64_t aligned = aligned_record_len(backend_, hlen, 0);
+            const int rerr = lg2->register_index(
+                index, term, start, aligned, record_type::delete_tombstone);
+            cb(arg, rerr);
+            return;
+          }
+          // Missing object: still occupy last_index+1 via type=14.
+          append_type14(pg2, lg2, e, std::move(cb), arg);
+        },
+        nullptr);
+    return;
+  }
+
+  append_type14(pg, lg, e, std::move(cb), arg);
+}
+
+void osd_store::publish_commit(uint64_t pool_id, uint64_t pg_id, uint64_t index,
+                               op_complete cb, void* arg) {
+  if (cb == nullptr) {
+    return;
+  }
+  pg_store* pg = get_active_pg(pool_id, pg_id);
+  if (pg == nullptr) {
+    cb(arg, -ENOENT);
+    return;
+  }
+  pg->publish_commit(index, std::move(cb), arg);
+}
+
+void osd_store::truncate_log_and_pending(uint64_t pool_id, uint64_t pg_id,
+                                         uint64_t from_index, op_complete cb,
+                                         void* arg) {
+  if (cb == nullptr) {
+    return;
+  }
+  if (from_index == 0) {
+    cb(arg, -EINVAL);
+    return;
+  }
+  pg_store* pg = get_active_pg(pool_id, pg_id);
+  log_store* lg = get_active_log(pool_id, pg_id);
+  if (pg == nullptr && lg == nullptr) {
+    cb(arg, -ENOENT);
+    return;
+  }
+  if (pg != nullptr) {
+    pg->drop_pending_from(from_index);
+  }
+  if (lg != nullptr) {
+    lg->truncate_from(from_index, std::move(cb), arg);
+    return;
+  }
+  cb(arg, 0);
 }
 
 void osd_store::create_pg(uint64_t pool_id, uint64_t pg_id, op_complete cb,
