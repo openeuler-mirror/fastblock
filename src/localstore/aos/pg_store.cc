@@ -652,6 +652,21 @@ void pg_store::erase_isolated_create(const pending_op& op) {
   objects_.erase(oit);
 }
 
+bool pg_store::pending_record_start(uint64_t raft_index, uint64_t* record_start,
+                                    uint16_t* header_len) const {
+  auto it = pending_.find(raft_index);
+  if (it == pending_.end() || it->second.record_start == 0) {
+    return false;
+  }
+  if (record_start != nullptr) {
+    *record_start = it->second.record_start;
+  }
+  if (header_len != nullptr) {
+    *header_len = it->second.header_len;
+  }
+  return true;
+}
+
 void pg_store::publish_commit(uint64_t raft_index, op_complete cb, void* arg) {
   if (cb == nullptr) {
     return;
@@ -908,7 +923,7 @@ void pg_store::write(const std::string& object_name, uint64_t offset,
       name_rec.payload = object_name;
 
       const uint64_t need =
-          seg_.align_up(kRecordHeaderLenV1 + name_rec.payload.size());
+          seg_.align_up(encode_header_len() + name_rec.payload.size());
       ensure_scratch(need);
       if (scratch_ptr_ == nullptr) {
         auto c = std::move(req->cb);
@@ -988,10 +1003,11 @@ void pg_store::append_uncommitted(const std::string& object_name,
       name_rec.object_id = req->object_id;
       name_rec.raft_apply_index = raft_index;
       name_rec.image_snap_seq = image_snap_seq;
+      name_rec.raft_term = raft_term;
       name_rec.payload = object_name;
 
       const uint64_t need =
-          seg_.align_up(kRecordHeaderLenV1 + name_rec.payload.size());
+          seg_.align_up(encode_header_len() + name_rec.payload.size());
       ensure_scratch(need);
       if (scratch_ptr_ == nullptr) {
         auto c = std::move(req->cb);
@@ -1039,10 +1055,11 @@ void pg_store::write_after_name(void* arg, uint64_t /*phys*/, int err) {
   rec.object_offset = req->offset;
   rec.raft_apply_index = req->raft_apply_index;
   rec.image_snap_seq = req->image_snap_seq;
+  rec.raft_term = req->raft_term;
   rec.payload.assign(req->payload.begin(), req->payload.end());
 
   const uint64_t need =
-      self->seg_.align_up(kRecordHeaderLenV1 + rec.payload.size());
+      self->seg_.align_up(encode_header_len() + rec.payload.size());
   self->ensure_scratch(need);
   if (self->scratch_ptr_ == nullptr) {
     auto cb = std::move(req->cb);
@@ -1186,7 +1203,7 @@ void pg_store::remove(const std::string& object_name, uint64_t raft_apply_index,
     rec.raft_apply_index = raft_apply_index;
     rec.image_snap_seq = image_snap_seq;
 
-    const uint64_t need = seg_.align_up(kRecordHeaderLenV1);
+    const uint64_t need = seg_.align_up(encode_header_len());
     ensure_scratch(need);
     if (scratch_ptr_ == nullptr) {
       auto c = std::move(req->cb);
@@ -1249,8 +1266,9 @@ void pg_store::append_uncommitted_remove(const std::string& object_name,
     rec.object_id = req->object_id;
     rec.raft_apply_index = raft_index;
     rec.image_snap_seq = image_snap_seq;
+    rec.raft_term = raft_term;
 
-    const uint64_t need = seg_.align_up(kRecordHeaderLenV1);
+    const uint64_t need = seg_.align_up(encode_header_len());
     ensure_scratch(need);
     if (scratch_ptr_ == nullptr) {
       auto c = std::move(req->cb);
@@ -1466,6 +1484,7 @@ void pg_store::append_uncommitted_discard(const std::string& object_name,
     rec.object_offset = offset;
     rec.raft_apply_index = raft_index;
     rec.image_snap_seq = image_snap_seq;
+    rec.raft_term = raft_term;
     rec.payload.resize(8);
     for (int i = 0; i < 8; ++i) {
       rec.payload[static_cast<size_t>(i)] =
@@ -1473,7 +1492,7 @@ void pg_store::append_uncommitted_discard(const std::string& object_name,
     }
 
     const uint64_t need =
-        seg_.align_up(kRecordHeaderLenV1 + rec.payload.size());
+        seg_.align_up(encode_header_len() + rec.payload.size());
     ensure_scratch(need);
     if (scratch_ptr_ == nullptr) {
       auto c = std::move(req->cb);
