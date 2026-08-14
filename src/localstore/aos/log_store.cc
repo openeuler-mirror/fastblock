@@ -12,6 +12,7 @@
 #include "record.h"
 
 #include <spdk/env.h>
+#include <spdk/log.h>
 
 #include <cerrno>
 #include <cstring>
@@ -46,6 +47,52 @@ uint64_t get_u64(const char* p) {
   }
   return v;
 }
+
+// proto3 write_cmd / delete_cmd (osd_msg.proto). Omit zero defaults.
+void put_varint(std::string& o, uint64_t v) {
+  while (v >= 0x80) {
+    o.push_back(static_cast<char>((v & 0x7f) | 0x80));
+    v >>= 7;
+  }
+  o.push_back(static_cast<char>(v));
+}
+
+void put_proto_bytes(std::string& o, uint32_t field, const std::string& s) {
+  if (s.empty()) {
+    return;
+  }
+  o.push_back(static_cast<char>((field << 3) | 2));
+  put_varint(o, s.size());
+  o.append(s);
+}
+
+void put_proto_u64(std::string& o, uint32_t field, uint64_t v) {
+  if (v == 0) {
+    return;
+  }
+  o.push_back(static_cast<char>((field << 3) | 0));
+  put_varint(o, v);
+}
+
+std::string encode_write_cmd(const std::string& name, uint64_t offset,
+                             uint64_t image_snap_seq) {
+  std::string o;
+  put_proto_bytes(o, 1, name);
+  put_proto_u64(o, 2, offset);
+  put_proto_u64(o, 3, image_snap_seq);
+  return o;
+}
+
+std::string encode_delete_cmd(const std::string& name, uint64_t image_snap_seq) {
+  std::string o;
+  put_proto_bytes(o, 1, name);
+  put_proto_u64(o, 2, image_snap_seq);
+  return o;
+}
+
+// Matches raft.h RAFT_LOGTYPE_WRITE / RAFT_LOGTYPE_DELETE.
+constexpr uint64_t kLogTypeWrite = 0;
+constexpr uint64_t kLogTypeDelete = 1;
 
 } // namespace
 
@@ -170,7 +217,8 @@ void log_store::append(const log_entry& entry, op_complete cb, void* arg) {
               if (ferr == 0) {
                 log_store* self = c2->self;
                 self->index_map_[c2->entry.index] =
-                    idx_pos{c2->phys, c2->aligned, c2->entry.term};
+                    idx_pos{c2->phys, c2->aligned, c2->entry.term,
+                            record_type::raft_log_entry};
                 if (self->index_map_.size() == 1) {
                   self->base_index_ = c2->entry.index;
                 }
@@ -183,6 +231,116 @@ void log_store::append(const log_entry& entry, op_complete cb, void* arg) {
             c);
       },
       c);
+}
+
+int log_store::register_index(uint64_t index, uint64_t term, uint64_t phys,
+                              uint64_t length, record_type rec_type) {
+  if (index == 0 || length == 0) {
+    return -EINVAL;
+  }
+  auto it = index_map_.find(index);
+  if (it != index_map_.end()) {
+    if (it->second.phys_offset == phys) {
+      return 0;
+    }
+    return -EEXIST;
+  }
+  if (!index_map_.empty() && index != last_index_ + 1) {
+    return -EINVAL;
+  }
+  if (index_map_.empty() && last_index_ != 0) {
+    return -EINVAL;
+  }
+  index_map_[index] = idx_pos{phys, length, term, rec_type};
+  if (index_map_.size() == 1) {
+    base_index_ = index;
+  }
+  last_index_ = index;
+  return 0;
+}
+
+void log_store::update_phys(uint64_t index, uint64_t new_record_start,
+                            uint64_t new_len) {
+  auto it = index_map_.find(index);
+  if (it == index_map_.end() || new_len == 0) {
+    return;
+  }
+  it->second.phys_offset = new_record_start;
+  it->second.length = new_len;
+}
+
+int log_store::decode_as_log_entry(const data_record& rec, uint64_t index,
+                                   const idx_pos& pos, log_entry* out) const {
+  if (out == nullptr) {
+    return -EINVAL;
+  }
+  switch (pos.rec_type) {
+  case record_type::data:
+  case record_type::gc_rewrite: {
+    if (rec.payload.empty() || (rec.payload.size() % kAlign) != 0) {
+      return -EIO;
+    }
+    if (!name_lookup_) {
+      SPDK_ERRLOG(
+          "aos log_store read: name_lookup unset object_id=%lu index=%lu\n",
+          static_cast<unsigned long>(rec.object_id),
+          static_cast<unsigned long>(index));
+      return -ENOENT;
+    }
+    std::string name;
+    const int nerr = name_lookup_(rec.object_id, &name);
+    if (nerr != 0 || name.empty()) {
+      SPDK_ERRLOG(
+          "aos log_store read: name_lookup failed object_id=%lu index=%lu "
+          "err=%d\n",
+          static_cast<unsigned long>(rec.object_id),
+          static_cast<unsigned long>(index), nerr);
+      return nerr != 0 ? nerr : -ENOENT;
+    }
+    out->term = pos.term;
+    out->index = index;
+    out->type = kLogTypeWrite;
+    out->meta = encode_write_cmd(name, rec.object_offset, rec.image_snap_seq);
+    out->data = rec.payload;
+    return 0;
+  }
+  case record_type::delete_tombstone: {
+    if (!name_lookup_) {
+      SPDK_ERRLOG(
+          "aos log_store read: name_lookup unset object_id=%lu index=%lu\n",
+          static_cast<unsigned long>(rec.object_id),
+          static_cast<unsigned long>(index));
+      return -ENOENT;
+    }
+    std::string name;
+    const int nerr = name_lookup_(rec.object_id, &name);
+    if (nerr != 0 || name.empty()) {
+      SPDK_ERRLOG(
+          "aos log_store read: name_lookup failed object_id=%lu index=%lu "
+          "err=%d\n",
+          static_cast<unsigned long>(rec.object_id),
+          static_cast<unsigned long>(index), nerr);
+      return nerr != 0 ? nerr : -ENOENT;
+    }
+    out->term = pos.term;
+    out->index = index;
+    out->type = kLogTypeDelete;
+    out->meta = encode_delete_cmd(name, rec.image_snap_seq);
+    out->data.clear();
+    return 0;
+  }
+  case record_type::range_tombstone:
+    return -ENOTSUP;
+  case record_type::raft_log_entry: {
+    if (rec.type != record_type::raft_log_entry ||
+        !decode_payload(rec.payload, out) || out->index != index) {
+      return -EIO;
+    }
+    return 0;
+  }
+  default:
+    return -EIO;
+  }
 }
 
 void log_store::read(uint64_t start_index, uint64_t end_index, read_complete cb,
@@ -219,6 +377,9 @@ void log_store::read(uint64_t start_index, uint64_t end_index, read_complete cb,
   auto finish = [](rctx* c, int err) {
     if (c->buf) {
       c->self->free_buf(c->buf);
+    }
+    if (err != 0) {
+      c->out.clear();
     }
     c->cb(c->arg, std::move(c->out), err);
     delete c;
@@ -259,16 +420,17 @@ void log_store::read(uint64_t start_index, uint64_t end_index, read_complete cb,
           auto st = decode_record(static_cast<const uint8_t*>(c->buf),
                                   static_cast<size_t>(pos.length), &rec,
                                   &consumed);
-          if (st != decode_status::ok ||
-              rec.type != record_type::raft_log_entry) {
+          if (st != decode_status::ok) {
             delete step;
             finish(c, -EIO);
             return;
           }
           log_entry e;
-          if (!decode_payload(rec.payload, &e) || e.index != c->cur) {
+          const int derr =
+              c->self->decode_as_log_entry(rec, c->cur, pos, &e);
+          if (derr != 0) {
             delete step;
-            finish(c, -EIO);
+            finish(c, derr);
             return;
           }
           c->out.push_back(std::move(e));
@@ -428,7 +590,8 @@ int log_store::apply_record(const data_record& rec, uint64_t phys_offset) {
   const auto encoded_len = encode_record(rec).size();
   const uint64_t aligned =
       backend_ ? writer_.align_up(encoded_len) : encoded_len;
-  index_map_[e.index] = idx_pos{phys_offset, aligned, e.term};
+  index_map_[e.index] =
+      idx_pos{phys_offset, aligned, e.term, record_type::raft_log_entry};
   if (base_index_ == 0 || e.index < base_index_) {
     base_index_ = e.index;
   }
@@ -479,7 +642,7 @@ uint64_t log_store::rebuild_from_image(const uint8_t* image, size_t len) {
 std::string log_store::encode_checkpoint_payload(
     const std::map<uint64_t, idx_pos>& idx, uint64_t base, uint64_t last) {
   std::string o;
-  o.reserve(20 + idx.size() * 32);
+  o.reserve(20 + idx.size() * 40);
   auto put32 = [&](uint32_t v) {
     for (int i = 0; i < 4; ++i) {
       o.push_back(static_cast<char>((v >> (8 * i)) & 0xff));
@@ -498,6 +661,8 @@ std::string log_store::encode_checkpoint_payload(
     put64(kv.second.term);
     put64(kv.second.phys_offset);
     put64(kv.second.length);
+    o.push_back(static_cast<char>(static_cast<uint8_t>(kv.second.rec_type)));
+    o.append(7, '\0');
   }
   return o;
 }
@@ -525,7 +690,18 @@ bool log_store::decode_checkpoint_payload(const std::string& p,
   *base = ru64(0);
   *last = ru64(8);
   const uint32_t n = ru32(16);
-  if (p.size() < 20ull + static_cast<size_t>(n) * 32ull) {
+  const size_t rest = p.size() - 20;
+  const size_t stride =
+      (n == 0) ? 0 : rest / static_cast<size_t>(n);
+  // 32B: (index, term, phys, length). 40B: + rec_type u8 + 7B pad.
+  if (n == 0) {
+    if (rest != 0) {
+      return false;
+    }
+    idx->clear();
+    return true;
+  }
+  if ((stride != 32 && stride != 40) || rest != stride * static_cast<size_t>(n)) {
     return false;
   }
   idx->clear();
@@ -536,8 +712,13 @@ bool log_store::decode_checkpoint_payload(const std::string& p,
     pos.term = ru64(off + 8);
     pos.phys_offset = ru64(off + 16);
     pos.length = ru64(off + 24);
+    if (stride == 40) {
+      pos.rec_type = static_cast<record_type>(s[off + 32]);
+    } else {
+      pos.rec_type = record_type::raft_log_entry;
+    }
     (*idx)[index] = pos;
-    off += 32;
+    off += stride;
   }
   return true;
 }
