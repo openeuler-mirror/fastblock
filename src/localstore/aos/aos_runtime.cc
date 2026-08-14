@@ -297,7 +297,7 @@ const char* object_engine_mode_name(object_engine_mode m) {
 }
 
 namespace {
-bool g_unified_log = false;
+bool g_unified_log = true;
 bool g_unified_log_inited = false;
 }
 
@@ -305,8 +305,10 @@ bool unified_log_enabled() {
   if (!g_unified_log_inited) {
     g_unified_log_inited = true;
     const char* e = std::getenv("FASTBLOCK_AOS_UNIFIED_LOG");
-    // Production default stays 0; only an explicit "1" enables.
-    if (e != nullptr && e[0] == '1' && e[1] == '\0') {
+    // Dev default is on (log=STM). Only an explicit "0" disables.
+    if (e != nullptr && e[0] == '0' && e[1] == '\0') {
+      g_unified_log = false;
+    } else {
       g_unified_log = true;
     }
   }
