@@ -3068,6 +3068,61 @@ void test_log_store_old_checkpoint_default_raft() {
   EXPECT_TRUE(rr.entries[0].data == "payload");
 }
 
+void test_log_store_checkpoint_preserves_data_rec_type() {
+  mem_device_backend dev(4 * 1024 * 1024);
+  auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
+                                                   dev.block_size());
+  EXPECT_EQ(alloc->ensure_open(), 0);
+  log_store log(&dev, pg_id{1, 2, 1}, alloc, buffer_mode::heap);
+
+  data_record rec;
+  rec.type = record_type::data;
+  rec.pool_id = 1;
+  rec.pg_id = 2;
+  rec.store_epoch = 1;
+  rec.object_id = 11;
+  rec.object_offset = 4096;
+  rec.image_snap_seq = 6;
+  rec.payload.assign(4096, 'C');
+  auto wr = write_raw_record(&dev, alloc.get(), rec);
+  EXPECT_EQ(wr.err, 0);
+  EXPECT_EQ(log.register_index(1, 8, wr.phys, wr.aligned, record_type::data),
+            0);
+  sync_result r;
+  log.checkpoint(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  std::vector<uint8_t> image(static_cast<size_t>(dev.write_pointer()));
+  r = {};
+  dev.read(0, image.data(), image.size(), on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  auto alloc2 = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
+                                                    dev.block_size());
+  log_store log2(&dev, pg_id{1, 2, 1}, alloc2, buffer_mode::heap);
+  log2.rebuild_from_image(image.data(), image.size());
+  EXPECT_EQ(log2.last_index(), 1);
+  EXPECT_EQ(log2.get_term(1), 8);
+  log2.set_name_lookup([](uint64_t oid, std::string* name) {
+    if (oid != 11 || name == nullptr) {
+      return -ENOENT;
+    }
+    *name = "ckpt-obj";
+    return 0;
+  });
+  auto rr = read_log(log2, 1, 1);
+  EXPECT_EQ(rr.err, 0);
+  EXPECT_EQ(rr.entries.size(), 1);
+  EXPECT_EQ(rr.entries[0].type, 0); // RAFT_LOGTYPE_WRITE
+  EXPECT_EQ(rr.entries[0].data.size(), 4096);
+  EXPECT_TRUE(rr.entries[0].data == rec.payload);
+  std::string name;
+  EXPECT_TRUE(proto_bytes_field(rr.entries[0].meta, 1, &name));
+  EXPECT_TRUE(name == "ckpt-obj");
+  uint64_t off = 0;
+  EXPECT_TRUE(proto_u64_field(rr.entries[0].meta, 2, &off));
+  EXPECT_EQ(off, 4096);
+}
+
 void test_log_store_range_tombstone_read_notsup() {
   mem_device_backend dev(4 * 1024 * 1024);
   auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
@@ -3324,6 +3379,7 @@ int main() {
   test_log_store_register_data_as_log();
   test_log_store_read_requires_name_lookup();
   test_log_store_old_checkpoint_default_raft();
+  test_log_store_checkpoint_preserves_data_rec_type();
   test_log_store_range_tombstone_read_notsup();
   test_log_store_gc_rewrite_as_data();
   test_log_store_update_phys();
