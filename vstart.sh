@@ -60,6 +60,8 @@ dataDir="/var/lib/fastblock"
 logDir="/var/log/fastblock"
 aioFileSize="${FASTBLOCK_VSTART_AIO_FILE_SIZE:-100G}"
 aioPreallocate="${FASTBLOCK_VSTART_AIO_PREALLOCATE:-0}"
+# Extra SPDK args for each OSD (mkfs + start). Regression uses --no-huge.
+spdkExtraArgs="${FASTBLOCK_VSTART_SPDK_ARGS:-}"
 
 usage() {
     echo "Usage: $0 [options]"
@@ -278,7 +280,8 @@ function startLocalOsd() {
         "$osdBinary" \
         -C "$defaultConfigFile" \
         --id "$_osdid" \
-        -N 0
+        -N 0 \
+        $spdkExtraArgs
 }
 
 function allocateOsdId() {
@@ -694,7 +697,7 @@ function addNewOsd() {
         echo "$dataDir"/osd-"$_osdid"/aos_file > "$aos_disk_path"
 
         echo intializing localstore of osd-"$_osdid"
-        "$osdBinary" -C "$defaultConfigFile" --id "$_osdid" --mkfs --force --uuid "$_uuid" -S "$cores"
+        "$osdBinary" -C "$defaultConfigFile" --id "$_osdid" --mkfs --force --uuid "$_uuid" -S "$cores" $spdkExtraArgs
 
         echo "starting osd-$_osdid"
         if [ "$useLocalDevLaunch" = "true" ]; then
