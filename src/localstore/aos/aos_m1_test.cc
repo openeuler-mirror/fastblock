@@ -4389,6 +4389,121 @@ void test_ckpt_recover_snapshot_ships_head() {
   EXPECT_EQ(out[0], 'A');
 }
 
+void test_snapshot_reader_after_log_trim() {
+  // Store-level stand-in for raft §3: after prefix trim, snapshot still ships
+  // committed head (log index is gone, object phys stays live).
+  unified_log_guard on(true);
+  mem_device_backend dev(8 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, 256 * 1024);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  std::vector<char> data(4096, 'T');
+  log_entry e;
+  e.term = 2;
+  e.index = 6;
+  e.type = 0;
+  e.meta = test_write_cmd("trimsnap", 0, 0);
+  e.data.assign(data.begin(), data.end());
+  r = {};
+  osd.append_as_log(1, 0, e, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.publish_commit(1, 0, 6, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  log_store* lg = osd.get_active_log(1, 0);
+  EXPECT_TRUE(lg != nullptr);
+  lg->trim_to(6);
+  EXPECT_TRUE(!lg->contains(6));
+
+  pg_store* pg = osd.get_active_pg(1, 0);
+  EXPECT_TRUE(pg != nullptr);
+  struct open_pack {
+    int err{-1};
+    pg_snapshot_reader* reader{nullptr};
+  } op;
+  pg_snapshot_reader::open(
+      pg, /*last_applied*/ 6, /*term*/ 2,
+      [](void* a, int err, pg_snapshot_reader* reader) {
+        auto* p = static_cast<open_pack*>(a);
+        p->err = err;
+        p->reader = reader;
+      },
+      &op);
+  EXPECT_EQ(op.err, 0);
+  EXPECT_TRUE(op.reader != nullptr);
+  EXPECT_TRUE(op.reader->total_chunks() >= 1u);
+
+  std::vector<char> buf(4096, 0);
+  struct {
+    int err{-1};
+    bool done{false};
+  } ch;
+  op.reader->next_chunk(
+      buf.data(), buf.size(),
+      [](void* a, int err, bool done, const char* /*name*/, uint64_t /*off*/,
+         uint64_t /*len*/) {
+        auto* c = static_cast<decltype(ch)*>(a);
+        c->err = err;
+        c->done = done;
+      },
+      &ch);
+  EXPECT_EQ(ch.err, 0);
+  EXPECT_TRUE(!ch.done);
+  EXPECT_EQ(buf[0], 'T');
+
+  r = {};
+  op.reader->close(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  delete op.reader;
+}
+
+void test_empty_ingest_abort_keeps_serving() {
+  unified_log_guard on(true);
+  mem_device_backend dev(8 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, 256 * 1024);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  std::vector<char> data(4096, 'K');
+  log_entry e;
+  e.term = 1;
+  e.index = 2;
+  e.type = 0;
+  e.meta = test_write_cmd("keep", 0, 0);
+  e.data.assign(data.begin(), data.end());
+  r = {};
+  osd.append_as_log(1, 0, e, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.publish_commit(1, 0, 2, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  snapshot_ingest ing(&osd, 1, 0);
+  r = {};
+  ing.begin(2, 1, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(ing.chunk_count(), 0u);
+  r = {};
+  ing.abort(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  std::vector<char> out(4096, 0);
+  r = {};
+  osd.read(1, 0, "keep", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'K');
+}
+
 void test_trim_gc_keeps_head_after_log_trim() {
   unified_log_guard on(true);
   const uint64_t seg = 256 * 1024;
@@ -4745,6 +4860,8 @@ int main() {
   test_append_as_log_then_publish_no_second_data_record();
   test_rewrite_updates_log_phys_disk_read();
   test_ckpt_recover_snapshot_ships_head();
+  test_snapshot_reader_after_log_trim();
+  test_empty_ingest_abort_keeps_serving();
   test_trim_gc_keeps_head_after_log_trim();
   test_append_as_log_write_pending_v3();
   test_append_as_log_write_config_sequential();
