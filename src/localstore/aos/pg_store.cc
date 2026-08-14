@@ -540,6 +540,17 @@ bool pg_store::object_exists(const std::string& name) const {
   return !oit->second.deleted;
 }
 
+int pg_store::name_of(uint64_t object_id, std::string* name) const {
+  auto it = objects_.find(object_id);
+  if (it == objects_.end() || it->second.name.empty()) {
+    return -ENOENT;
+  }
+  if (name != nullptr) {
+    *name = it->second.name;
+  }
+  return 0;
+}
+
 void pg_store::apply_pending_op(const pending_op& op) {
   object_state* obj = find_object(op.object_name);
   if (obj == nullptr) {
@@ -2774,7 +2785,75 @@ void pg_store::recover_process_buffer(recover_req* req) {
       req);
 }
 
-int pg_store::apply_record(const data_record& rec, uint64_t phys_offset) {
+int pg_store::stash_pending_record(const data_record& rec,
+                                   uint64_t record_start) {
+  if (rec.raft_apply_index == 0) {
+    return -EINVAL;
+  }
+  pending_op op;
+  op.raft_index = rec.raft_apply_index;
+  op.raft_term = rec.raft_term;
+  op.image_seq = rec.image_snap_seq;
+  op.object_id = rec.object_id;
+  op.offset = rec.object_offset;
+  op.record_start = record_start;
+  op.header_len =
+      rec.header_len != 0 ? rec.header_len : kRecordHeaderLenV1;
+
+  auto oit = objects_.find(rec.object_id);
+  if (oit != objects_.end()) {
+    op.object_name = oit->second.name;
+  } else {
+    for (const auto& kv : name_to_id_) {
+      if (kv.second == rec.object_id) {
+        op.object_name = kv.first;
+        break;
+      }
+    }
+  }
+
+  if (rec.type == record_type::data || rec.type == record_type::gc_rewrite) {
+    op.k = version_op::kind::put;
+    op.len = rec.payload.size();
+    if (op.len == 0 || !valid_object_range(op.offset, op.len)) {
+      return -EINVAL;
+    }
+  } else if (rec.type == record_type::delete_tombstone) {
+    op.k = version_op::kind::remove;
+  } else if (rec.type == record_type::range_tombstone) {
+    op.k = version_op::kind::discard;
+    if (rec.payload.size() != 8) {
+      return -EINVAL;
+    }
+    uint64_t dlen = 0;
+    for (int i = 0; i < 8; ++i) {
+      dlen |= static_cast<uint64_t>(static_cast<uint8_t>(rec.payload[i]))
+              << (8 * i);
+    }
+    if (!valid_object_range(rec.object_offset, dlen)) {
+      return -EINVAL;
+    }
+    op.len = dlen;
+  } else {
+    return -EINVAL;
+  }
+
+  pending_[op.raft_index] = std::move(op);
+  return 0;
+}
+
+void pg_store::recover_publish_pending(uint64_t raft_index) {
+  auto it = pending_.find(raft_index);
+  if (it == pending_.end()) {
+    return;
+  }
+  pending_op op = std::move(it->second);
+  pending_.erase(it);
+  apply_pending_op(op);
+}
+
+int pg_store::apply_record(const data_record& rec, uint64_t phys_offset,
+                           bool publish) {
   if (rec.pool_id != id_.pool_id || rec.pg_id != id_.pg_id ||
       rec.store_epoch != id_.store_epoch) {
     return 0;
@@ -2847,6 +2926,9 @@ int pg_store::apply_record(const data_record& rec, uint64_t phys_offset) {
   }
 
   if (rec.type == record_type::delete_tombstone) {
+    if (!publish) {
+      return 0;
+    }
     auto oit = objects_.find(rec.object_id);
     if (oit == objects_.end()) {
       object_state st;
@@ -2867,6 +2949,9 @@ int pg_store::apply_record(const data_record& rec, uint64_t phys_offset) {
   }
 
   if (rec.type == record_type::range_tombstone) {
+    if (!publish) {
+      return 0;
+    }
     if (rec.payload.size() != 8) {
       return -EINVAL;
     }
@@ -2901,6 +2986,9 @@ int pg_store::apply_record(const data_record& rec, uint64_t phys_offset) {
   }
 
   if (rec.type == record_type::gc_rewrite) {
+    if (!publish) {
+      return 0;
+    }
     // Design §12.1: update physical pointer only; do not advance user version.
     const uint64_t len = rec.payload.size();
     if (len == 0 || !valid_object_range(rec.object_offset, len)) {
@@ -2912,6 +3000,9 @@ int pg_store::apply_record(const data_record& rec, uint64_t phys_offset) {
   }
 
   if (rec.type == record_type::data) {
+    if (!publish) {
+      return 0;
+    }
     auto oit = objects_.find(rec.object_id);
     if (oit == objects_.end()) {
       object_state st;
