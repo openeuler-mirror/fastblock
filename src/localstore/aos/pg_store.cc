@@ -26,6 +26,16 @@ namespace fastblock::aos {
 
 namespace {
 constexpr uint64_t kRecoverChunk = 256 * 1024;
+
+uint16_t header_len_from_encoded(const void* buf, uint64_t cap) {
+  if (buf == nullptr || cap < 10) {
+    return kRecordHeaderLenV1;
+  }
+  const auto* p = static_cast<const uint8_t*>(buf);
+  const uint16_t h =
+      static_cast<uint16_t>(p[8]) | (static_cast<uint16_t>(p[9]) << 8);
+  return h != 0 ? h : kRecordHeaderLenV1;
+}
 }
 
 struct pg_store::write_req {
@@ -44,6 +54,7 @@ struct pg_store::write_req {
   uint16_t header_len{kRecordHeaderLenV1};
   bool uncommitted{false};
   uint64_t raft_term{0};
+  uint64_t drop_epoch{0};
 };
 
 struct pg_store::remove_req {
@@ -58,6 +69,7 @@ struct pg_store::remove_req {
   uint16_t header_len{kRecordHeaderLenV1};
   bool uncommitted{false};
   uint64_t raft_term{0};
+  uint64_t drop_epoch{0};
 };
 
 struct pg_store::discard_req {
@@ -74,6 +86,7 @@ struct pg_store::discard_req {
   uint16_t header_len{kRecordHeaderLenV1};
   bool uncommitted{false};
   uint64_t raft_term{0};
+  uint64_t drop_epoch{0};
 };
 
 struct pg_store::checkpoint_req {
@@ -292,6 +305,7 @@ void pg_store::clear_maps() {
   name_to_id_.clear();
   objects_.clear();
   pending_.clear();
+  clear_inflight_uncommitted();
   next_object_id_ = 1;
   snapshot_pins_.clear();
   total_snapshot_pins_ = 0;
@@ -615,8 +629,10 @@ void pg_store::erase_isolated_create(const pending_op& op) {
     return;
   }
   const object_state& obj = oit->second;
-  // Committed history (head, delete, or versions) must survive truncate.
-  if (obj.head.size() != 0 || obj.deleted || !obj.versions.empty()) {
+  // versions are not checkpointed; applied_* is the committed residue
+  // after recover of a hole-punched (empty-head) object.
+  if (obj.head.size() != 0 || obj.deleted || !obj.versions.empty() ||
+      !obj.applied_writes.empty() || !obj.applied_discards.empty()) {
     return;
   }
   if (!obj.name.empty()) {
@@ -642,11 +658,38 @@ void pg_store::publish_commit(uint64_t raft_index, op_complete cb, void* arg) {
   });
 }
 
+void pg_store::note_inflight_uncommitted(uint64_t index, uint64_t object_id,
+                                         const std::string& name) {
+  inflight_uncommitted_index_ = index;
+  inflight_uncommitted_oid_ = object_id;
+  inflight_uncommitted_name_ = name;
+}
+
+void pg_store::clear_inflight_uncommitted() {
+  inflight_uncommitted_index_ = 0;
+  inflight_uncommitted_oid_ = 0;
+  inflight_uncommitted_name_.clear();
+}
+
+bool pg_store::pending_was_dropped(uint64_t index, uint64_t drop_epoch) const {
+  return drop_epoch != pending_drop_epoch_ && index >= pending_drop_from_;
+}
+
 void pg_store::drop_pending_from(uint64_t from_index) {
+  ++pending_drop_epoch_;
+  pending_drop_from_ = from_index;
+
   std::vector<pending_op> dropped;
   for (auto it = pending_.lower_bound(from_index); it != pending_.end();) {
     dropped.push_back(std::move(it->second));
     it = pending_.erase(it);
+  }
+  if (inflight_uncommitted_index_ != 0 &&
+      inflight_uncommitted_index_ >= from_index) {
+    pending_op inflight;
+    inflight.object_id = inflight_uncommitted_oid_;
+    inflight.object_name = inflight_uncommitted_name_;
+    dropped.push_back(std::move(inflight));
   }
   for (const auto& op : dropped) {
     erase_isolated_create(op);
@@ -891,9 +934,14 @@ void pg_store::append_uncommitted(const std::string& object_name,
   std::vector<uint8_t> payload(static_cast<const uint8_t*>(data),
                                static_cast<const uint8_t*>(data) + len);
 
+  const uint64_t drop_epoch = pending_drop_epoch_;
   enqueue_or_run([this, object_name, offset, len, raft_index, raft_term,
-                  image_snap_seq, cb = std::move(cb), arg,
+                  image_snap_seq, drop_epoch, cb = std::move(cb), arg,
                   payload = std::move(payload)]() mutable {
+    if (pending_was_dropped(raft_index, drop_epoch)) {
+      finish_op(std::move(cb), arg, 0);
+      return;
+    }
     // Register name + empty head before flush so a later checkpoint sees
     // the unpublished create without rereading type=4.
     bool is_new = false;
@@ -917,6 +965,8 @@ void pg_store::append_uncommitted(const std::string& object_name,
     req->need_name_record = is_new;
     req->uncommitted = true;
     req->raft_term = raft_term;
+    req->drop_epoch = drop_epoch;
+    note_inflight_uncommitted(raft_index, req->object_id, object_name);
 
     if (req->need_name_record) {
       data_record name_rec;
@@ -936,6 +986,7 @@ void pg_store::append_uncommitted(const std::string& object_name,
         auto c = std::move(req->cb);
         void* a = req->arg;
         delete req;
+        clear_inflight_uncommitted();
         finish_op(std::move(c), a, -ENOMEM);
         return;
       }
@@ -954,7 +1005,17 @@ void pg_store::write_after_name(void* arg, uint64_t /*phys*/, int err) {
     auto cb = std::move(req->cb);
     void* a = req->arg;
     delete req;
+    self->clear_inflight_uncommitted();
     self->finish_op(std::move(cb), a, err);
+    return;
+  }
+  if (req->uncommitted &&
+      self->pending_was_dropped(req->raft_apply_index, req->drop_epoch)) {
+    auto cb = std::move(req->cb);
+    void* a = req->arg;
+    delete req;
+    self->clear_inflight_uncommitted();
+    self->finish_op(std::move(cb), a, 0);
     return;
   }
 
@@ -968,7 +1029,6 @@ void pg_store::write_after_name(void* arg, uint64_t /*phys*/, int err) {
   rec.raft_apply_index = req->raft_apply_index;
   rec.image_snap_seq = req->image_snap_seq;
   rec.payload.assign(req->payload.begin(), req->payload.end());
-  req->header_len = rec.header_len;
 
   const uint64_t need =
       self->seg_.align_up(kRecordHeaderLenV1 + rec.payload.size());
@@ -977,6 +1037,7 @@ void pg_store::write_after_name(void* arg, uint64_t /*phys*/, int err) {
     auto cb = std::move(req->cb);
     void* a = req->arg;
     delete req;
+    self->clear_inflight_uncommitted();
     self->finish_op(std::move(cb), a, -ENOMEM);
     return;
   }
@@ -991,10 +1052,22 @@ void pg_store::write_after_data(void* arg, uint64_t phys, int err) {
     auto cb = std::move(req->cb);
     void* a = req->arg;
     delete req;
+    self->clear_inflight_uncommitted();
     self->finish_op(std::move(cb), a, err);
     return;
   }
   req->data_phys = phys;
+  req->header_len =
+      header_len_from_encoded(self->scratch_ptr_, self->scratch_cap_);
+  if (req->uncommitted &&
+      self->pending_was_dropped(req->raft_apply_index, req->drop_epoch)) {
+    auto cb = std::move(req->cb);
+    void* a = req->arg;
+    delete req;
+    self->clear_inflight_uncommitted();
+    self->finish_op(std::move(cb), a, 0);
+    return;
+  }
   self->seg_.flush(write_after_flush, req);
 }
 
@@ -1005,7 +1078,17 @@ void pg_store::write_after_flush(void* arg, int err) {
     auto cb = std::move(req->cb);
     void* a = req->arg;
     delete req;
+    self->clear_inflight_uncommitted();
     self->finish_op(std::move(cb), a, err);
+    return;
+  }
+  if (req->uncommitted &&
+      self->pending_was_dropped(req->raft_apply_index, req->drop_epoch)) {
+    auto cb = std::move(req->cb);
+    void* a = req->arg;
+    delete req;
+    self->clear_inflight_uncommitted();
+    self->finish_op(std::move(cb), a, 0);
     return;
   }
 
@@ -1014,7 +1097,8 @@ void pg_store::write_after_flush(void* arg, int err) {
     auto cb = std::move(req->cb);
     void* a = req->arg;
     delete req;
-    self->finish_op(std::move(cb), a, -ENOENT);
+    self->clear_inflight_uncommitted();
+    self->finish_op(std::move(cb), a, req->uncommitted ? 0 : -ENOENT);
     return;
   }
   if (req->uncommitted) {
@@ -1047,6 +1131,7 @@ void pg_store::write_after_flush(void* arg, int err) {
   auto cb = std::move(req->cb);
   void* a = req->arg;
   delete req;
+  self->clear_inflight_uncommitted();
   self->finish_op(std::move(cb), a, 0);
 }
 
@@ -1089,7 +1174,6 @@ void pg_store::remove(const std::string& object_name, uint64_t raft_apply_index,
     rec.object_id = req->object_id;
     rec.raft_apply_index = raft_apply_index;
     rec.image_snap_seq = image_snap_seq;
-    req->header_len = rec.header_len;
 
     const uint64_t need = seg_.align_up(kRecordHeaderLenV1);
     ensure_scratch(need);
@@ -1116,8 +1200,13 @@ void pg_store::append_uncommitted_remove(const std::string& object_name,
     return;
   }
 
+  const uint64_t drop_epoch = pending_drop_epoch_;
   enqueue_or_run([this, object_name, raft_index, raft_term, image_snap_seq,
-                  cb = std::move(cb), arg]() mutable {
+                  drop_epoch, cb = std::move(cb), arg]() mutable {
+    if (pending_was_dropped(raft_index, drop_epoch)) {
+      finish_op(std::move(cb), arg, 0);
+      return;
+    }
     object_state* obj = find_object(object_name);
     if (obj == nullptr || obj->deleted) {
       finish_op(std::move(cb), arg, 0);
@@ -1138,6 +1227,8 @@ void pg_store::append_uncommitted_remove(const std::string& object_name,
     req->object_id = name_to_id_[object_name];
     req->uncommitted = true;
     req->raft_term = raft_term;
+    req->drop_epoch = drop_epoch;
+    note_inflight_uncommitted(raft_index, req->object_id, object_name);
 
     data_record rec;
     rec.type = record_type::delete_tombstone;
@@ -1147,7 +1238,6 @@ void pg_store::append_uncommitted_remove(const std::string& object_name,
     rec.object_id = req->object_id;
     rec.raft_apply_index = raft_index;
     rec.image_snap_seq = image_snap_seq;
-    req->header_len = rec.header_len;
 
     const uint64_t need = seg_.align_up(kRecordHeaderLenV1);
     ensure_scratch(need);
@@ -1155,6 +1245,7 @@ void pg_store::append_uncommitted_remove(const std::string& object_name,
       auto c = std::move(req->cb);
       void* a = req->arg;
       delete req;
+      clear_inflight_uncommitted();
       finish_op(std::move(c), a, -ENOMEM);
       return;
     }
@@ -1169,17 +1260,32 @@ void pg_store::remove_after_tomb(void* arg, uint64_t phys, int err) {
     auto cb = std::move(req->cb);
     void* a = req->arg;
     delete req;
+    self->clear_inflight_uncommitted();
     self->finish_op(std::move(cb), a, err);
     return;
   }
   req->record_start = phys;
+  req->header_len =
+      header_len_from_encoded(self->scratch_ptr_, self->scratch_cap_);
+  if (req->uncommitted &&
+      self->pending_was_dropped(req->raft_apply_index, req->drop_epoch)) {
+    auto cb = std::move(req->cb);
+    void* a = req->arg;
+    delete req;
+    self->clear_inflight_uncommitted();
+    self->finish_op(std::move(cb), a, 0);
+    return;
+  }
   self->seg_.flush(remove_after_flush, req);
 }
 
 void pg_store::remove_after_flush(void* arg, int err) {
   auto* req = static_cast<remove_req*>(arg);
   pg_store* self = req->self;
-  if (err == 0) {
+  if (err == 0 && req->uncommitted &&
+      self->pending_was_dropped(req->raft_apply_index, req->drop_epoch)) {
+    err = 0;
+  } else if (err == 0) {
     if (req->uncommitted) {
       pending_op op;
       op.k = version_op::kind::remove;
@@ -1207,6 +1313,7 @@ void pg_store::remove_after_flush(void* arg, int err) {
   auto cb = std::move(req->cb);
   void* a = req->arg;
   delete req;
+  self->clear_inflight_uncommitted();
   self->finish_op(std::move(cb), a, err);
 }
 
@@ -1272,7 +1379,6 @@ void pg_store::discard(const std::string& object_name, uint64_t offset,
       rec.payload[static_cast<size_t>(i)] =
           static_cast<char>((len >> (8 * i)) & 0xff);
     }
-    req->header_len = rec.header_len;
 
     const uint64_t need =
         seg_.align_up(kRecordHeaderLenV1 + rec.payload.size());
@@ -1307,8 +1413,14 @@ void pg_store::append_uncommitted_discard(const std::string& object_name,
     return;
   }
 
+  const uint64_t drop_epoch = pending_drop_epoch_;
   enqueue_or_run([this, object_name, offset, len, raft_index, raft_term,
-                  image_snap_seq, cb = std::move(cb), arg]() mutable {
+                  image_snap_seq, drop_epoch, cb = std::move(cb),
+                  arg]() mutable {
+    if (pending_was_dropped(raft_index, drop_epoch)) {
+      finish_op(std::move(cb), arg, 0);
+      return;
+    }
     object_state* obj = find_object(object_name);
     if (obj == nullptr || obj->deleted) {
       finish_op(std::move(cb), arg, 0);
@@ -1331,6 +1443,8 @@ void pg_store::append_uncommitted_discard(const std::string& object_name,
     req->object_id = name_to_id_[object_name];
     req->uncommitted = true;
     req->raft_term = raft_term;
+    req->drop_epoch = drop_epoch;
+    note_inflight_uncommitted(raft_index, req->object_id, object_name);
 
     data_record rec;
     rec.type = record_type::range_tombstone;
@@ -1346,7 +1460,6 @@ void pg_store::append_uncommitted_discard(const std::string& object_name,
       rec.payload[static_cast<size_t>(i)] =
           static_cast<char>((len >> (8 * i)) & 0xff);
     }
-    req->header_len = rec.header_len;
 
     const uint64_t need =
         seg_.align_up(kRecordHeaderLenV1 + rec.payload.size());
@@ -1355,6 +1468,7 @@ void pg_store::append_uncommitted_discard(const std::string& object_name,
       auto c = std::move(req->cb);
       void* a = req->arg;
       delete req;
+      clear_inflight_uncommitted();
       finish_op(std::move(c), a, -ENOMEM);
       return;
     }
@@ -1370,17 +1484,32 @@ void pg_store::discard_after_tomb(void* arg, uint64_t phys, int err) {
     auto cb = std::move(req->cb);
     void* a = req->arg;
     delete req;
+    self->clear_inflight_uncommitted();
     self->finish_op(std::move(cb), a, err);
     return;
   }
   req->record_start = phys;
+  req->header_len =
+      header_len_from_encoded(self->scratch_ptr_, self->scratch_cap_);
+  if (req->uncommitted &&
+      self->pending_was_dropped(req->raft_apply_index, req->drop_epoch)) {
+    auto cb = std::move(req->cb);
+    void* a = req->arg;
+    delete req;
+    self->clear_inflight_uncommitted();
+    self->finish_op(std::move(cb), a, 0);
+    return;
+  }
   self->seg_.flush(discard_after_flush, req);
 }
 
 void pg_store::discard_after_flush(void* arg, int err) {
   auto* req = static_cast<discard_req*>(arg);
   pg_store* self = req->self;
-  if (err == 0) {
+  if (err == 0 && req->uncommitted &&
+      self->pending_was_dropped(req->raft_apply_index, req->drop_epoch)) {
+    err = 0;
+  } else if (err == 0) {
     if (req->uncommitted) {
       pending_op op;
       op.k = version_op::kind::discard;
@@ -1409,6 +1538,7 @@ void pg_store::discard_after_flush(void* arg, int err) {
   auto cb = std::move(req->cb);
   void* a = req->arg;
   delete req;
+  self->clear_inflight_uncommitted();
   self->finish_op(std::move(cb), a, err);
 }
 
@@ -1507,7 +1637,6 @@ void pg_store::rewrite_after_read(void* arg, int err) {
   rec.image_snap_seq = req->image_snap_seq;
   rec.payload.assign(reinterpret_cast<const char*>(payload),
                      reinterpret_cast<const char*>(payload) + req->len);
-  req->header_len = rec.header_len;
 
   self->free_buf(req->stage);
   req->stage = nullptr;
@@ -1536,6 +1665,8 @@ void pg_store::rewrite_after_append(void* arg, uint64_t phys, int err) {
     self->finish_op(std::move(cb), a, err);
     return;
   }
+  req->header_len =
+      header_len_from_encoded(self->scratch_ptr_, self->scratch_cap_);
   req->data_phys = payload_phys(phys, req->header_len);
   self->seg_.flush(rewrite_after_flush, req);
 }
