@@ -28,6 +28,23 @@ add_executable(pg_shard_table_cow_test
 )
 add_test(NAME pg_shard_table_cow_test COMMAND pg_shard_table_cow_test)
 
+add_executable(disk_log_trim_test
+  disk_log_trim_test.cc
+)
+target_include_directories(disk_log_trim_test
+  PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/include
+    ${CMAKE_SOURCE_DIR}/src/localstore/aos
+)
+target_link_libraries(disk_log_trim_test
+  PRIVATE
+    aos
+    localstore
+    spdk::spdk
+)
+add_test(NAME disk_log_trim_test COMMAND disk_log_trim_test)
+
 add_executable(raft_contract_test
   raft_contract_test.cc
 )
