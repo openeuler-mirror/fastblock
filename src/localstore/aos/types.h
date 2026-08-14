@@ -63,6 +63,11 @@ inline constexpr uint64_t kRaftLogTypeSnapshotBase = 4;
 // Matches RAFT_LOGTYPE_NOOP: current-term fence after become_leader (P6).
 inline constexpr uint64_t kRaftLogTypeNoop = 5;
 
+/** flag=1 load: commit_idx = min(lapply, current). Never raise above current. */
+inline uint64_t unified_log_load_commit_idx(uint64_t lapply, uint64_t current) {
+  return lapply < current ? lapply : current;
+}
+
 // Process-wide P6 flag. Default off; tests may set. Env FASTBLOCK_AOS_UNIFIED_LOG.
 bool unified_log_enabled();
 void set_unified_log_enabled(bool on);
