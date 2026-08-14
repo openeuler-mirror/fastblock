@@ -35,6 +35,7 @@ osd_store / aos_runtime
 | kv | **生产路径** `kv_engine` + `attach_aos_kv` |
 | blobstore | **生产不再 init/load**；实现归档 `legacy_blob/`（不进生产链接） |
 | P6 log=STM | **默认开启**（开发阶段，不兼容旧二进制）。用户写只落一条 data/tombstone，apply 只 publish。`FASTBLOCK_AOS_UNIFIED_LOG=0` 仅供单测关掉。 |
+| attach / install snapshot | **生产路径**：`osd_stm::attach_aos`；leader `pin_recovery_view`；follower `snapshot_ingest`。 |
 
 Object 子系统细节见设计文档 §5。
 
