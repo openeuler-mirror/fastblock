@@ -49,11 +49,11 @@ recovery又分三种情况：
 
 # 2 raft snapshot
 raft log是存储在磁盘中的，raft log在不断增长，但磁盘空间毕竟有限，因此需要定期清理raft log，导致磁盘中的raft log是有限的，当磁盘中的raft log不足以recovery时，就需要通过raft snapshot来recovery。
-数据是以一个个对象进行存储的，底层使用的是spdk blobstore，一个对象对应一个blob，raft snapshot底层使用的是spdk blob snapshot，对raft建快照时，对raft下所有的对象创建spdk blob snapshot。
-通过快照recovery是在raft_server_t::_recovery_by_snapshot中进行，因需要对对象做快照，需要暂停raft状态机apply，通过参数_snapshot_in_progress控制，快照recovery完成后恢复raft状态机apply。
+生产数据面是 **AOS**（`osd_stm::attach_aos`）。Leader 建快照不再对每个 object 做 blob snapshot：`object_recovery::recovery_create` 调 `state_machine::pin_recovery_view` → `pg_store::create_raft_snapshot`（O(1) pin，`view_at(snap_index)` 读 head）。ckpt 后 versions 为空时只装 head（见 `docs/aos_unified_log_design.md`）。
+通过快照recovery是在raft_server_t::_recovery_by_snapshot中进行，pin 期间用 `_snapshot_in_progress` 暂停 apply，pin 完成后恢复 apply，再走下面的 check/install 协议。
 快照recovery步骤：
 - **创建raft snapshot**
-调用object_recovery::recovery_create对此raft下的所有对象创建快照。
+调用object_recovery::recovery_create：列出 live object 名并 pin recovery view。
 raft有两个成员_snapshot_index和_snapshot_term，分别记录创建快照时状态机已经apply的最后一条entry的index和term。
 - **检查对象快照**
 取n个（默认为10）对象的快照信息发送给follower，follower收到后检测自己是否有这n个对象且对象信息与leader的一致（这里的一致是指对象内容一致），如果有且一致，则告诉leader自己已经有一致的对象，否则leader自己的对象不一致。
@@ -178,3 +178,15 @@ if (next_idx < raft_get_log()->log_get_base_index()){
 - follower 处理 `snapshot_check` 前要求 `commit_idx == last_applied_idx`，如果 apply 卡住会导致 snapshot recovery 卡住。
 - snapshot object recovery 的 `_obr` 生命周期、snapshot cleanup 与 leader stop/restart 交织时仍缺少压力验证。
 - 当前已有基础手工验证记录，但缺少专门、可重复、能在回归中稳定触发 `next_idx < log_get_base_index()` 的自动化用例。
+
+# 4 AOS install snapshot 路径
+
+网络协议仍是 §2 的 `snapshot_check` / `installsnapshot_request`（按 object 名 + 4MiB chunk）。盘上实现：
+
+| 角色 | 入口 | 行为 |
+|------|------|------|
+| Leader | `object_recovery` → `osd_stm::pin_recovery_view` / `read_recovery_object` | O(1) pin；按名 `view_at` 读 |
+| Follower | `begin_install_snapshot` → `write_install_object` → `finish_install_snapshot` | `snapshot_ingest` staging epoch：begin → apply_chunk → seal → activate → `retarget_aos_log` |
+| 收尾 | `set_index_after_snapshot` + 持久化 lapply | follower `last_applied` / `current` / `commit` 推到 `last_idx` |
+
+不再走 blob `object_store::recovery_create`。旧 `aos_snapshot_session` 双路径草稿已废弃，以 STM 虚函数为准。
