@@ -62,14 +62,36 @@ public:
 
   /**
    * Append one entry (must be last_index+1, or first entry if empty).
-   * Completes after write_at + flush.
+   * Completes after write_at + flush. Still writes type=14.
    */
   void append(const log_entry& entry, op_complete cb, void* arg);
 
   /** Append entries in order (each index consecutive). */
   void append_batch(std::vector<log_entry> entries, op_complete cb, void* arg);
 
-  /** Inclusive range [start, end]. Missing indices → -ENOENT. */
+  /**
+   * Register an already-written record as last_index+1 (or first if empty).
+   * phys is the record start, never the payload start; length is the aligned
+   * whole record. Same index + same record_start is idempotent (returns 0).
+   */
+  int register_index(uint64_t index, uint64_t term, uint64_t phys,
+                     uint64_t length, record_type rec_type);
+
+  /**
+   * Point an existing index at a rewritten record start (GC). Missing index
+   * is a no-op.
+   */
+  void update_phys(uint64_t index, uint64_t new_record_start, uint64_t new_len);
+
+  using name_lookup_fn =
+      std::function<int(uint64_t object_id, std::string* name)>;
+  void set_name_lookup(name_lookup_fn fn) { name_lookup_ = std::move(fn); }
+
+  /**
+   * Inclusive range [start, end]. Missing index / missing name / non-4KiB
+   * data-as-log payload → error and empty entries. Never returns empty meta
+   * for data / tombstone / gc_rewrite.
+   */
   void read(uint64_t start_index, uint64_t end_index, read_complete cb,
             void* arg);
 
@@ -121,10 +143,14 @@ public:
 
 private:
   struct idx_pos {
-    uint64_t phys_offset{0};
-    uint64_t length{0}; // on-disk aligned record length
+    uint64_t phys_offset{0}; // record start
+    uint64_t length{0};      // on-disk aligned whole record
     uint64_t term{0};
+    record_type rec_type{record_type::raft_log_entry};
   };
+
+  int decode_as_log_entry(const data_record& rec, uint64_t index,
+                          const idx_pos& pos, log_entry* out) const;
 
   void* alloc_buf(uint64_t n);
   void free_buf(void* p);
@@ -139,6 +165,7 @@ private:
   uint64_t base_index_{0}; // lowest present, or 0 if empty
   uint64_t last_index_{0}; // highest present, or 0 if empty
   uint64_t last_checkpoint_phys_{0};
+  name_lookup_fn name_lookup_;
 
   static std::string encode_checkpoint_payload(
       const std::map<uint64_t, idx_pos>& idx, uint64_t base, uint64_t last);
