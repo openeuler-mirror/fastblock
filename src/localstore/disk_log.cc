@@ -10,7 +10,10 @@
 
 #include "disk_log.h"
 #include "localstore/aos/log_store.h"
+#include "localstore/aos/osd_store.h"
+#include "localstore/aos/types.h"
 
+#include <algorithm>
 #include <cstring>
 
 SPDK_LOG_REGISTER_COMPONENT(disk_log)
@@ -70,14 +73,83 @@ void disk_log::append_aos(std::vector<log_entry_t>& entries,
   for (auto& e : entries) {
     batch.push_back(to_aos_entry(e));
   }
-  _aos_log->append_batch(
-      std::move(batch),
-      [cb_fn = std::move(cb_fn)](void* a, int err) {
-        if (cb_fn) {
-          cb_fn(a, err);
-        }
-      },
-      arg);
+
+  if (!fastblock::aos::unified_log_enabled() || _osd == nullptr) {
+    _aos_log->append_batch(
+        std::move(batch),
+        [cb_fn = std::move(cb_fn)](void* a, int err) {
+          if (cb_fn) {
+            cb_fn(a, err);
+          }
+        },
+        arg);
+    return;
+  }
+
+  std::sort(batch.begin(), batch.end(),
+            [](const fastblock::aos::log_entry& a,
+               const fastblock::aos::log_entry& b) { return a.index < b.index; });
+
+  struct actx {
+    disk_log* self;
+    std::vector<fastblock::aos::log_entry> batch;
+    size_t idx{0};
+    log_op_complete cb;
+    void* arg;
+  };
+  auto* c = new actx{this, std::move(batch), 0, std::move(cb_fn), arg};
+  struct holder {
+    std::function<void(actx*)> go;
+  };
+  auto* h = new holder;
+  h->go = [h](actx* c) {
+    if (c->idx >= c->batch.size()) {
+      if (c->cb) {
+        c->cb(c->arg, 0);
+      }
+      delete h;
+      delete c;
+      return;
+    }
+    const auto& id = c->self->_aos_log->id();
+    c->self->_osd->append_as_log(
+        id.pool_id, id.pg_id, c->batch[c->idx],
+        [](void* a, int err) {
+          auto* pack = static_cast<std::pair<holder*, actx*>*>(a);
+          holder* hh = pack->first;
+          actx* cc = pack->second;
+          delete pack;
+          if (err != 0) {
+            if (cc->cb) {
+              cc->cb(cc->arg, err);
+            }
+            delete hh;
+            delete cc;
+            return;
+          }
+          ++cc->idx;
+          hh->go(cc);
+        },
+        new std::pair<holder*, actx*>(h, c));
+  };
+  h->go(c);
+}
+
+void disk_log::truncate(uint64_t start_index, log_op_complete cb_fn, void* arg) {
+  if (_osd != nullptr && fastblock::aos::unified_log_enabled() &&
+      _aos_log != nullptr) {
+    const auto& id = _aos_log->id();
+    _osd->truncate_log_and_pending(id.pool_id, id.pg_id, start_index,
+                                   std::move(cb_fn), arg);
+    return;
+  }
+  if (_aos_log != nullptr) {
+    _aos_log->truncate_from(start_index, std::move(cb_fn), arg);
+    return;
+  }
+  if (cb_fn) {
+    cb_fn(arg, -EINVAL);
+  }
 }
 
 void disk_log::read_aos(uint64_t start_index, uint64_t end_index,
@@ -113,13 +185,19 @@ void disk_log::read_aos(uint64_t start_index, uint64_t end_index,
 
 void make_aos_disk_log(fastblock::aos::log_store* log,
                        make_disklog_complete cb_fn, void* arg) {
+  make_aos_disk_log(log, nullptr, std::move(cb_fn), arg);
+}
+
+void make_aos_disk_log(fastblock::aos::log_store* log,
+                       fastblock::aos::osd_store* osd,
+                       make_disklog_complete cb_fn, void* arg) {
   if (log == nullptr) {
     if (cb_fn) {
       cb_fn(arg, nullptr, -EINVAL);
     }
     return;
   }
-  auto* dlog = new disk_log(log);
+  auto* dlog = new disk_log(log, osd);
   dlog->start();
   if (cb_fn) {
     cb_fn(arg, dlog, 0);
