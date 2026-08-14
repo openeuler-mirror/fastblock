@@ -27,6 +27,7 @@
 #include "spdk/env.h"
 #include "fastblock/utils/err_num.h"
 #include "localstore/kv_store.h"
+#include "localstore/aos/types.h"
 #include "utils/md5.h"
 
 #include "fastblock/monclient/client.h"
@@ -92,7 +93,15 @@ void raft_server_t::raft_become_leader()
     raft_set_election_timer(now);
     _last_index_before_become_leader = raft_get_current_idx();
 
-    raft_set_commit_idx(raft_get_current_idx());
+    const bool unified = fastblock::aos::unified_log_enabled();
+    if (!unified) {
+        raft_set_commit_idx(raft_get_current_idx());
+    } else {
+        SPDK_NOTICELOG(
+            "pg %lu.%lu become_leader unified_log: keep commit_idx=%ld "
+            "current=%ld (no suffix publish until current-term noop)\n",
+            _pool_id, _pg_id, raft_get_commit_idx(), raft_get_current_idx());
+    }
     raft_index_t index = raft_get_current_idx() + 1;
 
     auto node_func = [this, now, index](std::shared_ptr<raft_node> node){
@@ -107,6 +116,33 @@ void raft_server_t::raft_become_leader()
         raft_send_appendentries(node, index, index);
     };
     _nodes_stat.for_all_node(std::move(node_func));
+
+    if (unified) {
+        struct election_noop_complete : public utils::context {
+            raft_server_t* raft{nullptr};
+            explicit election_noop_complete(raft_server_t* r) : raft(r) {}
+            void finish(int r) override {
+                if (r != 0) {
+                    SPDK_ERRLOG(
+                        "pg %lu.%lu election RAFT_LOGTYPE_NOOP failed: %d\n",
+                        raft->raft_get_pool_id(), raft->raft_get_pg_id(), r);
+                } else {
+                    SPDK_NOTICELOG(
+                        "pg %lu.%lu election RAFT_LOGTYPE_NOOP durable term=%ld\n",
+                        raft->raft_get_pool_id(), raft->raft_get_pg_id(),
+                        raft->raft_get_current_term());
+                }
+            }
+        };
+        auto entry = std::make_shared<raft_entry_t>();
+        entry->set_type(RAFT_LOGTYPE_NOOP);
+        auto* done = new election_noop_complete(this);
+        const int e = raft_write_entry(entry, done);
+        if (e != 0) {
+            SPDK_ERRLOG("pg %lu.%lu append election noop rc=%d\n", _pool_id,
+                        _pg_id, e);
+        }
+    }
 
     _send_leader_be_elected_notify();
 }
@@ -3156,8 +3192,6 @@ void raft_server_t::load(raft_node_id_t current_node, raft_complete cb_fn, void 
         auto& cfg = _configuration_manager.get_last_node_configuration();
         update_nodes_stat(cfg);
 
-        raft_set_commit_idx(raft_get_current_idx());
-
         raft_index_t last_applied_idx;
         auto lapply_idx_opl = load_last_apply_index();
         if(lapply_idx_opl.has_value()){
@@ -3177,6 +3211,20 @@ void raft_server_t::load(raft_node_id_t current_node, raft_complete cb_fn, void 
                 "pg %lu.%lu load: applied %ld ahead of log current %ld "
                 "(snapshot); keep current/commit, will request full snapshot\n",
                 _pool_id, _pg_id, last_applied_idx, raft_get_current_idx());
+        }
+        if (fastblock::aos::unified_log_enabled()) {
+            const raft_index_t commit = static_cast<raft_index_t>(
+                fastblock::aos::unified_log_load_commit_idx(
+                    static_cast<uint64_t>(last_applied_idx),
+                    static_cast<uint64_t>(raft_get_current_idx())));
+            raft_set_commit_idx(commit);
+            SPDK_NOTICELOG(
+                "pg %lu.%lu load unified_log: commit_idx=%ld "
+                "(min lapply=%ld current=%ld)\n",
+                _pool_id, _pg_id, commit, last_applied_idx,
+                raft_get_current_idx());
+        } else {
+            raft_set_commit_idx(raft_get_current_idx());
         }
         set_last_applied_idx_after_load(last_applied_idx);
 
