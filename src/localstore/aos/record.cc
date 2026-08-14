@@ -110,7 +110,6 @@ decode_status decode_record(const uint8_t* buf, size_t len, data_record* out,
     return decode_status::bad_magic;
   }
   const uint16_t ver = get_u16(buf + 4);
-  // v1 object-only, v2 platform log/kv, v3 adds raft_term in the fixed header.
   if (ver != 1 && ver != 2 && ver != 3) {
     return decode_status::bad_version;
   }
@@ -188,7 +187,6 @@ decode_status decode_record(const uint8_t* buf, size_t len, data_record* out,
     out->object_offset = get_u64(buf + 46);
     out->raft_apply_index = get_u64(buf + 54);
     out->image_snap_seq = get_u64(buf + 62);
-    // 78B headers have no term slot; 86B stores it after image_snap_seq.
     out->raft_term =
         (header_len == kRecordHeaderLenV3) ? get_u64(buf + 70) : 0;
     out->payload.assign(reinterpret_cast<const char*>(payload), payload_len);
