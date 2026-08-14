@@ -65,6 +65,7 @@ struct dump_report {
     record_type type{record_type::data};
     uint64_t pool_id{0};
     uint64_t pg_id{0};
+    uint64_t store_epoch{0};
     uint64_t object_id{0};
     uint64_t object_offset{0};
     uint64_t raft_apply_index{0};
