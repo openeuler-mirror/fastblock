@@ -53,14 +53,22 @@ uint64_t get_u64(const uint8_t* p) {
 } // namespace
 
 std::vector<uint8_t> encode_record(const data_record& rec) {
+  return encode_record(rec, kFormatVersion);
+}
+
+std::vector<uint8_t> encode_record(const data_record& rec,
+                                   uint16_t format_version) {
+  const uint16_t hlen = (format_version >= kFormatVersionV3)
+                            ? kRecordHeaderLenV3
+                            : kRecordHeaderLenV1;
   std::vector<uint8_t> out;
-  out.reserve(kRecordHeaderLenV1 + rec.payload.size());
+  out.reserve(hlen + rec.payload.size());
 
   put_u32(out, kRecordMagic);
-  put_u16(out, kFormatVersion);
+  put_u16(out, format_version);
   out.push_back(static_cast<uint8_t>(rec.type));
   out.push_back(rec.flags);
-  put_u16(out, kRecordHeaderLenV1);
+  put_u16(out, hlen);
   put_u32(out, static_cast<uint32_t>(rec.payload.size()));
   put_u64(out, rec.pool_id);
   put_u64(out, rec.pg_id);
@@ -69,6 +77,9 @@ std::vector<uint8_t> encode_record(const data_record& rec) {
   put_u64(out, rec.object_offset);
   put_u64(out, rec.raft_apply_index);
   put_u64(out, rec.image_snap_seq);
+  if (hlen == kRecordHeaderLenV3) {
+    put_u64(out, rec.raft_term);
+  }
 
   // header_checksum covers everything written so far (no checksum fields yet)
   const uint32_t header_crc = crc32(out.data(), out.size());
@@ -129,11 +140,18 @@ decode_status decode_record(const uint8_t* buf, size_t len, data_record* out,
   const uint8_t* payload = buf + header_len;
   if (payload_len == 0) {
     if (expect_payload_crc != 0) {
+      // Header is trusted; tell the scanner how far to skip.
+      if (consumed) {
+        *consumed = static_cast<size_t>(header_len);
+      }
       return decode_status::bad_payload_checksum;
     }
   } else {
     const uint32_t actual_payload_crc = crc32(payload, payload_len);
     if (expect_payload_crc != actual_payload_crc) {
+      if (consumed) {
+        *consumed = static_cast<size_t>(header_len) + payload_len;
+      }
       return decode_status::bad_payload_checksum;
     }
   }
@@ -150,7 +168,8 @@ decode_status decode_record(const uint8_t* buf, size_t len, data_record* out,
       type != record_type::install_seal &&
       type != record_type::install_activate &&
       type != record_type::raft_log_entry && type != record_type::kv_put &&
-      type != record_type::kv_delete && type != record_type::kv_checkpoint) {
+      type != record_type::kv_delete && type != record_type::kv_checkpoint &&
+      type != record_type::log_checkpoint) {
     return decode_status::bad_type;
   }
 

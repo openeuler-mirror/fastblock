@@ -90,6 +90,19 @@ public:
   pg_store* get_latest_pg(uint64_t pool_id, uint64_t pg_id);
   /** Active serving PG (install-aware). */
   pg_store* get_active_pg(uint64_t pool_id, uint64_t pg_id);
+  /**
+   * Highest-epoch in-memory pg_store for (pool, pg), or nullptr.
+   * Used after recover so restart does not create_pg a new empty epoch.
+   */
+  pg_store* find_pg(uint64_t pool_id, uint64_t pg_id);
+  /** Point serving/latest at recovered in-memory epochs (not a stale manifest bump). */
+  void retarget_serving_to_recovered();
+
+  /**
+   * Bind serving to a recovered or manifest epoch without create_pg bump.
+   * Prefers an in-memory pg_store with objects; otherwise reuses latest_epoch.
+   */
+  pg_store* bind_existing_pg(uint64_t pool_id, uint64_t pg_id);
 
   /**
    * Raft log stream for PG (design v2 §6). Shares segment allocator with objects.
@@ -128,6 +141,12 @@ public:
   void persist_manifest(op_complete cb, void* arg);
 
   /**
+   * Durable coordinated checkpoint: object maps + log index + kv table,
+   * then persist_manifest (recover_scan_from + segment table + ckpt phys).
+   */
+  void checkpoint_pass(op_complete cb, void* arg);
+
+  /**
    * Create a new PG instance with store_epoch = latest+1, then persist_manifest.
    */
   void create_pg(uint64_t pool_id, uint64_t pg_id, op_complete cb, void* arg);
@@ -144,8 +163,8 @@ public:
   void recover(op_complete cb, void* arg);
 
   /**
-   * One GC pass (design §11 skeleton): free sealed segments that have no live
-   * head extents from any in-memory PG. Does not rewrite data or compact.
+   * One GC pass: free sealed segments with no live refs from object, log, or
+   * kv (latest checkpoint + post-checkpoint WAL). Does not rewrite.
    * Returns number of segments freed. Optional persist_manifest after success.
    */
   uint32_t gc_once(bool persist = true);
@@ -231,6 +250,8 @@ private:
   void clear_all_pgs();
   manifest build_manifest() const;
   void apply_manifest_epochs(const manifest& m);
+  void visit_live_extents(
+      const std::function<void(uint64_t phys, uint64_t len)>& fn) const;
 
   struct meta_req;
   struct recover_req;
@@ -239,6 +260,11 @@ private:
   void persist_continue(meta_req* req);
   void recover_after_meta(recover_req* req);
   void recover_process(recover_req* req);
+  void recover_load_checkpoints(recover_req* req);
+  void checkpoint_pass_continue(void* arg, int err);
+  void apply_manifest_allocator(const manifest& m);
+
+  struct ckpt_pass_req;
 
   device_backend* backend_{nullptr};
   buffer_mode mode_{buffer_mode::heap};
@@ -247,6 +273,7 @@ private:
   uint64_t data_length_{0};
   uint64_t sb_generation_{0};
   uint64_t manifest_generation_{0};
+  uint64_t recover_scan_from_{0};
   std::shared_ptr<segment_allocator> alloc_;
   std::map<pg_key, std::unique_ptr<pg_store>> pgs_;
   std::map<pg_key, std::unique_ptr<log_store>> logs_;

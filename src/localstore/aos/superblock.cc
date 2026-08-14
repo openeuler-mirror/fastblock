@@ -110,11 +110,14 @@ bool prefer_superblock(const superblock& a, bool a_ok, const superblock& b,
 }
 
 std::vector<uint8_t> encode_manifest(const manifest& m) {
+  const bool v2 = m.recover_scan_from != 0 || m.kv_checkpoint_phys != 0 ||
+                  !m.object_checkpoints.empty() || !m.log_checkpoints.empty() ||
+                  !m.segment_states.empty();
   std::vector<uint8_t> o;
-  o.reserve(64 + m.pgs.size() * 24);
+  o.reserve(96 + m.pgs.size() * 24 + m.segment_states.size());
   put_u32(o, kManifestMagic);
   put_u16(o, kLayoutVersion);
-  put_u16(o, 0);
+  put_u16(o, v2 ? kManifestFlagV2 : 0);
   put_u64(o, m.generation);
   put_u64(o, m.data_high_water);
   put_u32(o, m.open_segment_id);
@@ -126,6 +129,30 @@ std::vector<uint8_t> encode_manifest(const manifest& m) {
     put_u64(o, e.pool_id);
     put_u64(o, e.pg_id);
     put_u64(o, e.active_epoch);
+  }
+  if (v2) {
+    put_u64(o, m.recover_scan_from);
+    put_u64(o, m.kv_checkpoint_phys);
+    put_u32(o, static_cast<uint32_t>(m.object_checkpoints.size()));
+    put_u32(o, static_cast<uint32_t>(m.log_checkpoints.size()));
+    put_u32(o, static_cast<uint32_t>(m.segment_states.size()));
+    put_u32(o, 0);
+    for (const auto& c : m.object_checkpoints) {
+      put_u64(o, c.pool_id);
+      put_u64(o, c.pg_id);
+      put_u64(o, c.store_epoch);
+      put_u64(o, c.phys);
+    }
+    for (const auto& c : m.log_checkpoints) {
+      put_u64(o, c.pool_id);
+      put_u64(o, c.pg_id);
+      put_u64(o, c.store_epoch);
+      put_u64(o, c.phys);
+    }
+    o.insert(o.end(), m.segment_states.begin(), m.segment_states.end());
+    while ((o.size() % 4) != 0) {
+      o.push_back(0);
+    }
   }
   const uint32_t crc = crc32(o.data(), o.size());
   put_u32(o, crc);
@@ -142,7 +169,7 @@ bool decode_manifest(const uint8_t* buf, size_t len, manifest* out) {
   if (get_u16(buf + 4) != kLayoutVersion) {
     return false;
   }
-  // Need full buffer with trailing crc; scan length from header.
+  const uint16_t flags = get_u16(buf + 6);
   size_t pos = 8;
   out->generation = get_u64(buf + pos);
   pos += 8;
@@ -156,13 +183,7 @@ bool decode_manifest(const uint8_t* buf, size_t len, manifest* out) {
   const uint32_t n = get_u32(buf + pos);
   pos += 4;
   pos += 4; // reserved
-  const size_t need = pos + static_cast<size_t>(n) * 24 + 4;
-  if (len < need) {
-    return false;
-  }
-  const uint32_t expect = get_u32(buf + need - 4);
-  const uint32_t actual = crc32(buf, need - 4);
-  if (expect != actual) {
+  if (len < pos + static_cast<size_t>(n) * 24 + 4) {
     return false;
   }
   out->pgs.clear();
@@ -174,6 +195,65 @@ bool decode_manifest(const uint8_t* buf, size_t len, manifest* out) {
     e.active_epoch = get_u64(buf + pos + 16);
     pos += 24;
     out->pgs.push_back(e);
+  }
+  out->recover_scan_from = 0;
+  out->kv_checkpoint_phys = 0;
+  out->object_checkpoints.clear();
+  out->log_checkpoints.clear();
+  out->segment_states.clear();
+
+  if ((flags & kManifestFlagV2) != 0) {
+    if (len < pos + 8 + 8 + 16 + 4) {
+      return false;
+    }
+    out->recover_scan_from = get_u64(buf + pos);
+    pos += 8;
+    out->kv_checkpoint_phys = get_u64(buf + pos);
+    pos += 8;
+    const uint32_t nobj = get_u32(buf + pos);
+    pos += 4;
+    const uint32_t nlog = get_u32(buf + pos);
+    pos += 4;
+    const uint32_t nseg = get_u32(buf + pos);
+    pos += 4;
+    pos += 4;
+    const size_t ckpt_bytes =
+        (static_cast<size_t>(nobj) + nlog) * 32 + nseg;
+    const size_t pad = (4 - (ckpt_bytes % 4)) % 4;
+    if (len < pos + ckpt_bytes + pad + 4) {
+      return false;
+    }
+    out->object_checkpoints.reserve(nobj);
+    for (uint32_t i = 0; i < nobj; ++i) {
+      manifest_ckpt c;
+      c.pool_id = get_u64(buf + pos);
+      c.pg_id = get_u64(buf + pos + 8);
+      c.store_epoch = get_u64(buf + pos + 16);
+      c.phys = get_u64(buf + pos + 24);
+      pos += 32;
+      out->object_checkpoints.push_back(c);
+    }
+    out->log_checkpoints.reserve(nlog);
+    for (uint32_t i = 0; i < nlog; ++i) {
+      manifest_ckpt c;
+      c.pool_id = get_u64(buf + pos);
+      c.pg_id = get_u64(buf + pos + 8);
+      c.store_epoch = get_u64(buf + pos + 16);
+      c.phys = get_u64(buf + pos + 24);
+      pos += 32;
+      out->log_checkpoints.push_back(c);
+    }
+    out->segment_states.assign(buf + pos, buf + pos + nseg);
+    pos += nseg + pad;
+  }
+
+  if (len < pos + 4) {
+    return false;
+  }
+  const uint32_t expect = get_u32(buf + pos);
+  const uint32_t actual = crc32(buf, pos);
+  if (expect != actual) {
+    return false;
   }
   return true;
 }

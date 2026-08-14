@@ -9,6 +9,7 @@
  */
 
 #include "aos_dump.h"
+#include "crc32.h"
 #include "layout.h"
 #include "record.h"
 
@@ -32,6 +33,12 @@ void push_err(dump_report* r, uint64_t off, std::string msg) {
     return;
   }
   r->errors.push_back(dump_error{off, std::move(msg)});
+}
+
+bool is_collectable(record_type t) {
+  return t == record_type::data || t == record_type::gc_rewrite ||
+         t == record_type::delete_tombstone ||
+         t == record_type::range_tombstone;
 }
 
 } // namespace
@@ -77,7 +84,8 @@ const char* record_type_name(record_type t) {
   }
 }
 
-dump_report scan_image(const uint8_t* image, size_t len, uint32_t align) {
+dump_report scan_image(const uint8_t* image, size_t len, uint32_t align,
+                       bool collect_live) {
   dump_report r;
   if (image == nullptr || len == 0) {
     push_err(&r, 0, "empty image");
@@ -145,6 +153,22 @@ dump_report scan_image(const uint8_t* image, size_t len, uint32_t align) {
   uint32_t consecutive_bad = 0;
   constexpr uint32_t kMaxBadStreak = 8;
 
+  auto skip_to_next_segment = [&]() -> bool {
+    const uint64_t seg = r.chosen.segment_size;
+    if (seg == 0 || r.data_scan_start > off) {
+      return false;
+    }
+    const uint64_t rel = static_cast<uint64_t>(off) - r.data_scan_start;
+    const uint64_t next = r.data_scan_start + ((rel / seg) + 1) * seg;
+    if (next <= static_cast<uint64_t>(off) ||
+        next >= static_cast<uint64_t>(end)) {
+      return false;
+    }
+    off = static_cast<size_t>(next);
+    consecutive_bad = 0;
+    return true;
+  };
+
   while (off < end) {
     data_record rec;
     size_t consumed = 0;
@@ -153,39 +177,40 @@ dump_report scan_image(const uint8_t* image, size_t len, uint32_t align) {
     if (st == decode_status::need_more) {
       break;
     }
-    if (st == decode_status::bad_magic) {
-      // Unwritten / padding region — stop cleanly if we already saw records
-      // or if zero streak is long.
-      if (consumed == 0) {
-        // Peek: if remaining looks empty, stop; else skip one align unit.
-        bool all_zero = true;
-        const size_t peek = std::min(static_cast<size_t>(align), end - off);
-        for (size_t i = 0; i < peek; ++i) {
-          if (image[off + i] != 0) {
-            all_zero = false;
-            break;
-          }
-        }
-        if (all_zero) {
-          break;
-        }
-        ++consecutive_bad;
-        if (consecutive_bad >= kMaxBadStreak) {
-          push_err(&r, off, "too many consecutive bad_magic while scanning");
-          break;
-        }
-        off += (align > 0 ? align : 1);
+    if (st != decode_status::ok) {
+      // Match recover: pad / 0x55 holes and torn tails are skipped, not
+      // fatal. Aborting here hid later object records on vstart aos_files.
+      if (st == decode_status::bad_payload_checksum && consumed > 0) {
+        const uint64_t step =
+            align_up(static_cast<uint64_t>(consumed), align > 0 ? align : 1);
+        r.warnings.push_back(
+            dump_error{static_cast<uint64_t>(off), "skip torn record"});
+        off += static_cast<size_t>(step == 0 ? consumed : step);
+        consecutive_bad = 0;
         continue;
       }
-    }
-    if (st != decode_status::ok) {
-      ++consecutive_bad;
-      char buf[96];
-      std::snprintf(buf, sizeof(buf), "decode_status=%d",
-                    static_cast<int>(st));
-      push_err(&r, off, buf);
-      if (consecutive_bad >= kMaxBadStreak) {
+      bool all_zero = true;
+      const size_t peek = std::min(static_cast<size_t>(align > 0 ? align : 1),
+                                   end - off);
+      for (size_t i = 0; i < peek; ++i) {
+        if (image[off + i] != 0) {
+          all_zero = false;
+          break;
+        }
+      }
+      if (all_zero) {
+        if (skip_to_next_segment()) {
+          continue;
+        }
         break;
+      }
+      // Non-zero pad (often leftover 0x55): walk one align at a time,
+      // same as recover. Jumping a whole segment here hid later records.
+      ++consecutive_bad;
+      if (consecutive_bad == kMaxBadStreak) {
+        r.warnings.push_back(dump_error{
+            static_cast<uint64_t>(off),
+            "decode hole; continuing block skip in segment"});
       }
       off += (align > 0 ? align : 1);
       continue;
@@ -193,6 +218,19 @@ dump_report scan_image(const uint8_t* image, size_t len, uint32_t align) {
     consecutive_bad = 0;
     ++r.record_count;
     r.records_by_type[static_cast<uint8_t>(rec.type)]++;
+    if (collect_live && is_collectable(rec.type)) {
+      dump_report::live_record live;
+      live.disk_offset = static_cast<uint64_t>(off);
+      live.type = rec.type;
+      live.pool_id = rec.pool_id;
+      live.pg_id = rec.pg_id;
+      live.object_id = rec.object_id;
+      live.object_offset = rec.object_offset;
+      live.raft_apply_index = rec.raft_apply_index;
+      live.payload_crc = crc32(rec.payload.data(), rec.payload.size());
+      live.payload = std::move(rec.payload);
+      r.live_records.push_back(std::move(live));
+    }
     const uint64_t step = align_up(static_cast<uint64_t>(consumed), align);
     off += static_cast<size_t>(step == 0 ? consumed : step);
   }
@@ -244,7 +282,8 @@ std::string format_report(const dump_report& r) {
     os << "  manifest: unavailable\n";
   }
   os << "  data scan: [" << r.data_scan_start << ", " << r.data_scan_end
-     << ") records=" << r.record_count << "\n";
+     << ") records=" << r.record_count
+     << " live=" << r.live_records.size() << "\n";
   for (const auto& kv : r.records_by_type) {
     os << "    " << record_type_name(static_cast<record_type>(kv.first)) << ": "
        << kv.second << "\n";

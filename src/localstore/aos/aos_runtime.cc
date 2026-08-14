@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cctype>
+#include <cstring>
 
 namespace fastblock::aos {
 
@@ -27,7 +28,108 @@ constexpr uint64_t kRegionAlign = 1024ull * 1024; // 1 MiB
 
 } // namespace
 
-aos_runtime::~aos_runtime() { close(); }
+aos_runtime::~aos_runtime() {
+  stop_gc_poller();
+  if (store_) {
+    store_->set_kv_engine(nullptr);
+  }
+  kv_.reset();
+  store_.reset();
+  if (opened_) {
+    backend_.close();
+  }
+  opened_ = false;
+}
+
+int aos_runtime::gc_poller_fn(void* arg) {
+  auto* self = static_cast<aos_runtime*>(arg);
+  if (self == nullptr || !self->ready() || self->store_ == nullptr) {
+    return SPDK_POLLER_IDLE;
+  }
+  osd_store::gc_options opt;
+  opt.rewrite_victim = self->gc_cfg_.rewrite_victim;
+  opt.free_dead_segments = self->gc_cfg_.free_dead_segments;
+  opt.max_rewrite_extents = self->gc_cfg_.max_rewrite_extents;
+  opt.persist_manifest = self->gc_cfg_.persist_manifest;
+  const auto st = self->store_->gc_pass(opt);
+  ++self->gc_pass_count_;
+  if (st.extents_rewritten > 0 || st.segments_freed > 0) {
+    SPDK_NOTICELOG(
+        "aos_runtime GC pass #%lu rewrite=%u freed=%u\n", self->gc_pass_count_,
+        st.extents_rewritten, st.segments_freed);
+    if (st.segments_freed > 0 && !self->ckpt_in_flight_) {
+      self->ckpt_in_flight_ = true;
+      self->store_->checkpoint_pass(
+          [](void* a, int err) {
+            auto* rt = static_cast<aos_runtime*>(a);
+            rt->ckpt_in_flight_ = false;
+            if (err == 0) {
+              ++rt->ckpt_pass_count_;
+            }
+          },
+          self);
+    }
+    return SPDK_POLLER_BUSY;
+  }
+  return SPDK_POLLER_IDLE;
+}
+
+void aos_runtime::start_gc_poller() { start_gc_poller(gc_poller_config{}); }
+
+int aos_runtime::ckpt_poller_fn(void* arg) {
+  auto* self = static_cast<aos_runtime*>(arg);
+  if (self == nullptr || !self->ready() || self->store_ == nullptr ||
+      self->ckpt_in_flight_) {
+    return SPDK_POLLER_IDLE;
+  }
+  self->ckpt_in_flight_ = true;
+  self->store_->checkpoint_pass(
+      [](void* a, int err) {
+        auto* rt = static_cast<aos_runtime*>(a);
+        rt->ckpt_in_flight_ = false;
+        if (err == 0) {
+          ++rt->ckpt_pass_count_;
+          SPDK_NOTICELOG("aos_runtime checkpoint pass #%lu\n",
+                         rt->ckpt_pass_count_);
+        } else {
+          SPDK_ERRLOG("aos_runtime checkpoint pass failed: %d\n", err);
+        }
+      },
+      self);
+  return SPDK_POLLER_BUSY;
+}
+
+void aos_runtime::start_gc_poller(const gc_poller_config& cfg) {
+  stop_gc_poller();
+  if (!cfg.enabled || !ready()) {
+    return;
+  }
+  gc_cfg_ = cfg;
+  const uint64_t period =
+      cfg.period_us == 0 ? 5ull * 1000 * 1000 : cfg.period_us;
+  gc_poller_ = SPDK_POLLER_REGISTER(gc_poller_fn, this, period);
+  if (cfg.checkpoint_period_us > 0) {
+    ckpt_poller_ =
+        SPDK_POLLER_REGISTER(ckpt_poller_fn, this, cfg.checkpoint_period_us);
+  }
+  SPDK_NOTICELOG(
+      "aos_runtime GC poller started period_us=%lu max_rewrite=%u "
+      "ckpt_period_us=%lu\n",
+      period, cfg.max_rewrite_extents, cfg.checkpoint_period_us);
+}
+
+void aos_runtime::stop_gc_poller() {
+  if (ckpt_poller_ != nullptr) {
+    spdk_poller_unregister(&ckpt_poller_);
+    ckpt_poller_ = nullptr;
+  }
+  if (gc_poller_ != nullptr) {
+    spdk_poller_unregister(&gc_poller_);
+    gc_poller_ = nullptr;
+    SPDK_NOTICELOG("aos_runtime GC poller stopped (passes=%lu ckpts=%lu)\n",
+                   gc_pass_count_, ckpt_pass_count_);
+  }
+}
 
 int aos_runtime::open(const std::string& bdev_name, uint64_t region_offset,
                       uint64_t region_length, uint64_t segment_size) {
@@ -69,6 +171,9 @@ void aos_runtime::format(op_complete cb, void* arg) {
         if (err == 0 && kv_) {
           kv_->start();
         }
+        if (err == 0) {
+          start_gc_poller();
+        }
         if (cb) {
           cb(arg, err);
         }
@@ -94,6 +199,20 @@ void aos_runtime::recover(op_complete cb, void* arg) {
           }
           if (kv_) {
             kv_->start();
+            char keys[192]{};
+            size_t used = 0;
+            kv_->for_each_key([&](const std::string& key) {
+              if (used + key.size() + 2 >= sizeof(keys)) {
+                return;
+              }
+              if (used > 0) {
+                keys[used++] = ',';
+              }
+              std::memcpy(keys + used, key.data(), key.size());
+              used += key.size();
+            });
+            SPDK_NOTICELOG("aos recover kv table_size=%zu keys=%s\n",
+                           kv_->table_size(), used > 0 ? keys : "-");
           }
           if (store_) {
             const auto pgs = store_->list_pg_ids();
@@ -106,6 +225,7 @@ void aos_runtime::recover(op_complete cb, void* arg) {
                   store_->latest_epoch(id.first, id.second));
             }
           }
+          start_gc_poller();
         }
         if (cb) {
           cb(arg, err);
@@ -114,21 +234,38 @@ void aos_runtime::recover(op_complete cb, void* arg) {
       nullptr);
 }
 
-void aos_runtime::close() {
+void aos_runtime::stop(op_complete cb, void* arg) {
+  stop_gc_poller();
+  auto finish = [this, cb = std::move(cb), arg](int err) {
+    if (store_) {
+      store_->set_kv_engine(nullptr);
+    }
+    kv_.reset();
+    store_.reset();
+    if (opened_) {
+      backend_.close();
+    }
+    opened_ = false;
+    bdev_name_.clear();
+    region_offset_ = 0;
+    region_length_ = 0;
+    segment_size_ = 0;
+    gc_pass_count_ = 0;
+    if (cb) {
+      cb(arg, err);
+    }
+  };
   if (kv_) {
-    kv_->stop([](void*, int) {}, nullptr);
+    kv_->stop(
+        [finish = std::move(finish)](void* /*a*/, int err) { finish(err); },
+        nullptr);
+    return;
   }
-  if (store_) {
-    store_->set_kv_engine(nullptr);
-  }
-  kv_.reset();
-  store_.reset();
-  backend_.close();
-  opened_ = false;
-  bdev_name_.clear();
-  region_offset_ = 0;
-  region_length_ = 0;
-  segment_size_ = 0;
+  finish(0);
+}
+
+void aos_runtime::close() {
+  stop([](void*, int) {}, nullptr);
 }
 
 object_engine_mode parse_object_engine_mode(const std::string& s) {
