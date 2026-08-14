@@ -53,7 +53,8 @@ uint64_t get_u64(const uint8_t* p) {
 } // namespace
 
 std::vector<uint8_t> encode_record(const data_record& rec) {
-  return encode_record(rec, kFormatVersion);
+  return encode_record(rec, unified_log_enabled() ? kFormatVersionV3
+                                                  : kFormatVersion);
 }
 
 std::vector<uint8_t> encode_record(const data_record& rec,
