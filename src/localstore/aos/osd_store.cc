@@ -1567,52 +1567,97 @@ void osd_store::recover_rebuild_next(recover_req* req) {
   }
   const recover_req::rebuild_item item = req->rebuild_queue[req->rebuild_i];
   const uint32_t bs = backend_->block_size();
-  if (bs == 0 || item.phys % bs != 0) {
+  auto skip_item = [this, req, item](const char* why) {
+    SPDK_NOTICELOG(
+        "aos recover rebuild skip pool=%lu pg=%lu idx=%lu phys=%lu len=%lu "
+        "why=%s\n",
+        item.pool_id, item.pg_id, item.index, item.phys, item.length, why);
     ++req->rebuild_i;
     recover_rebuild_next(req);
+  };
+  if (bs == 0 || item.length == 0) {
+    skip_item(bs == 0 ? "bs=0" : "len=0");
     return;
   }
-  uint64_t to_read = item.length;
-  if (to_read % bs != 0) {
-    to_read = ((to_read + bs - 1) / bs) * bs;
-  }
-  if (to_read == 0 || to_read > req->buf_cap) {
-    ++req->rebuild_i;
-    recover_rebuild_next(req);
+  const uint64_t aligned_off = item.phys - (item.phys % bs);
+  const uint64_t skip = item.phys - aligned_off;
+  uint64_t to_read = skip + item.length;
+  to_read = ((to_read + bs - 1) / bs) * bs;
+  if (to_read == 0) {
+    skip_item("to_read=0");
     return;
   }
 
+  void* read_buf = req->buf;
+  bool oneshot = false;
+  if (to_read > req->buf_cap) {
+    read_buf = meta_alloc_buf(mode_, static_cast<size_t>(to_read), bs);
+    if (read_buf == nullptr) {
+      skip_item("alloc");
+      return;
+    }
+    oneshot = true;
+  }
+
   backend_->read(
-      item.phys, req->buf, to_read,
-      [req, item](void* /*a*/, int err) {
+      aligned_off, read_buf, to_read,
+      [req, item, read_buf, oneshot, skip, to_read](void* /*a*/, int err) {
         osd_store* self = req->self;
-        if (err == 0) {
-          data_record rec;
-          size_t consumed = 0;
-          const decode_status st = decode_record(
-              static_cast<const uint8_t*>(req->buf),
-              static_cast<size_t>(item.length), &rec, &consumed);
-          if (st == decode_status::ok && is_recover_io_type(rec.type)) {
-            pg_store* pg =
-                self->ensure_pg(item.pool_id, item.pg_id, item.store_epoch);
-            if (pg != nullptr) {
-              const uint64_t lapply =
-                  self->recover_lapply_of(item.pool_id, item.pg_id);
-              if (rec.type == record_type::gc_rewrite) {
-                if (item.index <= lapply) {
-                  pg->apply_record(rec, item.phys, true);
-                }
-              } else {
-                pg->stash_pending_record(rec, item.phys);
-                if (item.index <= lapply) {
-                  pg->recover_publish_pending(item.index);
-                }
+        auto done = [&]() {
+          if (oneshot) {
+            meta_free_buf(read_buf, self->mode_);
+          }
+          ++req->rebuild_i;
+          self->recover_rebuild_next(req);
+        };
+        if (err != 0) {
+          SPDK_NOTICELOG(
+              "aos recover rebuild read pool=%lu pg=%lu idx=%lu phys=%lu "
+              "err=%d\n",
+              item.pool_id, item.pg_id, item.index, item.phys, err);
+          done();
+          return;
+        }
+        data_record rec;
+        size_t consumed = 0;
+        const size_t avail = static_cast<size_t>(to_read - skip);
+        const decode_status st = decode_record(
+            static_cast<const uint8_t*>(read_buf) + skip, avail, &rec,
+            &consumed);
+        if (st != decode_status::ok) {
+          SPDK_NOTICELOG(
+              "aos recover rebuild decode pool=%lu pg=%lu idx=%lu phys=%lu "
+              "st=%d\n",
+              item.pool_id, item.pg_id, item.index, item.phys,
+              static_cast<int>(st));
+          done();
+          return;
+        }
+        if (is_recover_io_type(rec.type)) {
+          pg_store* pg =
+              self->ensure_pg(item.pool_id, item.pg_id, item.store_epoch);
+          if (pg != nullptr) {
+            const uint64_t lapply =
+                self->recover_lapply_of(item.pool_id, item.pg_id);
+            if (rec.type == record_type::gc_rewrite) {
+              if (item.index <= lapply) {
+                pg->apply_record(rec, item.phys, true);
+              }
+            } else {
+              pg->stash_pending_record(rec, item.phys);
+              if (item.index <= lapply) {
+                pg->recover_publish_pending(item.index);
               }
             }
           }
+        } else {
+          SPDK_NOTICELOG(
+              "aos recover rebuild type pool=%lu pg=%lu idx=%lu phys=%lu "
+              "type=%u\n",
+              item.pool_id, item.pg_id, item.index, item.phys,
+              static_cast<unsigned>(rec.type));
         }
-        ++req->rebuild_i;
-        self->recover_rebuild_next(req);
+        done();
       },
       req);
 }
@@ -1908,8 +1953,10 @@ void osd_store::recover_process(recover_req* req) {
         }
       } else if (is_recover_io_type(rec.type)) {
         // 4.9.1: old pair (type=14 already in index_map) → type=1 to head.
-        // Registered P6 IO → register is idempotent; do not head.put.
-        // Unregistered type=1 is the flag=0 apply path; keep today's put.
+        // Mapped P6 IO → no head.put (step 5). Tail gc_rewrite still updates
+        // phys so a later step-5 reread of the pre-rewrite data cannot win.
+        // Unregistered type=1 stays today's put unless flag=1 (then register
+        // and leave publish to step 5).
         bool publish = true;
         const uint64_t idx = rec.raft_apply_index;
         if (idx != 0) {
@@ -1922,8 +1969,18 @@ void osd_store::recover_process(recover_req* req) {
                   recover_idx_key{rec.pool_id, rec.pg_id, rec.store_epoch, idx});
               publish = true;
             } else if (is_recover_io_type(mapped)) {
-              publish = false;
+              if (rec.type == record_type::gc_rewrite) {
+                publish = true;
+                req->paired_indices.insert(recover_idx_key{
+                    rec.pool_id, rec.pg_id, rec.store_epoch, idx});
+              } else {
+                publish = false;
+              }
             }
+          } else if (lg != nullptr && unified_log_enabled()) {
+            (void)lg->register_index(idx, rec.raft_term, rec_phys, aligned,
+                                     rec.type);
+            publish = rec.type == record_type::gc_rewrite;
           }
         }
         pg->apply_record(rec, rec_phys, publish);
