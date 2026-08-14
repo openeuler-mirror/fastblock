@@ -5,7 +5,7 @@
 状态：**Draft**  
 代号：`aos_unified_log`（v2 里程碑记为 **P6 log=STM**）  
 前置：`docs/append_only_store_design.md` v2（**P4 完成**）。树上已有 image/GC 数据面（`create_image_snapshot` / `gc_pass` / `rewrite_extent`），但 v2 正文把剩余工作标在 **P5 = mon/CSI 控制面、ZNS、GC 压测**。本文 **不占用 P5 编号**；合入时在 v2 §12 增补「P6 log=STM」小节，P5 仍只表示控制面。  
-实现注记：本文**不改代码**；落地按文末 PR Plan 串行合入。**flag=1 非法**，直到 recover 能重建 data-as-log + pending（PR4）。
+实现注记：PR1–PR7 已合入此线。开发阶段 **flag 默认 1**（log=STM 唯一写路径）；不兼容旧二进制。
 
 ---
 
@@ -98,7 +98,7 @@ Follower 对称：`raft_recv_appendentries` 校验 `prev_log_idx/term`，冲突�
 8. **配置条目仍是小 record。** `CONFIGURATION` / `ADD_NONVOTING_NODE` / `SNAPSHOT_BASE` 继续 type=14，不塞进 object 语义。
 9. **Snapshot。** 进程内、versions 仍在时可用 `view_at(N)`。`checkpoint_pass` 后重启 **versions 为空**（`checkpoint_object` 只序列化 head extents + `applied_writes`）：此时只允许装 **head**，且 `snap_index = last_applied`。复用 ingest、snapshot base、`checkpoint_pass`、format 填零、segment table、GC。
 10. **GC 用指针 + pin。** 禁止 `index < N ⇒ dead`。`update_phys` 使用 **record 起点**；AE 必须能解码 `gc_rewrite`。
-11. **可回滚开关。** 进程默认 `aos_unified_log=0`；单测 fixture 显式打开。旧盘（type=14 + type=1）recover 可重建。关 flag 重启只在 **已具备双形状 read 的二进制**（PR2+）上合法。
+11. **开发阶段默认即 log=STM。** 不兼容旧二进制，不保留双写作为对等生产路径。`FASTBLOCK_AOS_UNIFIED_LOG=0` 仅单测关掉（`write()` 立刻发布 + recover 旧合同）。
 
 ### Non-Goals
 
@@ -518,14 +518,12 @@ P6 增量：
 |----|-----|
 | 名 | `aos_unified_log` |
 | 配置 | OSD 配置项 + 环境变量 `FASTBLOCK_AOS_UNIFIED_LOG=0/1`（与现 `FASTBLOCK_RAFT_RECOVERY_TEST_LOGS` 风格一致） |
-| 默认 | **进程默认永远 0**（生产与 `aos_m1_test` 未改 fixture 时均关）。单测 / 故障注入用 fixture 或 `FASTBLOCK_AOS_UNIFIED_LOG=1` **显式打开**。 |
-| 粒度 | 进程级；不按 PG 混用写路径（recover 可混读） |
-| 关闭时 | 完整旧路径：type=14 + apply type=1；head 在 apply flush 后发布（今日） |
-| 打开时 | 本文写/截断/apply 合同。**二进制若还不能按 §4.9 重建 data-as-log + pending，打开即非法**（PR4 之前禁止 flag=1） |
-| 混旗副本 | leader=1 / follower=0 与相反均可：AE 仍带 4KiB + proto meta，与 flag 无关。验收必须覆盖这两对。 |
-| 回滚 | 「关 flag 重启」只在 **PR2+ 二进制**（read 无条件双形状）上合法。一旦某 OSD 写出 data-as-log，**禁止**回滚到 PR2 之前的二进制（`disk_read` 会 `-EIO` / 丢 index）。 |
+| 默认 | **开发阶段默认开启**。不兼容旧二进制；不保留双写作为对等生产路径。`FASTBLOCK_AOS_UNIFIED_LOG=0` 仅单测关掉。 |
+| 粒度 | 进程级 |
+| 关闭时 | 仅单测：type=14 + apply type=1 |
+| 打开时 | 本文写/截断/apply 合同（默认） |
 
-`layout_version` 保持 1。format_version=3 与 format=2 记录可混在同一 data-region；**生产 encode 在指针公式改完之前必须仍为 v2/78B**（§6.1）。
+`layout_version` 保持 1。默认生产 encode 为 format_version=3 / 86B；decode 仍接受 v2/78B（同进程混写或单测关 flag）。指针公式一律 `record_start + header_len`（§6.1）。
 
 ---
 
@@ -774,22 +772,17 @@ lease 只服务 `linearization()` 读。写耐久必须多数派。拒绝。
 
 现有 `raft_disk_append` / merger / `last_apply_index` 日志保留。`disk_log::dump_state` 增加 `pending` 与 `rec_type` 直方图。
 
-单测探测：fixture 打开 flag 后对 overwrite 扫盘，`raft_log_entry` 计数不增加、`data` 计数 +1。`aos_m1_test.cc:2531` 的 type=14 断言测的是 `log_store::append` 本身，默认 flag=0 时仍有效，不要把全局默认改成 1。
+单测探测：默认 flag 开。overwrite 扫盘 `raft_log_entry` 不增加、`data` +1。`log_store::append` 本身仍写 type=14（配置 / NOOP / SNAPSHOT_BASE）；测双写 recover 的用例显式 `FASTBLOCK_AOS_UNIFIED_LOG=0`。
 
 ---
 
 ## Rollout Plan
 
 ```text
-阶段 0  设计评审（本文）+ flag 落地默认 0
-阶段 1  decode v3 + 双形状 read（含 name_lookup）+ pending API + recover 重建
-        —— 旧集群行为不变；此时才允许测试把 flag 打开
-阶段 2  指针公式 + 生产 encode v3 + append_as_log + publish-only apply
-        （写路径 PR 与 recover 同一发布窗口；缺 recover 的二进制不得 flag=1）
-阶段 3  预发灰度：新集群显式开 flag；对比 IOPS / 盘放大
-        覆盖 leader/follower 混旗两对
-阶段 4  评估后才考虑进程默认改 1（无排期）
-回滚    PR2+ 二进制上关 flag；禁止回滚到不能 disk_read data-as-log 的旧二进制
+阶段 0–2  PR1–PR7 已合入此线（decode v3、data-as-log read、pending、
+          recover、append_as_log、publish-only apply、rewrite/snapshot）
+阶段 3    开发阶段：进程默认开启 log=STM。不兼容旧二进制，不做混旗/
+          旧盘灰度。单测用 FASTBLOCK_AOS_UNIFIED_LOG=0 隔离 write()+recover。
 ```
 
 验收：
@@ -799,9 +792,8 @@ lease 只服务 `linearization()` 读。写耐久必须多数派。拒绝。
    **当选：** A 持未多数派 91–100 重启并当选 → no-op 多数派前 read 仍 miss；A 再死、B 以 90 当选 → A truncate 后 head 无 91–100。
 3. 制造 log 冲突：`truncate_from` 后无幽灵 extent / 幽灵 name。
 4. `checkpoint_pass` + 重启 + `create_raft_snapshot(last_applied)` + ingest：follower 读匹配 head。rewrite 后 `disk_read` 仍能组装 4KiB + `write_cmd`。
-5. 旧盘双写与 P6 单 record 两套 recover 表（§4.9.1）。
+5. P6 单 record recover：`lapply` 上下分 pending/head（§4.9.1）。开发阶段不验收旧盘双写。
 6. 配置变更 / 选举 / prev_term；同一 batch WRITE+CONFIG 串行。
-7. leader=1/follower=0 与相反复制正确。
 
 ---
 
@@ -809,7 +801,7 @@ lease 只服务 `linearization()` 读。写耐久必须多数派。拒绝。
 
 1. **`publish_commit` 是否必须与 `last_applied` 同线程串行？** 现 poller 已串行；并行 apply 不在本设计范围。
 2. **ingest `apply_chunk` 是否走 pending？** 否：staging 构造的是已提交视图，直接 head（§4.8）。
-3. **生产默认何时改 1？** 依赖灰度盘放大与故障注入；本文不锁日期。进程默认保持 0。
+3. **生产默认：** 开发阶段已默认 1。不保留关 flag 作为对等生产路径。
 
 ---
 
@@ -846,12 +838,12 @@ lease 只服务 `linearization()` 读。写耐久必须多数派。拒绝。
 8. **Follower apply 零盘 IO。** 只 publish；`write_obj_done` 式 unlock 在 publish 之后。
 9. **重启后 snapshot 只装 head @ last_applied。** 进程内 versions 仍在时可用 `view_at(N)`。不在本设计序列化 version log。
 10. **网络仍 4KiB / follower。** overwrite 盘放大 2.25×→1.125× 或 4×→2× / OSD。
-11. **兼容旧 aos_file。** §4.9.1 表：成对 → type=1 进 head；仅 data → 按 lapply 分 pending/head。read 无条件双形状。
+11. **不兼容旧 aos_file。** 开发阶段只按 P6 单 record recover：仅 data → 按 lapply 分 pending/head。read 仍按 rec_type 双形状解码（data-as-log 与残留 type=14 配置条）。
 12. **H1 扩头 + 指针公式：** `extent.phys = record_start + header_len`。公式可先于 v3 encode 落地（仍写 78B）。**禁止**在公式落地前生产 encode v3。`layout_version=1`。`data_record.raft_term`。
 13. **`update_phys` 用 record 起点；`gc_rewrite` 按 data 做 AE 解码。**
 14. **batch 按下标串行；CONFIG 与 WRITE 走同一 writer。** `disk_log` 持非拥有 `osd_store*`。
 15. **`name_lookup` 与生产 `disk_read` data-as-log 同一 PR。** 缺名失败，禁止空 meta。
-16. **flag 进程默认 0。** 测试 fixture 打开。flag=1 非法，直到 recover 能重建 pending。禁止回滚到 PR2 前二进制。
+16. **flag 进程默认 1。** 开发阶段 log=STM 是唯一写路径。`FASTBLOCK_AOS_UNIFIED_LOG=0` 仅单测关掉。
 17. **里程碑编号：** v2 的 P5 仍是 mon/CSI；本工作是 **P6 / `aos_unified_log`**。
 18. **殊途同归 Pangu FlatLogFile + LSBD：** 单追加流 + 索引映射 + 提交可见。
 
@@ -910,12 +902,12 @@ lease 只服务 `linearization()` 读。写耐久必须多数派。拒绝。
 - **依赖：** PR6
 - **说明：** `update_phys(record_start)`；`disk_read` 在 rewrite 后仍能组 AE。`checkpoint_pass`+重启+`create_raft_snapshot(last_applied)`+ingest。trim 后 GC 不丢 head。
 
-### PR8 — 集成测试、文档、默认值
+### PR8 — 默认开启 log=STM（无旧二进制兼容）
 
-- **标题：** docs+tests: aos_unified_log rollout
-- **文件：** `docs/append_only_store_design.md` 增 **P6 log=STM**（P5 仍为 mon/CSI）、`aos/README`、故障注入 / 混旗 / 三副本
+- **标题：** aos: default unified log on; drop old-binary rollout
+- **文件：** `aos_runtime.cc`、`types.h`、`record.h`、`aos_m1_test.cc`、`aos/README`、本文 §4.11 / Rollout
 - **依赖：** PR7
-- **说明：** 进程默认保持 0。验收清单见 Rollout。
+- **说明：** 进程默认 1；env `=0` 仅单测。`write()`+recover 旧合同用例关 flag。不验收混旗、不保留关 flag 作为生产路径。
 
 ---
 
