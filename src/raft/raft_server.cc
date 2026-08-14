@@ -2150,7 +2150,25 @@ int raft_server_t::raft_recv_installsnapshot(raft_node_id_t node_id,
 }
 
 void raft_server_t::_recovery_delete(recovery_op_complete cb_fn, void* arg){
+    if (_obr == nullptr) {
+        if (cb_fn) {
+            cb_fn(arg, 0);
+        }
+        return;
+    }
     _obr->recovery_delete(std::move(cb_fn), arg);
+}
+
+void raft_server_t::unpin_and_free_object_recovery(recovery_op_complete cb_fn,
+                                                   void* arg) {
+    _recovery_delete(
+        [this, cb = std::move(cb_fn), arg](void*, int err) {
+            free_object_recovery();
+            if (cb) {
+                cb(arg, err);
+            }
+        },
+        nullptr);
 }
 
 int raft_server_t::raft_process_installsnapshot_reply(installsnapshot_response *rsp){
@@ -2163,17 +2181,25 @@ int raft_server_t::raft_process_installsnapshot_reply(installsnapshot_response *
     }
 
     auto snap_end_err = [this, node](void *arg, int rerrno){
-        delete _obr;
-        _obr = nullptr;
-        node->raft_set_suppress_heartbeats(false);
-        node->raft_node_set_recovering(false);
+        (void)arg;
+        (void)rerrno;
+        unpin_and_free_object_recovery(
+            [node](void*, int) {
+                node->raft_set_suppress_heartbeats(false);
+                node->raft_node_set_recovering(false);
+            },
+            nullptr);
     };
 
     auto snap_end = [this, node](void *arg, int rerrno){
-        delete _obr;
-        _obr = nullptr;
-        node->raft_set_suppress_heartbeats(false);
-        dispatch_recovery(node);
+        (void)arg;
+        (void)rerrno;
+        unpin_and_free_object_recovery(
+            [this, node](void*, int) {
+                node->raft_set_suppress_heartbeats(false);
+                dispatch_recovery(node);
+            },
+            nullptr);
     };
 
     if (!raft_is_leader()){
@@ -2201,6 +2227,10 @@ int raft_server_t::raft_process_installsnapshot_reply(installsnapshot_response *
     }
 
     node->raft_node_set_lease(rsp->lease());
+    if (_obr == nullptr) {
+        snap_end_err(nullptr, 0);
+        return 1;
+    }
     SPDK_NOTICELOG(
       "pg: %lu.%lu, installsnapshot reply from node %d iter_end=%d snapshot_index=%ld next_idx=%ld match_idx=%ld\n",
       _pool_id, _pg_id, rsp->node_id(), _obr->iter_is_end(), _snapshot_index,
@@ -2450,12 +2480,15 @@ public:
     }
 
     void handle_end(){
-        _raft->free_object_recovery();
         auto node = _raft->raft_get_cfg_node(_node_id);
-        if(node){
-            node->raft_set_suppress_heartbeats(false);
-            node->raft_node_set_recovering(false);
-        }
+        _raft->unpin_and_free_object_recovery(
+            [node](void*, int) {
+                if (node) {
+                    node->raft_set_suppress_heartbeats(false);
+                    node->raft_node_set_recovering(false);
+                }
+            },
+            nullptr);
         delete this;
     };
 
@@ -2467,7 +2500,13 @@ public:
         snapshot->set_term(_raft->raft_get_current_term());
         snapshot->set_last_idx(_raft->get_snapshot_index());
         snapshot->set_last_term(_raft->get_snapshot_term());
-        if(_raft->get_object_recovery()->iter_is_end())
+        auto* obr = _raft->get_object_recovery();
+        if (obr == nullptr) {
+            delete snapshot;
+            handle_end();
+            return;
+        }
+        if(obr->iter_is_end())
             snapshot->set_done(true);
         else
             snapshot->set_done(false);
@@ -2496,9 +2535,8 @@ public:
         SPDK_NOTICELOG(
           "pg: %lu.%lu, send_snapshot to node %d obj_num=%d done=%d iter_end=%d iter_idx=%lu\n",
           _raft->raft_get_pool_id(), _raft->raft_get_pg_id(), _node_id, obj_num,
-          snapshot->done(), _raft->get_object_recovery()->iter_is_end(),
-          _raft->get_object_recovery()->get_iter_idx());
-        if(obj_num == 0 && !_raft->get_object_recovery()->iter_is_end()){
+          snapshot->done(), obr->iter_is_end(), obr->get_iter_idx());
+        if(obj_num == 0 && !obr->iter_is_end()){
             delete snapshot;
             auto node = _raft->raft_get_cfg_node(_node_id);
             if(!node){
@@ -2582,6 +2620,15 @@ static void read_snapshot(read_ctx* rc){
         rc->complete(rerrno);
     };
 
+    if (obr == nullptr) {
+        rc->complete(-EINVAL);
+        return;
+    }
+    if (num <= 0) {
+        rc->complete(0);
+        return;
+    }
+
     for(int i = 0; i < num; i++){
         auto current_idx = obr->get_iter_idx();
         auto object_name = obr->get_iter_name(current_idx);
@@ -2608,10 +2655,12 @@ int raft_server_t::raft_process_snapshot_check_reply(snapshot_check_response *rs
     }
 
     auto handle_error = [this, node](){
-        delete _obr;
-        _obr = nullptr;
-        node->raft_set_suppress_heartbeats(false);
-        node->raft_node_set_recovering(false);
+        unpin_and_free_object_recovery(
+            [node](void*, int) {
+                node->raft_set_suppress_heartbeats(false);
+                node->raft_node_set_recovering(false);
+            },
+            nullptr);
     };
 
 
@@ -2647,6 +2696,24 @@ int raft_server_t::raft_process_snapshot_check_reply(snapshot_check_response *rs
     node->raft_node_set_lease(rsp->lease());
 
     auto object_size = rsp->objects_size();
+    if (object_size == 0) {
+        // Empty live set (or a 0-name check): send done snapshot, do not hang
+        // in read_snapshot with count=0.
+        installsnapshot_request *snapshot = new installsnapshot_request();
+        snapshot->set_node_id(raft_get_nodeid());
+        snapshot->set_pool_id(_pool_id);
+        snapshot->set_pg_id(_pg_id);
+        snapshot->set_term(raft_get_current_term());
+        snapshot->set_last_idx(get_snapshot_index());
+        snapshot->set_last_term(get_snapshot_term());
+        snapshot->set_done(_obr == nullptr || _obr->iter_is_end());
+        auto res = raft_send_installsnapshot(snapshot, rsp->node_id());
+        if (res != err::E_SUCCESS) {
+            handle_error();
+            return 1;
+        }
+        return 0;
+    }
     read_ctx *rc = new read_ctx(object_size, this, rsp->node_id());
     for(int i = 0; i < object_size; i++){
         const object_check_info& object = rsp->objects(i);
@@ -2666,6 +2733,9 @@ int raft_server_t::raft_send_snapshot_check(std::shared_ptr<raft_node> node){
     assert(node);
     assert(!raft_is_self(node));
 
+    if (_obr == nullptr) {
+        return err::E_INVAL;
+    }
     auto obj_names = _obr->recovery_get_obj_names(_obr->get_iter_idx(), SNAPSHOT_MAX_CHUNK);
     SPDK_NOTICELOG("send snapshot_check_request to node %d pg %lu.%lu term %ld start obj_idx %lu obj num %lu\n",
                    node->raft_node_get_id(), _pool_id, _pg_id, raft_get_current_term(),
@@ -2683,10 +2753,13 @@ int raft_server_t::raft_send_snapshot_check(std::shared_ptr<raft_node> node){
 
 void raft_server_t::handle_snap_check_task(task_info& task){
     auto handle_error = [this](std::shared_ptr<raft_node> node){
-        delete _obr;
-        _obr = nullptr;
-        if(node)
-            node->raft_node_set_recovering(false);
+        unpin_and_free_object_recovery(
+            [node](void*, int) {
+                if (node) {
+                    node->raft_node_set_recovering(false);
+                }
+            },
+            nullptr);
     };
 
     auto node = raft_get_cfg_node(task.node_id);
@@ -2716,13 +2789,23 @@ int raft_server_t::_recovery_by_snapshot(std::shared_ptr<raft_node> node){
     SPDK_NOTICELOG("pg: %lu.%lu, recovery by snapshot to node %d (aos=%d)\n",
                    _pool_id, _pg_id, node->raft_node_get_id(),
                    _machine->uses_aos_objects() ? 1 : 0);
+    if (_obr != nullptr) {
+        SPDK_ERRLOG("pg: %lu.%lu, snapshot recovery already in progress\n",
+                    _pool_id, _pg_id);
+        raft_set_snapshot_in_progress(false);
+        node->raft_set_suppress_heartbeats(false);
+        node->raft_node_set_recovering(false);
+        return err::RAFT_ERR_SNAPSHOT_IN_PROGRESS;
+    }
     _obr = new object_recovery(_machine.get());
 
     auto handle_error = [this, node](){
-        delete _obr;
-        _obr = nullptr;
-        node->raft_set_suppress_heartbeats(false);
-        node->raft_node_set_recovering(false);
+        unpin_and_free_object_recovery(
+            [node](void*, int) {
+                node->raft_set_suppress_heartbeats(false);
+                node->raft_node_set_recovering(false);
+            },
+            nullptr);
     };
 
     _snapshot_index = _machine->get_last_applied_idx();
