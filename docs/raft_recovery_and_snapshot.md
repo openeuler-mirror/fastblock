@@ -177,7 +177,10 @@ if (next_idx < raft_get_log()->log_get_base_index()){
 - `_snapshot_index` 对应 term 的查询如果碰到日志 trim 边界，可能失败或得到不一致状态。
 - follower 处理 `snapshot_check` 前要求 `commit_idx == last_applied_idx`，如果 apply 卡住会导致 snapshot recovery 卡住。
 - snapshot object recovery 的 `_obr` 生命周期、snapshot cleanup 与 leader stop/restart 交织时仍缺少压力验证。
-- 当前已有基础手工验证记录，但缺少专门、可重复、能在回归中稳定触发 `next_idx < log_get_base_index()` 的自动化用例。
+- 集群回归脚本：`scripts/run-raft-install-snapshot-regression.sh`（停 follower → 写超 trim 阈值 → 重启 → 等 `_recovery_by_snapshot` / `snapshot_check` / `installsnapshot` → read-verify）。
+- trim 阈值：`FASTBLOCK_RAFT_LOG_TRIM_TRIGGER_ENTRIES` / `FASTBLOCK_RAFT_LOG_TRIM_KEEP_ENTRIES`（默认仍 1000/1000）。脚本用 128/64。
+- 进程内单测：`disk_log_trim_test` 断言 apply 200 后 `next_idx=1 < base=137`。
+- 本环境无 hugepage / RDMA rxe 时跑不了 4 OSD 集群；有盘的机器上 `FASTBLOCK_VSTART_SPDK_ARGS=--no-huge ./scripts/run-raft-install-snapshot-regression.sh`。
 
 # 4 AOS install snapshot 路径
 
