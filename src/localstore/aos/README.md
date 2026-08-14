@@ -34,6 +34,7 @@ osd_store / aos_runtime
 | log | **生产路径** `log_store` + `disk_log(AOS)` |
 | kv | **生产路径** `kv_engine` + `attach_aos_kv` |
 | blobstore | **生产不再 init/load**；实现归档 `legacy_blob/`（不进生产链接） |
+| P6 log=STM | PR1–PR5 已合入此线；**PR6**：flag=1 时 apply 只 `publish_commit`，load `commit=min(lapply,current)`，become_leader 不抬 commit 并 append `RAFT_LOGTYPE_NOOP`。默认 `FASTBLOCK_AOS_UNIFIED_LOG` 仍为 0。 |
 
 Object 子系统细节见设计文档 §5。
 
