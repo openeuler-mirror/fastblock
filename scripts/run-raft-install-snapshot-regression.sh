@@ -28,6 +28,9 @@ live_object="${object_name}_live"
 export FASTBLOCK_RAFT_LOG_TRIM_TRIGGER_ENTRIES="$trim_trigger"
 export FASTBLOCK_RAFT_LOG_TRIM_KEEP_ENTRIES="$trim_keep"
 export FASTBLOCK_RAFT_RECOVERY_TEST_LOGS=1
+# This environment often has no hugepages; SPDK --no-huge is enough for the
+# regression (not a perf run). Override with FASTBLOCK_VSTART_SPDK_ARGS=.
+export FASTBLOCK_VSTART_SPDK_ARGS="${FASTBLOCK_VSTART_SPDK_ARGS:---no-huge}"
 
 require_exec() {
     local path="$1"
@@ -139,7 +142,7 @@ find_pg_leader() {
     local match=""
 
     while [ "$SECONDS" -lt "$deadline" ]; do
-        match="$(rg -n "becoming leader of pg ${pool_id}\\.${pg_id}" "$log_dir"/osd*.log 2>/dev/null | tail -n 1 || true)"
+        match="$(grep -E -n "becoming leader of pg ${pool_id}\\.${pg_id}" "$log_dir"/osd*.log 2>/dev/null | tail -n 1 || true)"
         if [[ "$match" =~ osd([0-9]+)\.log ]]; then
             printf "%s" "${BASH_REMATCH[1]}"
             return 0
@@ -171,7 +174,7 @@ wait_for_log() {
     local hit=""
 
     while [ "$SECONDS" -lt "$deadline" ]; do
-        hit="$(rg -n "$pattern" "$log_dir"/osd*.log 2>/dev/null | tail -n 1 || true)"
+        hit="$(grep -E -n "$pattern" "$log_dir"/osd*.log 2>/dev/null | tail -n 1 || true)"
         if [ -n "$hit" ]; then
             echo "$hit"
             return 0
@@ -193,7 +196,7 @@ wait_for_osd_log() {
     local log_file="$log_dir/osd${osd_id}.log"
 
     while [ "$SECONDS" -lt "$deadline" ]; do
-        hit="$(rg -n "$pattern" "$log_file" 2>/dev/null | tail -n 1 || true)"
+        hit="$(grep -E -n "$pattern" "$log_file" 2>/dev/null | tail -n 1 || true)"
         if [ -n "$hit" ]; then
             echo "$hit"
             return 0
@@ -216,7 +219,7 @@ wait_for_osd_log_after_line() {
     local log_file="$log_dir/osd${osd_id}.log"
 
     while [ "$SECONDS" -lt "$deadline" ]; do
-        hit="$(tail -n +"$((start_line + 1))" "$log_file" 2>/dev/null | rg -n "$pattern" | tail -n 1 || true)"
+        hit="$(tail -n +"$((start_line + 1))" "$log_file" 2>/dev/null | grep -E -n "$pattern" | tail -n 1 || true)"
         if [ -n "$hit" ]; then
             echo "$hit"
             return 0
@@ -233,7 +236,7 @@ log_timestamp() {
     local file="$1"
     local pattern="$2"
     local hit
-    hit="$(rg -n "$pattern" "$file" 2>/dev/null | tail -n 1 || true)"
+    hit="$(grep -E -n "$pattern" "$file" 2>/dev/null | tail -n 1 || true)"
     if [[ ! "$hit" =~ \[([^]]+)\] ]]; then
         echo "failed to find timestamp for pattern: $pattern in $file" >&2
         exit 1
@@ -266,7 +269,7 @@ run_pg_stress() {
 }
 
 scan_fatal_logs() {
-    if rg -n "assert|Assertion|SIGSEGV|segmentation|core dumped" "$log_dir"/*.log >/tmp/raft-install-snapshot-fatal.log 2>/dev/null; then
+    if grep -E -n "assert|Assertion|SIGSEGV|segmentation|core dumped" "$log_dir"/*.log >/tmp/raft-install-snapshot-fatal.log 2>/dev/null; then
         cat /tmp/raft-install-snapshot-fatal.log >&2
         echo "fatal log pattern found" >&2
         exit 1
@@ -332,6 +335,7 @@ wait_for_osd_log "$leader" "leader raft log trim" "raft log test trim \\["
 
 echo "Restarting osd$follower"
 "$script_root/build/src/osd/fastblock-osd" -C "$conf" --id "$follower" -N 0 \
+    $FASTBLOCK_VSTART_SPDK_ARGS \
     >> "$log_dir/osd${follower}.log" 2>&1 &
 echo "$!" > "$run_dir/osd-${follower}.pid"
 
