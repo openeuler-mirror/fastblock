@@ -3674,6 +3674,11 @@ void test_pg_store_write_phys_uses_header_len() {
   EXPECT_EQ(live_phys, payload_phys(rec_start, hlen));
 }
 
+struct unified_log_guard {
+  explicit unified_log_guard(bool on) { set_unified_log_enabled(on); }
+  ~unified_log_guard() { set_unified_log_enabled(false); }
+};
+
 void persist_lapply(kv_engine* kv, uint64_t pool, uint64_t pg, uint64_t lapply) {
   kv->put(std::to_string(pool) + "." + std::to_string(pg) + ".lapply_idx",
           std::to_string(lapply));
@@ -3710,6 +3715,54 @@ void write_p6_data(osd_store& osd, mem_device_backend& dev, uint64_t pool,
   if (hlen != nullptr) {
     *hlen = hl;
   }
+}
+
+void test_recover_p6_unpublished_no_ckpt() {
+  unified_log_guard on(true);
+  const uint64_t seg = 256 * 1024;
+  mem_device_backend dev(8 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, seg);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  kv_engine kv(&dev, osd.shared_allocator(), buffer_mode::heap);
+  osd.set_kv_engine(&kv);
+
+  std::vector<char> data(4096, 'N');
+  write_p6_data(osd, dev, 1, 0, "nockpt", /*index*/ 5, /*term*/ 1, data, nullptr,
+                nullptr, nullptr);
+  persist_lapply(&kv, 1, 0, /*lapply*/ 4);
+
+  osd_store osd2(&dev, buffer_mode::heap, seg);
+  kv_engine kv2(&dev, osd2.shared_allocator(), buffer_mode::heap);
+  osd2.set_kv_engine(&kv2);
+  r = {};
+  osd2.recover(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  pg_store* pg = osd2.bind_existing_pg(1, 0);
+  EXPECT_TRUE(pg != nullptr);
+  if (pg == nullptr) {
+    return;
+  }
+  EXPECT_TRUE(pg->pending_count() >= 1u);
+  EXPECT_TRUE(pg->has_pending(5));
+  log_store* lg = osd2.get_active_log(1, 0);
+  EXPECT_TRUE(lg != nullptr);
+  EXPECT_TRUE(lg->contains(5));
+  EXPECT_EQ(static_cast<unsigned>(lg->rec_type_at(5)),
+            static_cast<unsigned>(record_type::data));
+
+  std::vector<char> out(4096, 1);
+  r = {};
+  osd2.read(1, 0, "nockpt", 0, out.data(), out.size(), on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(
+      std::all_of(out.begin(), out.end(), [](char c) { return c == 0; }));
 }
 
 void test_recover_p6_unpublished_pending_after_ckpt() {
@@ -3901,6 +3954,30 @@ void test_recover_p6_pending_live_for_gc() {
   write_p6_data(osd, dev, 1, 0, "gclive", /*index*/ 8, /*term*/ 1, data, &phys,
                 nullptr, &hl);
   persist_lapply(&kv, 1, 0, /*lapply*/ 0);
+
+  // Seal the victim with type=14 padding so recover imports a sealed segment.
+  log_store* lg = osd.get_or_create_log(1, 0, osd.serving_epoch(1, 0));
+  EXPECT_TRUE(lg != nullptr);
+  uint64_t idx = lg->last_index() + 1;
+  if (idx == 0) {
+    idx = 9;
+  }
+  int n = 0;
+  while (osd.allocator()->sealed_count() < 1 && n < 200) {
+    log_entry e;
+    e.term = 1;
+    e.index = idx;
+    e.type = 0;
+    e.meta = "pad";
+    e.data = std::string(64, 'L');
+    r = {};
+    lg->append(e, on_done, &r);
+    EXPECT_EQ(r.err, 0);
+    ++idx;
+    ++n;
+  }
+  EXPECT_TRUE(osd.allocator()->sealed_count() >= 1u);
+
   r = {};
   osd.checkpoint_pass(on_done, &r);
   EXPECT_EQ(r.err, 0);
@@ -3933,13 +4010,18 @@ void test_recover_p6_pending_live_for_gc() {
   });
   EXPECT_EQ(live_phys, payload_phys(phys, hl));
 
-  const uint32_t sealed_before =
-      osd2.allocator() ? osd2.allocator()->sealed_count() : 0;
-  (void)osd2.gc_once(true);
-  EXPECT_TRUE(pg->pending_count() >= 1u);
-  if (osd2.allocator() != nullptr && sealed_before > 0) {
-    EXPECT_EQ(osd2.allocator()->sealed_count(), sealed_before);
+  // Drop index_map so the pending payload is the only live ref on that extent.
+  log_store* lg2 = osd2.get_active_log(1, 0);
+  EXPECT_TRUE(lg2 != nullptr);
+  if (lg2 != nullptr && lg2->last_index() != 0) {
+    lg2->trim_to(lg2->last_index());
   }
+  EXPECT_TRUE(osd2.allocator() != nullptr);
+  EXPECT_TRUE(osd2.allocator()->sealed_count() >= 1u);
+  const uint32_t sealed_before = osd2.allocator()->sealed_count();
+  EXPECT_EQ(osd2.gc_once(true), 0u);
+  EXPECT_EQ(osd2.allocator()->sealed_count(), sealed_before);
+  EXPECT_TRUE(pg->pending_count() >= 1u);
 
   live_phys = 0;
   pg->for_each_live_extent([&](uint64_t p, uint64_t len) {
@@ -4050,6 +4132,7 @@ int main() {
   test_pg_store_write_still_immediately_readable();
   test_pg_store_write_phys_uses_header_len();
   test_recover_p6_unpublished_pending_after_ckpt();
+  test_recover_p6_unpublished_no_ckpt();
   test_recover_p6_lapply_promotes_to_head();
   test_recover_old_pair_type1_to_head();
   test_recover_p6_pending_live_for_gc();
