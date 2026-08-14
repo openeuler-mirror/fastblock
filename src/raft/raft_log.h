@@ -120,14 +120,10 @@ public:
     }
 
     bool disk_get_term(raft_index_t idx, raft_term_t& term){
-        if (!_log) {
+        if (!_log || !_log->contains(static_cast<uint64_t>(idx))) {
             return false;
         }
-        auto _term = _log->get_term_id(idx);
-        if(_term == 0){
-            return false;
-        }
-        term = _term;
+        term = static_cast<raft_term_t>(_log->get_term_id(idx));
         return true;
     }
 
@@ -257,10 +253,24 @@ public:
         return _next_idx;
     }
 
-    void set_disk_log_index(raft_index_t index, log_op_complete cb_fn, void* arg){
+    void set_disk_log_index(raft_index_t index, raft_term_t term,
+                            log_op_complete cb_fn, void* arg){
         if(_log){
-            _log->set_index(index, std::move(cb_fn), arg);
+            _log->set_index(static_cast<uint64_t>(index),
+                            static_cast<uint64_t>(term), std::move(cb_fn), arg);
+            return;
         }
+        if(cb_fn){
+            cb_fn(arg, -ENODEV);
+        }
+    }
+
+    /** Switch AOS log_store after snapshot activate (new serving epoch). */
+    void retarget_aos_log(fastblock::aos::log_store* lg){
+        if(_log){
+            _log->retarget(lg);
+        }
+        log_clear();
     }
 
     void load(log_op_complete cb_fn, void* arg){
