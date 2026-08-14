@@ -829,6 +829,10 @@ public:
         _obr = nullptr;
     }
 
+    /** Unpin recovery view (if any), then free _obr. Safe when _obr is null. */
+    void unpin_and_free_object_recovery(recovery_op_complete cb_fn = {},
+                                        void* arg = nullptr);
+
     /*
      *  follower节点在接收完leader的快照后，才能调用
      */
