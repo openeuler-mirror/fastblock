@@ -253,7 +253,20 @@ public:
   void recover(op_complete cb, void* arg);
 
   // Apply one decoded record into memory maps (no I/O). Used by recover.
-  int apply_record(const data_record& rec, uint64_t phys_offset);
+  // publish=false: skip IO types (P6 data-as-log; pending/head decided later).
+  int apply_record(const data_record& rec, uint64_t phys_offset,
+                   bool publish = true);
+
+  // Recover: insert pending from a decoded IO record. No head.put.
+  int stash_pending_record(const data_record& rec, uint64_t record_start);
+  // Promote pending[index] into head (idempotent). Recover uses this instead
+  // of the async publish_commit queue.
+  void recover_publish_pending(uint64_t raft_index);
+
+  size_t pending_count() const { return pending_.size(); }
+  bool has_pending(uint64_t raft_index) const {
+    return pending_.find(raft_index) != pending_.end();
+  }
 
   // Load ObjectMap from a decoded checkpoint payload (clears prior maps).
   int apply_checkpoint_snapshot(const checkpoint_snapshot& snap,
@@ -297,6 +310,9 @@ public:
   void list_live_object_names(std::vector<std::string>* out) const;
 
   bool object_exists(const std::string& name) const;
+
+  /** object_id → name for AE name_lookup. Missing or empty → -ENOENT. */
+  int name_of(uint64_t object_id, std::string* name) const;
 
 private:
   // In-memory version log for snapshot reads (M3).
