@@ -11,6 +11,7 @@
 #pragma once
 
 #include <spdk/thread.h>
+#include <functional>
 #include <memory>
 #include <map>
 #include <optional>
@@ -24,9 +25,27 @@ public:
     data_statistics();
 
     void stop(std::optional<std::function<void()>>&& cb) {
-        spdk_poller_unregister(&_timer);
+        // Poller must be unregistered on the thread that registered it.
+        if (_thread != nullptr && spdk_get_thread() != _thread) {
+            struct stop_ctx {
+                data_statistics* self;
+                std::optional<std::function<void()>> cb;
+            };
+            auto* ctx = new stop_ctx{this, std::move(cb)};
+            spdk_thread_send_msg(_thread, [](void* arg) {
+                auto* c = static_cast<stop_ctx*>(arg);
+                c->self->stop(std::move(c->cb));
+                delete c;
+            }, ctx);
+            return;
+        }
+        if (_timer != nullptr) {
+            spdk_poller_unregister(&_timer);
+        }
         _ios.clear();
-        (cb.value())();
+        if (cb.has_value() && cb.value()) {
+            (cb.value())();
+        }
     }
 
     void set_mon_client(std::shared_ptr<monitor_client> mon_client){
