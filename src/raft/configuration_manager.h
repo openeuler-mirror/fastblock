@@ -123,9 +123,12 @@ class node_configuration_manager{
 public:
     node_configuration_manager(raft_server_t* raft);
 
-    void add_node_configuration(node_configuration&& node_config){
+    void add_node_configuration(node_configuration&& node_config,
+                                bool persist = true){
         _configurations.emplace_back(std::move(node_config));
-        save_node_configuration();
+        if (persist) {
+            save_node_configuration();
+        }
     }
 
     node_configuration& get_last_node_configuration(){
