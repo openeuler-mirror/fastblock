@@ -108,6 +108,8 @@ public:
   // In-memory: pending[index] -> head + version log. Missing index is 0.
   void publish_commit(uint64_t raft_index, op_complete cb, void* arg);
   // Drop pending >= from_index. Isolated unpublished creates lose their name.
+  // Safe while busy_ (in-flight uncommitted flush): bumps drop epoch so
+  // write_after_flush will not re-insert a truncated index.
   void drop_pending_from(uint64_t from_index);
 
   /**
@@ -360,6 +362,10 @@ private:
                              uint64_t image_seq);
   void apply_pending_op(const pending_op& op);
   void erase_isolated_create(const pending_op& op);
+  void note_inflight_uncommitted(uint64_t index, uint64_t object_id,
+                                 const std::string& name);
+  void clear_inflight_uncommitted();
+  bool pending_was_dropped(uint64_t index, uint64_t drop_epoch) const;
 
   void pin_snapshot_index(std::map<uint64_t, uint32_t>* pins,
                           uint32_t* total, uint64_t index);
@@ -422,6 +428,11 @@ private:
   std::unordered_map<std::string, uint64_t> name_to_id_;
   std::unordered_map<uint64_t, object_state> objects_;
   std::map<uint64_t, pending_op> pending_;
+  uint64_t pending_drop_epoch_{0};
+  uint64_t pending_drop_from_{0};
+  uint64_t inflight_uncommitted_index_{0};
+  uint64_t inflight_uncommitted_oid_{0};
+  std::string inflight_uncommitted_name_;
 
   // raft_apply_index -> pin count
   std::map<uint64_t, uint32_t> snapshot_pins_;
