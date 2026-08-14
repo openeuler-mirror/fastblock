@@ -147,6 +147,7 @@ struct pg_store::rewrite_req {
   void* stage{nullptr};   // block-aligned read buffer
   uint64_t stage_pad{0};  // bytes before payload in stage
   void* data_buf{nullptr}; // exact payload copy for encode
+  uint64_t record_start{0};
   uint64_t data_phys{0};
   uint16_t header_len{kRecordHeaderLenV1};
 };
@@ -392,6 +393,14 @@ extent_map pg_store::view_at(const object_state& obj,
   if (raft_read_index == 0 && image_read_seq == 0) {
     return obj.head; // copy head map
   }
+  // After checkpoint recover, versions are not serialized. A raft snapshot
+  // of last_applied is the live head (design §4.8 / P6 PR7).
+  if (obj.versions.empty() && image_read_seq == 0) {
+    if (obj.deleted) {
+      return extent_map{};
+    }
+    return obj.head;
+  }
   extent_map m;
   bool deleted = false;
   for (const auto& op : obj.versions) {
@@ -417,6 +426,15 @@ extent_map pg_store::view_at(const object_state& obj,
     m.clear();
   }
   return m;
+}
+
+bool pg_store::has_version_log() const {
+  for (const auto& kv : objects_) {
+    if (!kv.second.versions.empty()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 void pg_store::for_each_live_extent(
@@ -1672,7 +1690,7 @@ void pg_store::rewrite_after_read(void* arg, int err) {
   req->stage = nullptr;
 
   const uint64_t need =
-      self->seg_.align_up(kRecordHeaderLenV1 + rec.payload.size());
+      self->seg_.align_up(encode_header_len() + rec.payload.size());
   self->ensure_scratch(need);
   if (self->scratch_ptr_ == nullptr) {
     auto cb = std::move(req->cb);
@@ -1697,6 +1715,7 @@ void pg_store::rewrite_after_append(void* arg, uint64_t phys, int err) {
   }
   req->header_len =
       header_len_from_encoded(self->scratch_ptr_, self->scratch_cap_);
+  req->record_start = phys;
   req->data_phys = payload_phys(phys, req->header_len);
   self->seg_.flush(rewrite_after_flush, req);
 }
@@ -1707,6 +1726,14 @@ void pg_store::rewrite_after_flush(void* arg, int err) {
   if (err == 0) {
     self->apply_rewrite_phys(req->object_id, req->offset, req->len,
                              req->data_phys);
+    self->last_rewrite_raft_index_ = req->raft_apply_index;
+    self->last_rewrite_record_start_ = req->record_start;
+    const uint32_t bs = self->backend_ != nullptr ? self->backend_->block_size()
+                                                  : 4096;
+    const uint64_t n =
+        static_cast<uint64_t>(req->header_len) + req->len;
+    self->last_rewrite_aligned_len_ =
+        bs == 0 ? n : ((n + bs - 1) / bs) * bs;
   }
   self->free_buf(req->stage);
   self->free_buf(req->data_buf);
