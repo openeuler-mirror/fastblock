@@ -503,6 +503,30 @@ bool log_store::contains(uint64_t index) const {
   return index_map_.find(index) != index_map_.end();
 }
 
+record_type log_store::rec_type_at(uint64_t index) const {
+  auto it = index_map_.find(index);
+  if (it == index_map_.end()) {
+    return record_type::raft_log_entry;
+  }
+  return it->second.rec_type;
+}
+
+void log_store::for_each_index(
+    const std::function<void(const index_meta&)>& fn) const {
+  if (!fn) {
+    return;
+  }
+  for (const auto& kv : index_map_) {
+    index_meta m;
+    m.index = kv.first;
+    m.term = kv.second.term;
+    m.phys = kv.second.phys_offset;
+    m.length = kv.second.length;
+    m.rec_type = kv.second.rec_type;
+    fn(m);
+  }
+}
+
 void log_store::install_snapshot_base(uint64_t index, uint64_t term,
                                       op_complete cb, void* arg) {
   if (!cb) {
