@@ -38,7 +38,7 @@ void push_err(dump_report* r, uint64_t off, std::string msg) {
 bool is_collectable(record_type t) {
   return t == record_type::data || t == record_type::gc_rewrite ||
          t == record_type::delete_tombstone ||
-         t == record_type::range_tombstone;
+         t == record_type::range_tombstone || t == record_type::object_name;
 }
 
 } // namespace
@@ -224,6 +224,7 @@ dump_report scan_image(const uint8_t* image, size_t len, uint32_t align,
       live.type = rec.type;
       live.pool_id = rec.pool_id;
       live.pg_id = rec.pg_id;
+      live.store_epoch = rec.store_epoch;
       live.object_id = rec.object_id;
       live.object_offset = rec.object_offset;
       live.raft_apply_index = rec.raft_apply_index;
