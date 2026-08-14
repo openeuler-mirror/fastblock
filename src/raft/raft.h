@@ -567,7 +567,7 @@ public:
     int  save_vote_for(const raft_node_id_t nodeid){
         std::string key = std::to_string(_pool_id) + "." + std::to_string(_pg_id) + ".vote_for";
         std::string val = std::to_string(nodeid);
-        _kv->put(key, val);
+        _kv->put_durable(key, val, [](void*, int) {}, nullptr);
         return 0;
     }
 
@@ -583,7 +583,7 @@ public:
     int save_current_term(const raft_term_t term){
         std::string key = std::to_string(_pool_id) + "." + std::to_string(_pg_id) + ".term";
         std::string val = std::to_string(term);
-        _kv->put(key, val);
+        _kv->put_durable(key, val, [](void*, int) {}, nullptr);
         return 0;
     }
 
@@ -598,7 +598,7 @@ public:
 
     int save_node_configuration(std::string& value){
         std::string key = std::to_string(_pool_id) + "." + std::to_string(_pg_id) + ".node_cfg";
-        _kv->put(key, value);
+        _kv->put_durable(key, value, [](void*, int) {}, nullptr);
         return 0;
     }
 
@@ -606,6 +606,19 @@ public:
         std::string key = std::to_string(_pool_id) + "." + std::to_string(_pg_id) + ".lapply_idx";
         _kv->put(key, std::to_string(last_applied_idx));
         return 0;
+    }
+
+    void save_last_apply_index_durable(raft_index_t last_applied_idx,
+                                       kvstore_rw_complete cb, void* arg){
+        std::string key = std::to_string(_pool_id) + "." + std::to_string(_pg_id) + ".lapply_idx";
+        if (_kv == nullptr) {
+            if (cb) {
+                cb(arg, 0);
+            }
+            return;
+        }
+        _kv->put_durable(key, std::to_string(last_applied_idx), std::move(cb),
+                         arg);
     }
 
     std::optional<raft_index_t> load_last_apply_index(){
@@ -660,6 +673,9 @@ public:
 
     void init(std::vector<utils::osd_info_t>&& node_list, raft_node_id_t current_node,
       int raft_heartbeat_period_time_msec, int  raft_lease_time_msec, int  raft_election_timeout_msec, uint32_t shard_id);
+
+    void install_membership(const std::vector<utils::osd_info_t>& node_list,
+                            uint32_t shard_id);
 
     //添加单个成员
     void add_raft_membership(const raft_node_info& node, utils::context* complete);
@@ -988,7 +1004,13 @@ typedef enum {
     RAFT_LOGTYPE_ADD_NONVOTING_NODE,
 
     RAFT_LOGTYPE_CONFIGURATION,
+
+    /** Durable log base after install-snapshot; STM does not apply. */
+    RAFT_LOGTYPE_SNAPSHOT_BASE,
 } raft_logtype_e;
+
+static_assert(RAFT_LOGTYPE_SNAPSHOT_BASE == 4,
+              "must match aos::kRaftLogTypeSnapshotBase");
 
 /** Initialise a new Raft server.
  *
