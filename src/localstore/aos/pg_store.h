@@ -157,6 +157,14 @@ public:
   void rewrite_extent(const std::string& object_name, uint64_t logical_offset,
                       uint64_t len, op_complete cb, void* arg);
 
+  /** Last successful rewrite (GC). record_start is the new record, not payload. */
+  uint64_t last_rewrite_raft_index() const { return last_rewrite_raft_index_; }
+  uint64_t last_rewrite_record_start() const {
+    return last_rewrite_record_start_;
+  }
+  uint64_t last_rewrite_aligned_len() const { return last_rewrite_aligned_len_; }
+  bool has_version_log() const;
+
   /**
    * O(1) raft snapshot pin (design M3): append pin record + flush, pin index.
    * Does not scan objects. pin_count(index) increments (idempotent re-pin OK).
@@ -465,6 +473,10 @@ private:
   bool install_activated_{false};
   uint64_t install_snapshot_index_{0};
   uint64_t install_snapshot_term_{0};
+
+  uint64_t last_rewrite_raft_index_{0};
+  uint64_t last_rewrite_record_start_{0};
+  uint64_t last_rewrite_aligned_len_{0};
 
   void* scratch_ptr_{nullptr};
   uint64_t scratch_cap_{0};
