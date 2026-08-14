@@ -669,3 +669,11 @@ void osd_service::process(
     auto *complete = new membership_complete<osd::change_nodes_response>(response, done, std::move(new_nodes));
     raft->change_raft_membership(std::move(nodes), complete);
 }
+
+void osd_service::process(
+        std::shared_ptr<osd_stm> osd_stm_p,
+        const osd::image_snap_request* request,
+        osd::image_snap_reply* response,
+        google::protobuf::Closure* done) {
+    osd_stm_p->image_snap_and_wait(request, response, done);
+}
