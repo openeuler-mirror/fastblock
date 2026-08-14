@@ -114,6 +114,13 @@ public:
     int load_partition(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id,
                        pm_complete&& func, void* arg);
     int active_partition(uint64_t pool_id, uint64_t pg_id, pm_complete&& cb_fn, void *arg);
+    /**
+     * After restart, replace raft membership from monitor PG osd list and
+     * persist node_cfg. No-op if osds is empty or PG is missing.
+     */
+    int repair_pg_membership(uint64_t pool_id, uint64_t pg_id,
+                             std::vector<utils::osd_info_t> osds,
+                             pm_complete&& cb_fn, void* arg);
 
     bool get_pg_shard(uint64_t pool_id, uint64_t pg_id, uint32_t &shard_id);
 
