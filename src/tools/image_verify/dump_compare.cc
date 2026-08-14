@@ -18,12 +18,15 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <fstream>
+#include <fcntl.h>
 #include <iostream>
 #include <map>
 #include <optional>
 #include <string>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <tuple>
+#include <unistd.h>
 #include <vector>
 
 namespace image_verify {
@@ -31,12 +34,36 @@ namespace {
 
 struct extent_key {
   uint64_t pool_id{0};
+  uint64_t pg_id{0};
+  std::string name;  // preferred after snapshot ingest (new object_ids)
   uint64_t object_id{0};
   uint64_t object_offset{0};
 
   bool operator<(const extent_key& o) const {
-    return std::tie(pool_id, object_id, object_offset) <
-           std::tie(o.pool_id, o.object_id, o.object_offset);
+    if (pool_id != o.pool_id) {
+      return pool_id < o.pool_id;
+    }
+    if (pg_id != o.pg_id) {
+      return pg_id < o.pg_id;
+    }
+    if (name != o.name) {
+      return name < o.name;
+    }
+    if (name.empty() && object_id != o.object_id) {
+      return object_id < o.object_id;
+    }
+    return object_offset < o.object_offset;
+  }
+};
+
+struct oid_key {
+  uint64_t pool_id{0};
+  uint64_t pg_id{0};
+  uint64_t store_epoch{0};
+  uint64_t object_id{0};
+  bool operator<(const oid_key& o) const {
+    return std::tie(pool_id, pg_id, store_epoch, object_id) <
+           std::tie(o.pool_id, o.pg_id, o.store_epoch, o.object_id);
   }
 };
 
@@ -55,6 +82,8 @@ struct file_view {
   uint64_t record_count{0};
   uint64_t data_count{0};
   uint64_t patterned_count{0};
+  uint64_t name_map{0};
+  uint64_t serving_max{0};
   std::map<extent_key, extent_val> live;
   std::string error;
 };
@@ -99,25 +128,36 @@ file_view load_one(const char* path, uint32_t align,
   file_view v;
   v.path = path;
 
-  std::ifstream in(path, std::ios::binary | std::ios::ate);
-  if (!in) {
+  const int fd = ::open(path, O_RDONLY);
+  if (fd < 0) {
     v.error = "failed to open";
     return v;
   }
-  const std::streamoff sz = in.tellg();
-  if (sz < 0) {
+  struct stat st {};
+  if (::fstat(fd, &st) != 0 || st.st_size < 0) {
+    ::close(fd);
     v.error = "failed to size";
     return v;
   }
-  in.seekg(0, std::ios::beg);
-  std::vector<uint8_t> image(static_cast<size_t>(sz));
-  if (sz > 0 && !in.read(reinterpret_cast<char*>(image.data()), sz)) {
-    v.error = "failed to read";
-    return v;
+  const size_t sz = static_cast<size_t>(st.st_size);
+  const uint8_t* image = nullptr;
+  if (sz > 0) {
+    void* map = ::mmap(nullptr, sz, PROT_READ, MAP_PRIVATE, fd, 0);
+    ::close(fd);
+    if (map == MAP_FAILED) {
+      v.error = "failed to mmap";
+      return v;
+    }
+    image = static_cast<const uint8_t*>(map);
+  } else {
+    ::close(fd);
   }
 
-  const auto report = fastblock::aos::scan_image(image.data(), image.size(),
-                                                 align, /*collect_live=*/true);
+  const auto report = fastblock::aos::scan_image(image, sz, align,
+                                                 /*collect_live=*/true);
+  if (image != nullptr) {
+    ::munmap(const_cast<uint8_t*>(image), sz);
+  }
   v.scan_ok = report.ok();
   v.record_count = report.record_count;
   if (!report.ok()) {
@@ -127,12 +167,71 @@ file_view load_one(const char* path, uint32_t align,
     }
   }
 
+  // Serving epoch only: snapshot ingest activates a new store_epoch; old
+  // epoch records keep their local object_ids and would collide if mixed.
+  std::map<std::pair<uint64_t, uint64_t>, uint64_t> serving_epoch;
   for (const auto& rec : report.live_records) {
+    auto key = std::make_pair(rec.pool_id, rec.pg_id);
+    if (rec.store_epoch > serving_epoch[key]) {
+      serving_epoch[key] = rec.store_epoch;
+    }
+  }
+
+  auto is_serving = [&](const fastblock::aos::dump_report::live_record& rec) {
+    auto it = serving_epoch.find({rec.pool_id, rec.pg_id});
+    return it != serving_epoch.end() && rec.store_epoch == it->second;
+  };
+
+  // Snapshot ingest restages objects with new ids. Compare by name.
+  std::map<oid_key, std::string> id_to_name;
+  for (const auto& rec : report.live_records) {
+    if (rec.type != fastblock::aos::record_type::object_name ||
+        rec.payload.empty() || !is_serving(rec)) {
+      continue;
+    }
+    id_to_name[oid_key{rec.pool_id, rec.pg_id, rec.store_epoch,
+                       rec.object_id}] = rec.payload;
+  }
+  v.name_map = id_to_name.size();
+  for (const auto& kv : serving_epoch) {
+    if (kv.second > v.serving_max) {
+      v.serving_max = kv.second;
+    }
+  }
+
+  auto make_key = [&](uint64_t pool, uint64_t pg, uint64_t epoch, uint64_t oid,
+                      uint64_t obj_off) {
+    extent_key k;
+    k.pool_id = pool;
+    k.pg_id = pg;
+    k.object_offset = obj_off;
+    auto nit = id_to_name.find(oid_key{pool, pg, epoch, oid});
+    if (nit != id_to_name.end()) {
+      k.name = nit->second;
+    } else {
+      k.object_id = oid;
+    }
+    return k;
+  };
+
+  for (const auto& rec : report.live_records) {
+    if (!is_serving(rec)) {
+      continue;
+    }
     if (is_delete_type(rec.type)) {
+      std::string del_name;
+      auto nit = id_to_name.find(
+          oid_key{rec.pool_id, rec.pg_id, rec.store_epoch, rec.object_id});
+      if (nit != id_to_name.end()) {
+        del_name = nit->second;
+      }
       for (auto it = v.live.begin(); it != v.live.end();) {
-        if (it->first.pool_id == rec.pool_id &&
-            it->first.object_id == rec.object_id &&
-            rec.raft_apply_index >= it->second.raft_apply_index) {
+        const bool same_obj =
+            it->first.pool_id == rec.pool_id && it->first.pg_id == rec.pg_id &&
+            ((!del_name.empty() && it->first.name == del_name) ||
+             (del_name.empty() && it->first.name.empty() &&
+              it->first.object_id == rec.object_id));
+        if (same_obj && rec.raft_apply_index >= it->second.raft_apply_index) {
           it = v.live.erase(it);
         } else {
           ++it;
@@ -144,14 +243,13 @@ file_view load_one(const char* path, uint32_t align,
       continue;
     }
     ++v.data_count;
-    extent_key key{rec.pool_id, rec.object_id, rec.object_offset};
-    auto it = v.live.find(key);
-    if (it != v.live.end() && rec.raft_apply_index < it->second.raft_apply_index) {
-      continue;
-    }
     auto consider = [&](uint64_t obj_off, const char* data, size_t len,
                         uint32_t crc) {
-      extent_key k{rec.pool_id, rec.object_id, obj_off};
+      extent_key k = make_key(rec.pool_id, rec.pg_id, rec.store_epoch,
+                              rec.object_id, obj_off);
+      if (k.name.empty()) {
+        return;
+      }
       auto it = v.live.find(k);
       if (it != v.live.end() &&
           rec.raft_apply_index < it->second.raft_apply_index) {
@@ -168,18 +266,34 @@ file_view load_one(const char* path, uint32_t align,
         val.image_offset = decoded.offset;
         val.seed = decoded.seed;
         ++v.patterned_count;
-        // Snapshot restage allocates new object_ids; compare by image offset.
+        // Snapshot restage: compare VERIFYA1 blocks by image offset.
+        k.name.clear();
         k.object_id = 0;
         k.object_offset = decoded.offset;
       }
       v.live[k] = val;
     };
 
-    consider(rec.object_offset, rec.payload.data(), rec.payload.size(),
-             rec.payload_crc);
-    // Snapshot / full-object writes store many 4KiB VERIFYA1 blocks in one
-    // record. Walk 4KiB windows so replica compare still sees them.
+    // Snapshot install writes a 4MiB object unit; user writes are often 4KiB.
+    // Trailing zero 4KiB blocks are padding, not a replica difference.
+    size_t eff = rec.payload.size();
     constexpr size_t kBlk = 4096;
+    while (eff > kBlk) {
+      const char* tail = rec.payload.data() + (eff - kBlk);
+      bool z = true;
+      for (size_t i = 0; i < kBlk; ++i) {
+        if (tail[i] != 0) {
+          z = false;
+          break;
+        }
+      }
+      if (!z) {
+        break;
+      }
+      eff -= kBlk;
+    }
+    consider(rec.object_offset, rec.payload.data(), eff,
+             pattern_crc32(rec.payload.data(), eff));
     if (rec.payload.size() > kBlk) {
       for (size_t off = 0; off + kBlk <= rec.payload.size(); off += kBlk) {
         const auto* p = rec.payload.data() + off;
@@ -208,8 +322,9 @@ void usage() {
                "Usage: image_verify --mode dump-compare [--align N] [--seed N] "
                "<aos-file>...\n"
                "  Scan one or more AOS device images and compare last-writer-wins\n"
-               "  object extents. With --seed, only VERIFYA1 payloads of that seed\n"
-               "  are compared (ignores leftover 0x55 / older images).\n");
+               "  object extents (by object name, not local object_id — snapshot\n"
+               "  ingest restages new ids). With --seed, only VERIFYA1 payloads of\n"
+               "  that seed are compared (ignores leftover 0x55 / older images).\n");
 }
 
 } // namespace
@@ -280,10 +395,17 @@ int run_dump_compare(int argc, char** argv) {
 
   for (const char* path : files) {
     auto v = load_one(path, align, seed);
+    uint64_t named = 0;
+    for (const auto& kv : v.live) {
+      if (!kv.first.name.empty()) {
+        ++named;
+      }
+    }
     std::cout << "  " << v.path << ": records=" << v.record_count
               << " data=" << v.data_count
               << " patterned=" << v.patterned_count
-              << " live=" << v.live.size()
+              << " live=" << v.live.size() << " named=" << named
+              << " namemap=" << v.name_map << " max_epoch=" << v.serving_max
               << (v.scan_ok ? " scan=ok" : " scan=FAIL");
     if (!v.error.empty()) {
       std::cout << " (" << v.error << ")";
@@ -331,8 +453,13 @@ int run_dump_compare(int argc, char** argv) {
         ++missing;
         if (missing + mismatch <= kMaxPrint) {
           std::cout << "  MISSING replica[" << i << "] " << views[i].path
-                    << " obj=0x" << std::hex << kv.first.object_id << std::dec
-                    << " obj_off=" << kv.first.object_offset;
+                    << " pg=" << kv.first.pool_id << "." << kv.first.pg_id;
+          if (!kv.first.name.empty()) {
+            std::cout << " name=" << kv.first.name;
+          } else {
+            std::cout << " obj=0x" << std::hex << kv.first.object_id << std::dec;
+          }
+          std::cout << " obj_off=" << kv.first.object_offset;
           if (kv.second.patterned) {
             std::cout << " image_off=" << kv.second.image_offset;
           }
@@ -345,8 +472,13 @@ int run_dump_compare(int argc, char** argv) {
         ++mismatch;
         if (missing + mismatch <= kMaxPrint) {
           std::cout << "  MISMATCH replica[" << i << "] " << views[i].path
-                    << " obj=0x" << std::hex << kv.first.object_id << std::dec
-                    << " obj_off=" << kv.first.object_offset
+                    << " pg=" << kv.first.pool_id << "." << kv.first.pg_id;
+          if (!kv.first.name.empty()) {
+            std::cout << " name=" << kv.first.name;
+          } else {
+            std::cout << " obj=0x" << std::hex << kv.first.object_id << std::dec;
+          }
+          std::cout << " obj_off=" << kv.first.object_offset
                     << " crc=" << std::hex << it->second.payload_crc
                     << " vs " << kv.second.payload_crc << std::dec << "\n";
         }
