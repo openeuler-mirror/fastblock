@@ -377,7 +377,7 @@ void partition_manager::create_pg(
       }
       const uint64_t epoch = store->serving_epoch(pool_id, pg_id);
       auto* lg = store->get_or_create_log(pool_id, pg_id, epoch);
-      make_aos_disk_log(lg, make_log_done, ctx);
+      make_aos_disk_log(lg, store, make_log_done, ctx);
     };
     if (store->bind_existing_pg(pool_id, pg_id) != nullptr) {
       make_log(0);
@@ -564,7 +564,7 @@ void partition_manager::load_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg
         epoch = store->latest_epoch(pool_id, pg_id);
     }
     auto* lg = store->get_or_create_log(pool_id, pg_id, epoch);
-    auto* dlog = new disk_log(lg);
+    auto* dlog = new disk_log(lg, store);
     dlog->start();
     auto sm = std::make_shared<osd_stm>();
 
