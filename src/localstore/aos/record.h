@@ -64,7 +64,7 @@ inline uint64_t payload_phys(uint64_t record_start, uint16_t header_len) {
   return record_start + (header_len != 0 ? header_len : kRecordHeaderLenV1);
 }
 
-// Default encode header size: v3/86B only when the process flag is on.
+// Default encode header size: v3/86B when log=STM is on (process default).
 inline uint16_t encode_header_len() {
   return unified_log_enabled() ? kRecordHeaderLenV3 : kRecordHeaderLenV1;
 }
