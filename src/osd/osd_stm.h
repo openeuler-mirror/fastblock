@@ -22,6 +22,7 @@
 
 namespace fastblock::aos {
 class osd_store;
+class snapshot_ingest;
 }
 
 
@@ -229,17 +230,23 @@ using object_complete = std::function<void (void *arg, int objerrno)>;
 class osd_stm : public state_machine {
 public:
     osd_stm();
+    ~osd_stm() override;
 
     void apply(std::shared_ptr<raft_entry_t> entry, utils::context *complete) override;
 
     void write_obj(const std::string& obj_name, uint64_t offset, const std::string& data,
-                   uint64_t raft_write_index, utils::context *complete);
+                   uint64_t raft_write_index, uint64_t image_snap_seq,
+                   utils::context *complete);
     void delete_obj(const std::string& obj_name, uint64_t raft_write_index,
-                    utils::context *complete);
+                    uint64_t image_snap_seq, utils::context *complete);
 
     void write_and_wait(const osd::write_request* request, osd::write_reply* response, google::protobuf::Closure* done);
     void read_and_wait(const osd::read_request* request, osd::read_reply* response, google::protobuf::Closure* done);
     void delete_and_wait(const osd::delete_request* request, osd::delete_reply* response, google::protobuf::Closure* done);
+
+    void image_snap_and_wait(const osd::image_snap_request* request,
+                             osd::image_snap_reply* response,
+                             google::protobuf::Closure* done);
 
     /**
      * Attach AppendOnlyStore for this PG. Required for all object I/O (knife-1:
@@ -286,6 +293,9 @@ public:
     void write_install_object(const std::string& obj_name, char* buf,
                               std::size_t size, uint64_t snapshot_index,
                               object_rw_complete cb_fn, void* arg) override;
+    void begin_install_snapshot(uint64_t snapshot_index, uint64_t snapshot_term,
+                                object_rw_complete cb_fn, void* arg) override;
+    void finish_install_snapshot(object_rw_complete cb_fn, void* arg) override;
 
     auto unlock(const std::string& key, const utils::operation_type type){
         return _object_rw_lock.unlock(key, type);
@@ -296,12 +306,16 @@ public:
     void destroy_objects(object_complete cb_fn, void *arg);
 
 private:
+    /** After snapshot activate: point raft disk_log at serving-epoch log. */
+    void bind_raft_log_to_serving();
+
     lock_manager<op_type_excl_lock<utils::operation_type>>   _object_rw_lock;
     uint32_t  _sockid;
     fastblock::aos::osd_store* _aos{nullptr};
     uint64_t _pool_id{0};
     uint64_t _pg_id{0};
     uint64_t _image_snap_seq{0};
+    std::unique_ptr<fastblock::aos::snapshot_ingest> _ingest;
     // AOS recovery pin bookkeeping (was on state_machine for blob path).
     bool _recovery_pinned{false};
     uint64_t _recovery_snap_index{0};
