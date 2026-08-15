@@ -62,6 +62,10 @@ aioFileSize="${FASTBLOCK_VSTART_AIO_FILE_SIZE:-100G}"
 aioPreallocate="${FASTBLOCK_VSTART_AIO_PREALLOCATE:-0}"
 # Extra SPDK args for each OSD (mkfs + start). Regression uses --no-huge.
 spdkExtraArgs="${FASTBLOCK_VSTART_SPDK_ARGS:-}"
+# RPC timeout in microseconds. Default 1s matches client/server code and
+# src/msg/README.md. 600s is long-regression / snapshot-wait only:
+#   FASTBLOCK_RPC_TIMEOUT_US=600000000 ./vstart.sh ...
+rpcTimeoutUs="${FASTBLOCK_RPC_TIMEOUT_US:-1000000}"
 
 usage() {
     echo "Usage: $0 [options]"
@@ -76,6 +80,9 @@ usage() {
     echo "  -t, --bdevtype: type of bdev, can be nvme or aio, default to aio"
     echo "  -m, --mode: deployment mode, can be dev or pro, default to dev"
     echo "  -C, --cores: cores for the osd, determined when mkfs, the osd will always use $cores cores"
+    echo "Env:"
+    echo "  FASTBLOCK_RPC_TIMEOUT_US: msg_*_rpc_timeout_us (default 1000000 = 1s;"
+    echo "    long regression / snapshot-wait: 600000000)"
 
     exit 1
 }
@@ -340,8 +347,8 @@ function generateLocalBenchConfig() {
   "msg_client_data_memory_pool_element_size": 5120,
   "msg_client_per_post_recv_num": 64,
   "msg_server_per_post_recv_num": 64,
-  "msg_client_rpc_timeout_us": 600000000,
-  "msg_server_rpc_timeout_us": 600000000,
+  "msg_client_rpc_timeout_us": ${rpcTimeoutUs},
+  "msg_server_rpc_timeout_us": ${rpcTimeoutUs},
   "osd_no_huge": true,
   "osd_mem_size_mb": 1024,
   "osd_iobuf_small_pool_count": 1024,
@@ -384,8 +391,8 @@ function generateConfigAndStartMonitor() {
            "msg_client_data_memory_pool_element_size": 5120,
            "msg_client_per_post_recv_num": 64,
            "msg_server_per_post_recv_num": 64,
-           "msg_client_rpc_timeout_us": 600000000,
-           "msg_server_rpc_timeout_us": 600000000
+           "msg_client_rpc_timeout_us": '"$rpcTimeoutUs"',
+           "msg_server_rpc_timeout_us": '"$rpcTimeoutUs"'
     }' | jq '.' > $tmpConfFile
 
     rm -rf "$dataDir"/mon_"$_mons"
