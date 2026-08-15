@@ -24,9 +24,22 @@ void object_recovery::recovery_create(uint64_t snap_index, uint64_t snap_term,
     }
     return;
   }
-  _obj_names = _stm->list_live_objects();
   idx = 0;
-  _stm->pin_recovery_view(snap_index, snap_term, std::move(cb_fn), arg);
+  _obj_names.clear();
+  // Pin first so GC cannot drop extents while we walk the snap view.
+  // List in the pin callback: view_at is in-memory, but pin is the GC fence.
+  _stm->pin_recovery_view(
+      snap_index, snap_term,
+      [this, snap_index, cb_fn = std::move(cb_fn)](void* a, int err) {
+        if (err == 0 && _stm != nullptr) {
+          _obj_names = _stm->list_live_objects_at(snap_index);
+          idx = 0;
+        }
+        if (cb_fn) {
+          cb_fn(a, err);
+        }
+      },
+      arg);
 }
 
 void object_recovery::recovery_read_iter_first(recovery_op_complete cb_fn,
