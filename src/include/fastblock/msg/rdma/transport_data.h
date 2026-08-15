@@ -11,6 +11,7 @@
 #pragma once
 
 #include "fastblock/msg/rdma/memory_pool.h"
+#include "fastblock/msg/rdma/pool_quota.h"
 #include "fastblock/msg/rdma/types.h"
 
 #include <google/protobuf/message.h>
@@ -76,7 +77,8 @@ public:
       const correlation_index_type correlation_index,
       const size_t serialized_size,
       std::shared_ptr<memory_pool<::ibv_send_wr>> meta_pool,
-      std::shared_ptr<memory_pool<::ibv_send_wr>> data_pool)
+      std::shared_ptr<memory_pool<::ibv_send_wr>> data_pool,
+      const alloc_class cls = alloc_class::reserved)
       : _correlation_index{correlation_index}
       , _meta_pool{meta_pool}
       , _data_pool{data_pool}
@@ -84,7 +86,8 @@ public:
       , _serialized_size{serialized_size}
       , _data_chunk_size{_data_pool->element_size()}
       , _metas(0)
-      , _datas(0) {
+      , _datas(0)
+      , _alloc_class{cls} {
         init();
     }
 
@@ -635,15 +638,42 @@ private:
           _correlation_index, 0);
     }
 
+    alloc_class effective_class() const noexcept {
+        if (_alloc_class == alloc_class::priority) {
+            return alloc_class::priority;
+        }
+        return _is_inlined ? alloc_class::reserved : alloc_class::bulk;
+    }
+
+    bool take_chunks(
+      std::shared_ptr<memory_pool<::ibv_send_wr>> pool,
+      const size_t n,
+      const alloc_class cls,
+      std::vector<memory_pool<::ibv_send_wr>::net_context*>& out) {
+        out.assign(n, nullptr);
+        if (n == 0) {
+            return true;
+        }
+        if (not pool) {
+            return false;
+        }
+        auto got = pool->try_get(n, cls);
+        if (not got) {
+            return false;
+        }
+        for (size_t i{0}; i < n; ++i) {
+            out[i] = got[i];
+        }
+        return true;
+    }
+
     bool alloc_reply_data() {
         release_allocated();
-        _datas.resize(_data_count, nullptr);
-        for (size_t i{0}; i < _data_count; ++i) {
-            _datas[i] = _data_pool->get();
-            if (_datas[i] == nullptr) {
-                release_allocated();
-                return false;
-            }
+        const auto cls =
+          _data_count <= 1 ? alloc_class::reserved : alloc_class::bulk;
+        if (not take_chunks(_data_pool, _data_count, cls, _datas)) {
+            release_allocated();
+            return false;
         }
         set_rdma_read_tag();
         fill_rdma_read_tag(&_un_complete_tag);
@@ -654,10 +684,9 @@ private:
 
     bool alloc_request_data() {
         release_allocated();
+        const auto cls = effective_class();
         if (_is_inlined) {
-            _metas.resize(1, nullptr);
-            _metas[0] = _meta_pool->get();
-            if (_metas[0] == nullptr) {
+            if (not take_chunks(_meta_pool, 1, cls, _metas)) {
                 release_allocated();
                 return false;
             }
@@ -666,23 +695,13 @@ private:
             return true;
         }
 
-        _metas.resize(_meta_count, nullptr);
-        _datas.resize(_data_count, nullptr);
-
-        for (size_t i{0}; i < _meta_count; ++i) {
-            _metas[i] = _meta_pool->get();
-            if (_metas[i] == nullptr) {
-                release_allocated();
-                return false;
-            }
+        if (not take_chunks(_meta_pool, _meta_count, cls, _metas)) {
+            release_allocated();
+            return false;
         }
-
-        for (size_t i{0}; i < _data_count; ++i) {
-            _datas[i] = _data_pool->get();
-            if (_datas[i] == nullptr) {
-                release_allocated();
-                return false;
-            }
+        if (not take_chunks(_data_pool, _data_count, cls, _datas)) {
+            release_allocated();
+            return false;
         }
 
         set_rdma_read_tag();
@@ -836,6 +855,7 @@ private:
     bool _is_metadata_complete{false};
     bool _prepared{false};
     bool _too_large{false};
+    alloc_class _alloc_class{alloc_class::reserved};
     uint64_t _seen_serials{0};
     uint32_t _expected_serials{0};
 
