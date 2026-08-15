@@ -45,6 +45,15 @@ target_link_libraries(disk_log_trim_test
 )
 add_test(NAME disk_log_trim_test COMMAND disk_log_trim_test)
 
+add_executable(rdma_memory_pool_test
+  rdma_memory_pool_test.cc
+)
+target_include_directories(rdma_memory_pool_test
+  PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/include)
+add_test(NAME rdma_memory_pool_test COMMAND rdma_memory_pool_test)
+
 add_executable(fail_soft_test
   fail_soft_test.cc
 )
