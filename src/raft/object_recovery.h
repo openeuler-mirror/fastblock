@@ -30,7 +30,8 @@ public:
   explicit object_recovery(state_machine* stm) : _stm(stm) {}
 
   /**
-   * List live objects and pin recovery view at (snap_index, snap_term).
+   * Pin recovery view at (snap_index, snap_term), then list names visible
+   * at that index (skips unpublished empty-head creates).
    */
   void recovery_create(uint64_t snap_index, uint64_t snap_term,
                        recovery_op_complete cb_fn, void* arg);
