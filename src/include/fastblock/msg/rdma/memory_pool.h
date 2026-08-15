@@ -127,6 +127,9 @@ public:
     }
 
     void put(net_context* ctx) noexcept {
+        if (ctx == nullptr) {
+            return;
+        }
         _net_context_list.push_back(ctx);
     }
 
@@ -151,6 +154,10 @@ public:
 
     size_t size() noexcept {
         return _net_context_list.size();
+    }
+
+    [[gnu::always_inline]] size_t capacity() const noexcept {
+        return _capacity;
     }
 
     [[gnu::always_inline]] size_t element_size() noexcept {
