@@ -51,9 +51,13 @@
 - *metadata_memory_pool_element_size_byte*  
     指定元信息内存池中内存块的大小，该内存块用于 *RDMA Send* 发送消息  
 - *data_memory_pool_capacity*  
-    指定 *RPC* 层用于传递 *RPC* 请求数据的内存池大小  
+    指定 *RPC* 层用于传递 *RPC* 请求数据的内存池大小。这是该运输实例的**上限**，不是「调到这个数就不会失败」。池空或低于水位时这次 RPC `resource_exhausted`，心跳走 priority 额度。  
 - *data_memory_pool_element_size_byte*  
     指定数据内存池中内存块的大小，该内存块用于 *RDMA Read* 发送消息  
+- *pool_low_watermark* / *pool_high_watermark*  
+    空闲 chunk 低于 low 时拒绝 bulk（大包 / 非 inline）；回升到 high 后恢复 bulk。json 省略则按 capacity 推默认（约 1/16 与 2×low）。  
+- *reserved_per_connection* / *reserved_priority*  
+    每条连接预留的小 RPC chunk，以及 heartbeat 专用额度。bulk 分配不得把这两档吃光。json 省略则 priority=4、每连接=2。  
 - *per_post_recv_num*  
     每个连接建立时，均会预先通过 [`ibv_post_recv()`](https://man7.org/linux/man-pages/man3/ibv_post_recv.3.html) *post* *per_post_recv_num* 个 *Recvive WR*  
 - *rpc_timeout_us*  
