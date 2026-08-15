@@ -38,6 +38,7 @@
 #include <chrono>
 #include <cstdint>
 #include <csignal>
+#include <exception>
 #include <functional>
 #include <optional>
 #include <list>
@@ -1759,7 +1760,18 @@ public:
         ep.addr = ctx->addr;
         ep.port = ctx->port;
         ep.passive = false;
-        auto sock = std::make_unique<socket>(ep, *_pd, _channel.value());
+        std::unique_ptr<socket> sock;
+        try {
+            sock = std::make_unique<socket>(ep, *_pd, _channel.value());
+        } catch (const std::exception& e) {
+            SPDK_ERRLOG(
+              "ERROR: create rdma socket to %s:%d failed: %s\n",
+              ep.addr.c_str(), ep.port, e.what());
+            if (ctx->cb) {
+                ctx->cb(false, nullptr);
+            }
+            return;
+        }
         auto* cm_id = sock->id();
         auto conn = std::make_shared<connection>(
           connection_id{},
