@@ -282,6 +282,7 @@ public:
 
     bool uses_aos_objects() const override;
     std::vector<std::string> list_live_objects() override;
+    std::vector<std::string> list_live_objects_at(uint64_t raft_idx) override;
     bool object_exists(const std::string& name) override;
     void pin_recovery_view(uint64_t raft_apply_index, uint64_t raft_term,
                            object_rw_complete cb_fn, void* arg) override;
