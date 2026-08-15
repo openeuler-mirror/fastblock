@@ -316,10 +316,16 @@ public:
                                const extent_map& view)>& fn) const;
 
   /**
-   * Live (non-deleted) object names in this PG (for install-snapshot leader).
+   * Names with a non-empty view. Head (raft=0, image=0) skips unpublished
+   * empty-head creates and fully discarded objects. Snapshot list uses
+   * view_at so a later delete does not hide an earlier snap, and a later
+   * create does not appear in an earlier snap.
    */
   void list_live_object_names(std::vector<std::string>* out) const;
+  void list_live_object_names_at(uint64_t raft_idx, uint64_t image_seq,
+                                 std::vector<std::string>* out) const;
 
+  // Named and not deleted. Unpublished empty-head creates still exist.
   bool object_exists(const std::string& name) const;
 
   /** object_id → name for AE name_lookup. Missing or empty → -ENOENT. */
@@ -431,6 +437,7 @@ private:
   static void snap_after_flush(void* arg, int err);
 
   static void rewrite_after_read(void* arg, int err);
+  static void rewrite_after_name(void* arg, uint64_t phys, int err);
   static void rewrite_after_append(void* arg, uint64_t phys, int err);
   static void rewrite_after_flush(void* arg, int err);
   void apply_rewrite_phys(uint64_t object_id, uint64_t logical_offset,
