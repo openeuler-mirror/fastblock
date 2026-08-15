@@ -16,6 +16,7 @@
 #include "fastblock/msg/rdma/probe.h"
 #include "fastblock/msg/rdma/work_request_id.h"
 #include "fastblock/msg/rdma/socket.h"
+#include "fastblock/msg/rdma/oob_payload.h"
 #include "fastblock/msg/rdma/transport_data.h"
 #include "fastblock/msg/rdma/types.h"
 #include "fastblock/utils/duration_map.h"
@@ -35,6 +36,7 @@
 #include <boost/property_tree/ptree.hpp>
 
 #include <chrono>
+#include <cstdint>
 #include <csignal>
 #include <functional>
 #include <optional>
@@ -63,7 +65,8 @@ public:
         size_t data_memory_pool_capacity{1024};
         size_t data_memory_pool_element_size{8192};
         size_t per_post_recv_num{512};
-        std::chrono::system_clock::duration rpc_timeout{std::chrono::seconds{30}};
+        std::chrono::system_clock::duration rpc_timeout{
+          std::chrono::microseconds{default_rpc_timeout_us}};
         int64_t rpc_batch_size{1024};
         std::unique_ptr<endpoint> ep{nullptr};
         size_t connect_max_retry{10};
@@ -153,6 +156,17 @@ public:
 
     public:
 
+        enum class rpc_fail : uint8_t {
+            ok = 0,
+            resource_exhausted,
+            timeout,
+            request_timeout,
+            too_large,
+            connection_dead,
+            unserialize,
+            other
+        };
+
         struct rpc_request {
             using key_type = transport_data::correlation_index_type;
 
@@ -165,7 +179,14 @@ public:
             std::unique_ptr<char[]> meta{nullptr};
             std::unique_ptr<transport_data> request_data{nullptr};
             std::unique_ptr<transport_data> reply_data{nullptr};
+            std::string payload{};
             std::chrono::system_clock::time_point start_at{std::chrono::system_clock::now()};
+            bool completed{false};
+        };
+
+        struct quarantined_mr {
+            memory_pool<::ibv_send_wr>::net_context* ctx{nullptr};
+            std::chrono::system_clock::time_point expire_at{};
         };
 
         enum class state {
@@ -330,12 +351,11 @@ public:
         int process_request_once(std::unique_ptr<rpc_request>& req) {
             if (_state != state::running) { return -ENOLINK; }
 
-            if (not req->request_data->is_ready()) {
-                SPDK_DEBUGLOG(
-                  msg,
-                  "not enough chunks for request %d, which needs %ld bytes\n",
-                  req->request_key, req->request_data->serilaized_size());
-                return -EAGAIN;
+            if (not req->request_data or not req->request_data->prepared()) {
+                SPDK_NOTICELOG(
+                  "request %d is not prepared, fail-soft without enqueue retry\n",
+                  req->request_key);
+                return -ENOMEM;
             }
 
             SPDK_DEBUGLOG(
@@ -355,7 +375,14 @@ public:
             req->request_data->serialize_data(
               req->meta.get(),
               request_meta_size,
-              req->request);
+              req->request,
+              req->payload);
+            // Restore bytes data so a later write-ring retry still has payload.
+            if (!req->payload.empty()) {
+                attach_rpc_payload(
+                  *const_cast<google::protobuf::Message*>(req->request),
+                  req->payload);
+            }
             auto* req_ptr = req.get();
 
             SPDK_INFOLOG(
@@ -395,8 +422,17 @@ public:
             FASTBLOCK_DUR_MAP_EMPLACE_END(_enqueue_dur_map, req->request_key);
             req->request_data = std::make_unique<transport_data>(
               req->request_key,
-              req->request->ByteSizeLong() + request_meta_size,
+              req->request->ByteSizeLong() + request_meta_size +
+                req->payload.size(),
               _meta_pool, _data_pool);
+            if (not req->request_data->prepared()) {
+                if (req->request_data->too_large()) {
+                    complete_rpc(req.get(), rpc_fail::too_large);
+                } else {
+                    complete_rpc(req.get(), rpc_fail::resource_exhausted);
+                }
+                return;
+            }
             if (priority_req) {
                 if (_priority_onflight_requests.empty()) {
                     _busy_priority_list->push_back(shared_from_this());
@@ -410,6 +446,177 @@ public:
 
         bool is_timeout(rpc_request* req) noexcept {
             return req->start_at + _opts->rpc_timeout < std::chrono::system_clock::now();
+        }
+
+        void quarantine_transport(std::unique_ptr<transport_data>& td) {
+            if (not td) {
+                return;
+            }
+            auto expire_at = std::chrono::system_clock::now() + _opts->rpc_timeout;
+            auto ctxs = td->release_data_contexts();
+            for (auto* ctx : ctxs) {
+                if (ctx) {
+                    _mr_quarantine.push_back(quarantined_mr{ctx, expire_at});
+                }
+            }
+            td.reset();
+        }
+
+        void quarantine_request(rpc_request* req) {
+            if (not req) {
+                return;
+            }
+            quarantine_transport(req->request_data);
+            quarantine_transport(req->reply_data);
+        }
+
+        void reclaim_quarantine(bool force) {
+            auto now = std::chrono::system_clock::now();
+            for (auto it = _mr_quarantine.begin(); it != _mr_quarantine.end(); ) {
+                if (force or now >= it->expire_at) {
+                    if (_data_pool and it->ctx) {
+                        _data_pool->put(it->ctx);
+                    }
+                    it = _mr_quarantine.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+
+        void complete_rpc(rpc_request* req, rpc_fail why, const char* detail = nullptr) {
+            if (not req or req->completed) {
+                return;
+            }
+            req->completed = true;
+
+            switch (why) {
+            case rpc_fail::ok:
+                break;
+            case rpc_fail::resource_exhausted:
+                ++rpc_pool_exhausted;
+                req->ctrlr->SetFailed("resource_exhausted");
+                SPDK_NOTICELOG(
+                  "rpc %u resource_exhausted, pool_exhausted=%lu\n",
+                  req->request_key, rpc_pool_exhausted);
+                break;
+            case rpc_fail::timeout:
+                ++rpc_timeout;
+                req->ctrlr->SetFailed("timeout");
+                SPDK_NOTICELOG(
+                  "rpc %u timeout, rpc_timeout=%lu\n",
+                  req->request_key, rpc_timeout);
+                break;
+            case rpc_fail::request_timeout:
+                ++rpc_timeout;
+                req->ctrlr->SetFailed("request_timeout");
+                SPDK_NOTICELOG(
+                  "rpc %u request_timeout, rpc_timeout=%lu\n",
+                  req->request_key, rpc_timeout);
+                break;
+            case rpc_fail::too_large:
+                req->ctrlr->SetFailed("too_large");
+                SPDK_ERRLOG("rpc %u too_large for memory pool\n", req->request_key);
+                break;
+            case rpc_fail::connection_dead:
+                set_failed_msg(req->ctrlr);
+                if (not req->ctrlr->Failed()) {
+                    req->ctrlr->SetFailed("connection terminated");
+                }
+                break;
+            case rpc_fail::unserialize:
+                req->ctrlr->SetFailed(detail ? detail : "unserialize error");
+                break;
+            case rpc_fail::other:
+                req->ctrlr->SetFailed(detail ? detail : "rpc error");
+                break;
+            }
+
+            if (req->closure) {
+                req->closure->Run();
+                req->closure = nullptr;
+            }
+        }
+
+        void drop_from_busy_list(
+          std::shared_ptr<std::list<std::weak_ptr<connection>>> lst) {
+            if (not lst) {
+                return;
+            }
+            lst->remove_if([this](const std::weak_ptr<connection>& w) {
+                auto p = w.lock();
+                return not p or p.get() == this;
+            });
+        }
+
+        bool process_timeout_scan() {
+            bool busy{false};
+
+            auto expire_queued = [this, &busy](std::list<std::unique_ptr<rpc_request>>& lst) {
+                for (auto it = lst.begin(); it != lst.end(); ) {
+                    if (is_timeout(it->get())) {
+                        complete_rpc(it->get(), rpc_fail::timeout);
+                        it = lst.erase(it);
+                        busy = true;
+                    } else {
+                        ++it;
+                    }
+                }
+            };
+
+            auto expire_posted = [this, &busy](std::list<std::unique_ptr<rpc_request>>& lst) {
+                for (auto it = lst.begin(); it != lst.end(); ) {
+                    if (is_timeout(it->get())) {
+                        quarantine_request(it->get());
+                        --_onflight_rpc_task_size;
+                        _free_server_list.push_back((*it)->request_key);
+                        complete_rpc(it->get(), rpc_fail::timeout);
+                        it = lst.erase(it);
+                        busy = true;
+                    } else {
+                        ++it;
+                    }
+                }
+            };
+
+            expire_queued(_onflight_requests);
+            expire_queued(_priority_onflight_requests);
+            expire_posted(_send_read_requests);
+            expire_posted(_wait_read_requests);
+
+            for (auto it = _unresponsed_requests.begin(); it != _unresponsed_requests.end(); ) {
+                if (is_timeout(it->second.get())) {
+                    quarantine_request(it->second.get());
+                    --_onflight_rpc_task_size;
+                    _free_server_list.push_back(it->second->request_key);
+                    complete_rpc(it->second.get(), rpc_fail::timeout);
+                    it = _unresponsed_requests.erase(it);
+                    busy = true;
+                } else {
+                    ++it;
+                }
+            }
+
+            if (_onflight_requests.empty()) {
+                drop_from_busy_list(_busy_list);
+            }
+            if (_priority_onflight_requests.empty()) {
+                drop_from_busy_list(_busy_priority_list);
+            }
+
+            reclaim_quarantine(false);
+            return busy;
+        }
+
+        void post_recv_ctx(memory_pool<::ibv_recv_wr>::net_context* recv_ctx,
+                           work_request_id::value_type old_wr_id) {
+            _dispatch_id.inc_request_id();
+            recv_ctx->wr.wr_id = _dispatch_id.value();
+            recv_ctx->wr.next = nullptr;
+            _sock->receive(&(recv_ctx->wr));
+            rdma_probe.receive_wr_posted();
+            _recv_ctx_map.emplace(recv_ctx->wr.wr_id, recv_ctx);
+            _recv_ctx_map.erase(old_wr_id);
         }
 
     public:
@@ -479,6 +686,7 @@ public:
                 }
             }
 
+            is_busy |= process_timeout_scan();
             is_busy |= process_send_read_wr();
             is_busy |= process_read_complete();
             is_busy |= handle_cqe();
@@ -541,11 +749,15 @@ public:
 
             auto req_key = _unresponsed_request_key_gen++;
             FASTBLOCK_DUR_MAP_EMPLACE_START(_enqueue_dur_map, req_key);
+            std::string payload;
+            peel_rpc_payload(*const_cast<google::protobuf::Message*>(request),
+                             &payload);
             auto meta_holder = std::make_unique<char[]>(request_meta_size);
             auto meta = make_request_meta(
               service_name,
               method_name,
-              static_cast<request_meta::data_size_type>(request->ByteSizeLong()));
+              static_cast<request_meta::data_size_type>(request->ByteSizeLong()),
+              static_cast<request_meta::data_size_type>(payload.size()));
             store_request_meta(meta_holder.get(), meta);
 
             SPDK_DEBUGLOG(
@@ -556,6 +768,7 @@ public:
 
             auto req = std::make_unique<rpc_request>(
               req_key, m, ctrlr, request, response, c, std::move(meta_holder));
+            req->payload = std::move(payload);
 
             SPDK_DEBUGLOG(
               msg,
@@ -611,15 +824,16 @@ public:
                 SPDK_ERRLOG(
                   "ERROR: Timeout occurred of rpc request key %d\n",
                   stack_ptr->request_key);
-                stack_ptr->ctrlr->SetFailed("timeout");
-                stack_ptr->closure->Run();
+                complete_rpc(stack_ptr, rpc_fail::timeout);
+            } else if (rc == -ENOMEM) {
+                complete_rpc(stack_ptr, rpc_fail::resource_exhausted);
             } else if (rc == -ENOLINK) {
                 process_terminating_request(stack_ptr);
-                stack_ptr->closure->Run();
+                complete_rpc(stack_ptr, rpc_fail::connection_dead);
             } else if (rc != 0) {
                 SPDK_ERRLOG("ERROR: Sending rpc request failed, rc is %d\n", rc);
-                stack_ptr->ctrlr->SetFailed(FB_FMT_1("error, rc %1%", rc));
-                stack_ptr->closure->Run();
+                auto err_text = FB_FMT_1("error, rc %1%", rc);
+                complete_rpc(stack_ptr, rpc_fail::other, err_text.c_str());
             }
 
             FASTBLOCK_DUR_MAP_EMPLACE_END_LAST(_proc_rpc_map);
@@ -657,15 +871,16 @@ public:
 
                 stack_ptr = it->get();
                 if (rc == -EINVAL) {
-                    stack_ptr->ctrlr->SetFailed("timeout");
-                    stack_ptr->closure->Run();
+                    complete_rpc(stack_ptr, rpc_fail::timeout);
+                } else if (rc == -ENOMEM) {
+                    complete_rpc(stack_ptr, rpc_fail::resource_exhausted);
                 } else if (rc == -ENOLINK) {
                     process_terminating_request(stack_ptr);
-                    stack_ptr->closure->Run();
+                    complete_rpc(stack_ptr, rpc_fail::connection_dead);
                 } else if (rc != 0) {
                     SPDK_ERRLOG("ERROR: Sending rpc request failed, rc is %d\n", rc);
-                    stack_ptr->ctrlr->SetFailed(FB_FMT_1("error, rc %1%", rc));
-                    stack_ptr->closure->Run();
+                    auto err_text = FB_FMT_1("error, rc %1%", rc);
+                    complete_rpc(stack_ptr, rpc_fail::other, err_text.c_str());
                 }
 
                 erase_it_end = it;
@@ -758,7 +973,8 @@ public:
                 SPDK_ERRLOG(
                   "Timeout occurred on rpc request of request key %d\n",
                   stack_ptr->request_key);
-                stack_ptr->ctrlr->SetFailed("timeout");
+                complete_rpc(stack_ptr, rpc_fail::timeout);
+                quarantine_request(stack_ptr);
                 goto read_done;
             }
 
@@ -772,18 +988,36 @@ public:
               stack_ptr->request_key);
 
             SPDK_DEBUGLOG(msg, "_onflight_rpc_task_size: %ld\n", _onflight_rpc_task_size);
-            is_parsed = stack_ptr->reply_data->unserialize_data(stack_ptr->response, reply_meta_size);
+            {
+                std::string_view reply_payload;
+                size_t env_sz = 0;
+                if (auto* head = stack_ptr->reply_data->data_head();
+                    head != nullptr) {
+                    auto rh = *reinterpret_cast<reply_meta*>(head);
+                    env_sz = rh.data_size;
+                }
+                is_parsed = stack_ptr->reply_data->unserialize_data(
+                  stack_ptr->response, reply_meta_size, env_sz, &reply_payload);
+                if (is_parsed && !reply_payload.empty()) {
+                    is_parsed =
+                      attach_rpc_payload(*stack_ptr->response, reply_payload);
+                }
+            }
             if (not is_parsed) {
                 SPDK_ERRLOG(
                   "ERROR: Unserialize the response body of request key %d failed\n",
                   stack_ptr->request_key);
-                stack_ptr->ctrlr->SetFailed("unserialize error");
+                complete_rpc(stack_ptr, rpc_fail::unserialize);
+            } else {
+                complete_rpc(stack_ptr, rpc_fail::ok);
             }
 
 read_done:
             _free_server_list.push_back(stack_ptr->request_key);
             --_onflight_rpc_task_size;
-            stack_ptr->closure->Run();
+            if (not stack_ptr->completed) {
+                complete_rpc(stack_ptr, rpc_fail::ok);
+            }
             auto rpc_dur = std::chrono::system_clock::now() - stack_ptr->start_at;
             _wait_read_requests.pop_front();
 
@@ -835,8 +1069,11 @@ read_done:
                 auto req_key = transport_data::read_correlation_index(recv_ctx);
                 auto req_it = _unresponsed_requests.find(req_key);
                 if (req_it == _unresponsed_requests.end()) {
-                    SPDK_ERRLOG("ERROR: Cant find the request stack of key '%d'\n", req_key);
-                    _ctrl_ops.push_back(std::make_unique<control_operation>(state::shutdown));
+                    ++rpc_unknown_key;
+                    SPDK_NOTICELOG(
+                      "unknown rpc key %d, drop and keep QP, unknown_key=%lu\n",
+                      req_key, rpc_unknown_key);
+                    post_recv_ctx(recv_ctx, it->first);
                     return true;
                 }
 
@@ -844,7 +1081,8 @@ read_done:
                     SPDK_ERRLOG(
                       "Timeout occurred on rpc request of request key %d\n",
                       req_it->second->request_key);
-                    req_it->second->ctrlr->SetFailed("timeout");
+                    quarantine_request(req_it->second.get());
+                    complete_rpc(req_it->second.get(), rpc_fail::timeout);
                     _free_server_list.push_back(req_it->second->request_key);
                     --_onflight_rpc_task_size;
                     SPDK_DEBUGLOG(msg, "_onflight_rpc_task_size: %ld\n", _onflight_rpc_task_size);
@@ -869,7 +1107,7 @@ read_done:
 
                 switch (reply_m) {
                 case status::no_content: {
-                    req_it->second->closure->Run();
+                    complete_rpc(req_it->second.get(), rpc_fail::ok);
                     _free_server_list.push_back(req_it->second->request_key);
 
                     --_onflight_rpc_task_size;
@@ -878,9 +1116,8 @@ read_done:
                     break;
                 }
                 case status::terminating: {
-                    req_it->second->ctrlr->SetFailed("server terminating");
                     _ctrl_ops.push_back(std::make_unique<control_operation>(state::peer_terminate));
-                    req_it->second->closure->Run();
+                    complete_rpc(req_it->second.get(), rpc_fail::other, "server terminating");
                     --_onflight_rpc_task_size;
                     _unresponsed_requests.erase(req_it);
                     break;
@@ -890,11 +1127,21 @@ read_done:
                     bool is_parsed{false};
                     if (transport_data::is_inlined(it->second)) {
                         auto* inlined_data = transport_data::read_inlined_content(it->second);
+                        auto reply_h = *reinterpret_cast<reply_meta*>(inlined_data);
                         auto unserialize_size = transport_data::read_inlined_content_length(it->second);
                         SPDK_DEBUGLOG(msg, "unserilaize inlined reply, size is %d\n", unserialize_size);
+                        const auto env = reply_h.data_size != 0
+                          ? reply_h.data_size
+                          : static_cast<uint32_t>(unserialize_size);
                         is_parsed = response->ParseFromArray(
-                          inlined_data + reply_meta_size,
-                          transport_data::read_inlined_content_length(it->second));
+                          inlined_data + reply_meta_size, env);
+                        if (is_parsed && reply_h.payload_size > 0) {
+                            is_parsed = attach_rpc_payload(
+                              *response,
+                              std::string_view(
+                                inlined_data + reply_meta_size + env,
+                                reply_h.payload_size));
+                        }
                     } else {
                         if (not req_it->second->reply_data) {
                             req_it->second->reply_data = std::make_unique<transport_data>(_data_pool);
@@ -910,10 +1157,17 @@ read_done:
                         }
 
                         if (not req_it->second->reply_data->is_ready()) {
-                            SPDK_DEBUGLOG(
-                              msg,
-                              "request key %d, transport data is not ready\n",
+                            SPDK_NOTICELOG(
+                              "request key %d reply transport not prepared, fail-soft\n",
                               req_it->second->request_key);
+                            complete_rpc(
+                              req_it->second.get(),
+                              req_it->second->reply_data->too_large()
+                                ? rpc_fail::too_large
+                                : rpc_fail::resource_exhausted);
+                            _free_server_list.push_back(req_it->second->request_key);
+                            --_onflight_rpc_task_size;
+                            _unresponsed_requests.erase(req_it);
                             break;
                         }
 
@@ -930,8 +1184,7 @@ read_done:
                           "ERROR: Parse response body failed of request %d\n",
                           req_it->second->request_key);
 
-                        req_it->second->ctrlr->SetFailed("unserialize failed");
-                        req_it->second->closure->Run();
+                        complete_rpc(req_it->second.get(), rpc_fail::unserialize, "unserialize failed");
                         _free_server_list.push_back(req_it->second->request_key);
                         _unresponsed_requests.erase(req_it);
                         break;
@@ -941,7 +1194,7 @@ read_done:
                       msg,
                       "Read the inlined response body of request %d\n",
                       req_it->second->request_key);
-                    req_it->second->closure->Run();
+                    complete_rpc(req_it->second.get(), rpc_fail::ok);
                     _free_server_list.push_back(req_it->second->request_key);
                     _unresponsed_requests.erase(req_it);
                     break;
@@ -951,21 +1204,21 @@ read_done:
                       "ERROR: RPC call failed of request %d with reply status %s\n",
                       req_it->second->request_key,
                       string_status(reply_m));
-                    req_it->second->ctrlr->SetFailed(
-                      FB_FMT_1("rpc call failed with reply status %1%", string_status(reply_m)));
+                    if (reply_m == status::resource_exhausted) {
+                        complete_rpc(req_it->second.get(), rpc_fail::resource_exhausted);
+                    } else if (reply_m == status::request_timeout) {
+                        complete_rpc(req_it->second.get(), rpc_fail::request_timeout);
+                    } else {
+                        complete_rpc(req_it->second.get(), rpc_fail::other, string_status(reply_m));
+                    }
                     _free_server_list.push_back(req_it->second->request_key);
+                    --_onflight_rpc_task_size;
                     _unresponsed_requests.erase(req_it);
                     break;
                 }
                 }
 
-                _dispatch_id.inc_request_id();
-                it->second->wr.wr_id = _dispatch_id.value();
-                it->second->wr.next = nullptr;
-                _sock->receive(&(it->second->wr));
-                rdma_probe.receive_wr_posted();
-                _recv_ctx_map.emplace(it->second->wr.wr_id, it->second);
-                _recv_ctx_map.erase(it);
+                post_recv_ctx(it->second, it->first);
             }
             case ::IBV_WC_RDMA_WRITE:
             default:
@@ -1053,33 +1306,30 @@ read_done:
             _poller.unregister_poller();
             SPDK_INFOLOG(msg, "The poller of the connection has been unregistered\n");
 
+            reclaim_quarantine(true);
+
             for (auto& task : _onflight_requests) {
-                set_failed_msg(task->ctrlr);
-                task->closure->Run();
+                complete_rpc(task.get(), rpc_fail::connection_dead);
             }
             _onflight_requests.clear();
 
             for (auto& task : _priority_onflight_requests) {
-                set_failed_msg(task->ctrlr);
-                task->closure->Run();
+                complete_rpc(task.get(), rpc_fail::connection_dead);
             }
             _priority_onflight_requests.clear();
 
             for (auto& task : _wait_read_requests) {
-                set_failed_msg(task->ctrlr);
-                task->closure->Run();
+                complete_rpc(task.get(), rpc_fail::connection_dead);
             }
             _wait_read_requests.clear();
 
             for (auto& task : _send_read_requests) {
-                set_failed_msg(task->ctrlr);
-                task->closure->Run();
+                complete_rpc(task.get(), rpc_fail::connection_dead);
             }
             _send_read_requests.clear();
 
             for (auto& task_pair : _unresponsed_requests) {
-                set_failed_msg(task_pair.second->ctrlr);
-                task_pair.second->closure->Run();
+                complete_rpc(task_pair.second.get(), rpc_fail::connection_dead);
             }
             _unresponsed_requests.clear();
 
@@ -1227,12 +1477,16 @@ read_done:
         std::chrono::system_clock::time_point _shutdown_timeout{};
         std::unordered_map<uint64_t, external_send_context> _external_send_ctx{};
         bool _resources_freed{false};
+        std::list<quarantined_mr> _mr_quarantine{};
 
         FASTBLOCK_DUR_MAP_CREATE(rpc_request::key_type, _enqueue_dur_map, "enqueue_request");
         FASTBLOCK_DUR_MAP_CREATE(rpc_request::key_type, _proc_rpc_map, "process_rpc_request");
 
     public:
 
+        uint64_t rpc_pool_exhausted{0};
+        uint64_t rpc_unknown_key{0};
+        uint64_t rpc_timeout{0};
         probe rdma_probe{};
         std::list<std::unique_ptr<::ibv_wc>> cqe_list{};
     };
