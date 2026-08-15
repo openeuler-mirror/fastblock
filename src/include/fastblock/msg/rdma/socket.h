@@ -12,15 +12,19 @@
 
 #include "fastblock/msg/rdma/endpoint.h"
 #include "fastblock/msg/rdma/event_channel.h"
+#include "fastblock/msg/rdma/numeric_addr.h"
 #include "fastblock/msg/rdma/provider/mlx5dv.h"
 #include "fastblock/msg/rdma/provider/verbs.h"
 #include "fastblock/msg/rdma/pd.h"
 #include "fastblock/msg/rdma/provider.h"
 #include "fastblock/utils/fmt.h"
 
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <stdexcept>
+#include <string>
 
 #include <infiniband/mlx5dv.h>
 #include <infiniband/verbs.h>
@@ -65,41 +69,58 @@ public:
             _provider = std::make_unique<verbs>();
         }
 
-        std::memset(&_hints, 0, sizeof(_hints));
-        _hints.ai_port_space = RDMA_PS_TCP;
-        _hints.ai_qp_type = ::IBV_QPT_RC;
-
-        if (_ep.passive) {
-            _hints.ai_flags = RAI_PASSIVE;
-        }
-
-        int ret = rdma_getaddrinfo(
-          _ep.addr.c_str(),
-          std::to_string(_ep.port).c_str(),
-          &_hints, &_res);
-
-        if (ret or !_res) [[unlikely]] {
-            SPDK_ERRLOG(
-              "ERROR(%s): Attempting to get information of address: %s:%d\n",
-              std::strerror(errno), _ep.addr.c_str(), _ep.port);
-        }
-
-        ret = ::rdma_create_id(channel, &_id, nullptr, ::RDMA_PS_TCP);
-        assert(_id->channel == channel);
-        if (ret) {
+        int ret = ::rdma_create_id(channel, &_id, nullptr, ::RDMA_PS_TCP);
+        if (ret or not _id) {
             SPDK_ERRLOG("ERROR: Create rdma cm id failed\n");
             throw std::runtime_error{"create rdma cm id failed"};
         }
+        assert(_id->channel == channel);
         _id->context = this;
         _id->pd = _pd;
 
+        ::sockaddr_storage numeric{};
+        ::sockaddr* bind_or_dst{nullptr};
+        ::sockaddr* src{nullptr};
+        if (try_numeric_sockaddr(_ep.addr, _ep.port, numeric)) {
+            bind_or_dst = reinterpret_cast<::sockaddr*>(&numeric);
+        } else {
+            std::memset(&_hints, 0, sizeof(_hints));
+            _hints.ai_port_space = RDMA_PS_TCP;
+            _hints.ai_qp_type = ::IBV_QPT_RC;
+            if (_ep.passive) {
+                _hints.ai_flags = RAI_PASSIVE;
+            }
+            SPDK_NOTICELOG(
+              "hostname %s:%d is not numeric; blocking rdma_getaddrinfo on this thread\n",
+              _ep.addr.c_str(), _ep.port);
+            ret = ::rdma_getaddrinfo(
+              _ep.addr.c_str(),
+              std::to_string(_ep.port).c_str(),
+              &_hints, &_res);
+            if (ret or not _res) {
+                SPDK_ERRLOG(
+                  "ERROR(%s): rdma_getaddrinfo failed for %s:%d\n",
+                  std::strerror(errno), _ep.addr.c_str(), _ep.port);
+                ::rdma_destroy_id(_id);
+                _id = nullptr;
+                throw std::runtime_error{"rdma_getaddrinfo failed"};
+            }
+            src = _res->ai_src_addr;
+            bind_or_dst = _ep.passive ? _res->ai_src_addr : _res->ai_dst_addr;
+        }
+
         if (_ep.passive) {
-            ret = ::rdma_bind_addr(_id, _res->ai_src_addr);
+            ret = ::rdma_bind_addr(_id, bind_or_dst);
             if (ret) [[unlikely]] {
                 SPDK_ERRLOG(
                   "ERROR: rdma_bind_addr() failed to bind on %s, error: %s\n",
-                  host(_res->ai_src_addr).c_str(), std::strerror(errno));
-
+                  host(bind_or_dst).c_str(), std::strerror(errno));
+                if (_res) {
+                    ::rdma_freeaddrinfo(_res);
+                    _res = nullptr;
+                }
+                ::rdma_destroy_id(_id);
+                _id = nullptr;
                 throw bindException();
             }
 
@@ -112,17 +133,22 @@ public:
 
         ret = ::rdma_resolve_addr(
           _id,
-          _res->ai_src_addr,
-          _res->ai_dst_addr,
+          src,
+          bind_or_dst,
           _ep.resolve_timeout_us);
 
         if (ret) [[unlikely]] {
             SPDK_ERRLOG(
               "ERROR: Resolve address(src: %s, dst: %s) failed: %s\n",
-              host(_res->ai_src_addr).c_str(),
-              host(_res->ai_dst_addr).c_str(),
+              src ? host(src).c_str() : "any",
+              host(bind_or_dst).c_str(),
               std::strerror(errno));
-
+            if (_res) {
+                ::rdma_freeaddrinfo(_res);
+                _res = nullptr;
+            }
+            ::rdma_destroy_id(_id);
+            _id = nullptr;
             throw std::runtime_error{"resolve address failed"};
         }
 
@@ -597,10 +623,8 @@ public:
         auto ret = ::rdma_resolve_route(_id, _ep.resolve_timeout_us);
         if (ret) [[unlikely]] {
             SPDK_ERRLOG(
-              "resolve route(src: %s, dst: %s) failed: %s\n",
-              host(_res->ai_src_addr).c_str(),
-              host(_res->ai_dst_addr).c_str(),
-              std::strerror(errno));
+              "resolve route(%s:%d) failed: %s\n",
+              _ep.addr.c_str(), _ep.port, std::strerror(errno));
             throw std::runtime_error{"resolve route failed"};
         }
     }
