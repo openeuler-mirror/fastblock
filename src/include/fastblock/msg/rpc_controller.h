@@ -10,6 +10,8 @@
  */
 #pragma once
 
+#include "fastblock/msg/rdma/types.h"
+
 #include <string>
 
 #include <google/protobuf/service.h>
@@ -53,6 +55,10 @@ public:
 
     bool is_peer_terminating() noexcept {
         return _failed and _error_reason == "terminating";
+    }
+
+    bool is_soft_failure() const noexcept {
+        return _failed && is_soft_rpc_error(_error_reason);
     }
 
     void attach_pd(::ibv_pd* pd) noexcept {
