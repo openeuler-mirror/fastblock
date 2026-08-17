@@ -1014,6 +1014,7 @@ PR1 只要求上面三个计数器可在故障注入后读到（成员变量 + �
 - **依赖：** PR1
 - **内容：** §Observability 表中 PR6 行；周期性 NOTICE dump；未知 key 降级为 INFO；`rpc_closure_double`。
 - **验收：** 故障注入后计数非零且与现象一致。
+- **落地：** `probe` 增加 PR6 计数：`too_large` / `complete_ok` / `complete_fail` / `qp_teardown` / `closure_double`（PR1 三个也迁到 probe）。`complete_rpc` 二次进入计 `double` 并 INFO。unknown key 降为 `INFOLOG(msg)`。QP teardown 单独 ERRLOG。空池升 WARN。client `connection_poller` / server `task_poller` 每 10s NOTICE dump（inflight + pool inuse/free + watermark_hits + fmt_rpc）。
 
 ### PR7 — Request key 生命周期（可选 on-wire）
 
