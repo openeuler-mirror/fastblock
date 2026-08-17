@@ -1023,6 +1023,7 @@ PR1 只要求上面三个计数器可在故障注入后读到（成员变量 + �
 - **依赖：** PR1；**on-wire 若变，需 3 OSD + nvmf 同发**
 - **内容：** 仅当 PR1 之后 unknown_key 仍吵时开启。64-bit 或 `{gen,idx}`；已完成环形集。
 - **验收：** 重复回复 / 迟到 fragment 零 QP teardown、unknown_key 不再误报成 ERR。
+- **落地：** on-wire `correlation_index` 改为 `uint64_t` = `(generation << 32) | index`，inline/metadata 头里 key 都在 offset 8。finish IMM 仍只带低 32 位 index。完成时写入 4096 槽 `completed_key_ring`；迟到 / 重复 fragment 命中环形集则静默 `post_recv`，不 `unknown_key++`、不拆 QP。index 回绕时 generation++，并跳过仍在环里的 key。**需 3 OSD + nvmf 同发。**
 
 PR1 合入后，运输层不再具备「一条坏 RPC 冻死 VM」的能力，调用方也不会把 exhausted/timeout 拆成断连。后面的 PR 是为了让 exhausted 变成常态降级（水位），而不是下一次容量悬崖。
 
