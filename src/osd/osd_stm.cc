@@ -265,6 +265,7 @@ void osd_stm::write_obj(const std::string& obj_name, uint64_t offset,
                         uint64_t image_snap_seq, utils::context *complete){
     if (_aos == nullptr) {
         SPDK_ERRLOG("write_obj without AOS pg %s\n", get_pg_name().c_str());
+        unlock(obj_name, utils::operation_type::WRITE);
         complete->complete(-ENODEV);
         return;
     }
@@ -543,6 +544,8 @@ struct osd_service_complete : public utils::context{
             }
         }
         if(std::is_same_v<type, osd::read_reply>){
+            // Unlock even on error. Waiter wakeup is iterative (see
+            // op_type_excl_lock) so a burst of failed reads cannot recurse.
             stm->unlock(obj_name, utils::operation_type::READ);
             if(r == 0 && stm->raft_is_leader())
                 g_data_statistics->add_data(utils::operation_type::READ, stm->get_pg_name(), length);
