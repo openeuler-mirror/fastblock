@@ -77,6 +77,8 @@
     启动期 `ibv_reg_mr` 失败抛 `std::runtime_error`（回滚已注册 MR），不再 `SIGABRT`。OSD `create_rpc_server` 已 catch，该 shard 标失败、不向 mon boot。
 - *error_class*  
     调用方看 `rpc_controller::error_class()`，不要解析 `ErrorText()`。`resource_exhausted` / `timeout` / `request_timeout` 是 retryable，不拆连接。只有 `connection` 与 `peer_terminating` 才 `remove_connect` / 映射 `-ENOLINK`。
+- *rpc stats*  
+    每个 client 连接 / server 实例 10s 打一条 NOTICE：`exhausted` `unknown_key` `timeout` `too_large` `ok` `fail` `qp_teardown` `double`，以及 inflight 与 data/meta 池 inuse/free / 水位命中。未知 key 是 INFO；QP teardown 是单独的 ERR。
 - *max_send_wr & max_send_sge & max_recv_wr & max_recv_sge & max_inline_data*  
     [`ibv_create_qp()`](https://man7.org/linux/man-pages/man3/ibv_create_qp.3.html) 的相关参数  
 - *cq_num_entries*  
