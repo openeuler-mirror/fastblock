@@ -166,15 +166,64 @@ inline char* string_status(const status s) noexcept {
     }
 }
 
-inline bool is_soft_rpc_error(std::string_view err) noexcept {
-    return err == "resource_exhausted" || err == "timeout" ||
-           err == "request_timeout" ||
-           err.find("resource_exhausted") != std::string_view::npos ||
-           err.find("request_timeout") != std::string_view::npos;
-}
-
 inline char*  string_status(const std::underlying_type_t<status> s) noexcept {
     return string_status(static_cast<status>(s));
+}
+
+// Caller-facing class. Transport sets this on rpc_controller; Raft / libblk
+// must not parse ErrorText().
+enum class rpc_error_class : uint8_t {
+    ok = 0,
+    resource_exhausted,
+    timeout,
+    request_timeout,
+    too_large,
+    application,
+    peer_terminating,
+    connection
+};
+
+inline bool is_retryable(rpc_error_class c) noexcept {
+    return c == rpc_error_class::resource_exhausted ||
+           c == rpc_error_class::timeout ||
+           c == rpc_error_class::request_timeout;
+}
+
+inline bool tears_connection(rpc_error_class c) noexcept {
+    return c == rpc_error_class::connection ||
+           c == rpc_error_class::peer_terminating;
+}
+
+// Fallback for SetFailed(string) paths that have not been given a class.
+// Exact tokens only — callers must not depend on this.
+inline rpc_error_class classify_rpc_error(std::string_view err) noexcept {
+    if (err.empty()) {
+        return rpc_error_class::ok;
+    }
+    if (err == "resource_exhausted") {
+        return rpc_error_class::resource_exhausted;
+    }
+    if (err == "timeout") {
+        return rpc_error_class::timeout;
+    }
+    if (err == "request_timeout") {
+        return rpc_error_class::request_timeout;
+    }
+    if (err == "too_large") {
+        return rpc_error_class::too_large;
+    }
+    if (err == "terminating" || err == "peer terminating" ||
+        err == "server terminating") {
+        return rpc_error_class::peer_terminating;
+    }
+    if (err == "connection terminated" || err == "bad ib/cm event") {
+        return rpc_error_class::connection;
+    }
+    return rpc_error_class::application;
+}
+
+inline bool is_soft_rpc_error(std::string_view err) noexcept {
+    return is_retryable(classify_rpc_error(err));
 }
 
 } // namespace rdma
