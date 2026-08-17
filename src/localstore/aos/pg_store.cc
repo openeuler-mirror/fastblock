@@ -212,14 +212,14 @@ pg_store::pg_store(device_backend* backend, pg_id id, buffer_mode mode,
           segment_size == 0 ? (backend ? backend->capacity() : 0)
                             : segment_size,
           backend ? backend->block_size() : 4096)),
-      seg_(backend, alloc_.get()), id_(id), mode_(mode) {
+      seg_(backend, alloc_.get(), mode), id_(id), mode_(mode) {
   ensure_scratch(kMaxObjectSize + 256 * 1024);
 }
 
 pg_store::pg_store(device_backend* backend, pg_id id,
                    std::shared_ptr<segment_allocator> alloc, buffer_mode mode)
     : backend_(backend), alloc_(std::move(alloc)),
-      seg_(backend, alloc_.get()), id_(id), mode_(mode) {
+      seg_(backend, alloc_.get(), mode), id_(id), mode_(mode) {
   ensure_scratch(kMaxObjectSize + 256 * 1024);
 }
 
@@ -451,6 +451,9 @@ void pg_store::for_each_live_extent(
           fn(e.phys_offset, e.length);
         }
       }
+    }
+    if (!obj.deleted && obj.name_phys != 0 && obj.name_len != 0) {
+      fn(obj.name_phys, obj.name_len);
     }
     // Conservative: any raft/image pin keeps all historical put extents live.
     if (total_snapshot_pins_ > 0 || total_image_snapshot_pins_ > 0) {
@@ -745,6 +748,20 @@ void pg_store::drop_pending_from(uint64_t from_index) {
   for (const auto& op : dropped) {
     erase_isolated_create(op);
   }
+}
+
+void pg_store::note_name_record(uint64_t object_id, uint64_t phys,
+                                uint64_t name_bytes) {
+  if (phys == 0) {
+    return;
+  }
+  auto oit = objects_.find(object_id);
+  if (oit == objects_.end()) {
+    return;
+  }
+  oit->second.name_phys = phys;
+  oit->second.name_len =
+      seg_.align_up(encode_header_len() + name_bytes);
 }
 
 void pg_store::apply_rewrite_phys(uint64_t object_id, uint64_t logical_offset,
@@ -1050,9 +1067,12 @@ void pg_store::append_uncommitted(const std::string& object_name,
   });
 }
 
-void pg_store::write_after_name(void* arg, uint64_t /*phys*/, int err) {
+void pg_store::write_after_name(void* arg, uint64_t phys, int err) {
   auto* req = static_cast<write_req*>(arg);
   pg_store* self = req->self;
+  if (err == 0 && req->need_name_record) {
+    self->note_name_record(req->object_id, phys, req->name.size());
+  }
   if (err != 0) {
     auto cb = std::move(req->cb);
     void* a = req->arg;
@@ -1711,9 +1731,12 @@ void pg_store::rewrite_after_read(void* arg, int err) {
   rewrite_after_name(req, 0, 0);
 }
 
-void pg_store::rewrite_after_name(void* arg, uint64_t /*phys*/, int err) {
+void pg_store::rewrite_after_name(void* arg, uint64_t phys, int err) {
   auto* req = static_cast<rewrite_req*>(arg);
   pg_store* self = req->self;
+  if (err == 0 && !req->name.empty()) {
+    self->note_name_record(req->object_id, phys, req->name.size());
+  }
   if (err != 0) {
     self->free_buf(req->stage);
     auto cb = std::move(req->cb);
@@ -2979,6 +3002,7 @@ int pg_store::apply_record(const data_record& rec, uint64_t phys_offset,
     } else {
       objects_[rec.object_id].name = name;
     }
+    note_name_record(rec.object_id, phys_offset, rec.payload.size());
     if (rec.object_id >= next_object_id_) {
       next_object_id_ = rec.object_id + 1;
     }

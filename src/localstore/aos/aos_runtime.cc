@@ -44,7 +44,8 @@ aos_runtime::~aos_runtime() {
 
 int aos_runtime::gc_poller_fn(void* arg) {
   auto* self = static_cast<aos_runtime*>(arg);
-  if (self == nullptr || !self->ready() || self->store_ == nullptr) {
+  if (self == nullptr || !self->ready() || self->store_ == nullptr ||
+      self->gc_in_flight_) {
     return SPDK_POLLER_IDLE;
   }
   osd_store::gc_options opt;
@@ -52,27 +53,19 @@ int aos_runtime::gc_poller_fn(void* arg) {
   opt.free_dead_segments = self->gc_cfg_.free_dead_segments;
   opt.max_rewrite_extents = self->gc_cfg_.max_rewrite_extents;
   opt.persist_manifest = self->gc_cfg_.persist_manifest;
-  const auto st = self->store_->gc_pass(opt);
-  ++self->gc_pass_count_;
-  if (st.extents_rewritten > 0 || st.segments_freed > 0) {
-    SPDK_NOTICELOG(
-        "aos_runtime GC pass #%lu rewrite=%u freed=%u\n", self->gc_pass_count_,
-        st.extents_rewritten, st.segments_freed);
-    if (st.segments_freed > 0 && !self->ckpt_in_flight_) {
-      self->ckpt_in_flight_ = true;
-      self->store_->checkpoint_pass(
-          [](void* a, int err) {
-            auto* rt = static_cast<aos_runtime*>(a);
-            rt->ckpt_in_flight_ = false;
-            if (err == 0) {
-              ++rt->ckpt_pass_count_;
-            }
-          },
-          self);
-    }
-    return SPDK_POLLER_BUSY;
-  }
-  return SPDK_POLLER_IDLE;
+  self->gc_in_flight_ = true;
+  self->store_->gc_pass_async(
+      opt,
+      [](void* a, int /*err*/) {
+        auto* rt = static_cast<aos_runtime*>(a);
+        ++rt->gc_pass_count_;
+        rt->gc_in_flight_ = false;
+        if (rt->stop_pending_) {
+          rt->finish_stop(0);
+        }
+      },
+      self);
+  return SPDK_POLLER_BUSY;
 }
 
 void aos_runtime::start_gc_poller() { start_gc_poller(gc_poller_config{}); }
@@ -94,6 +87,9 @@ int aos_runtime::ckpt_poller_fn(void* arg) {
                          rt->ckpt_pass_count_);
         } else {
           SPDK_ERRLOG("aos_runtime checkpoint pass failed: %d\n", err);
+        }
+        if (rt->stop_pending_ && !rt->gc_in_flight_) {
+          rt->finish_stop(0);
         }
       },
       self);
@@ -235,9 +231,12 @@ void aos_runtime::recover(op_complete cb, void* arg) {
       nullptr);
 }
 
-void aos_runtime::stop(op_complete cb, void* arg) {
-  stop_gc_poller();
-  auto finish = [this, cb = std::move(cb), arg](int err) {
+void aos_runtime::finish_stop(int err) {
+  stop_pending_ = false;
+  auto cb = std::move(stop_cb_);
+  void* arg = stop_arg_;
+  stop_arg_ = nullptr;
+  auto finish = [this, cb = std::move(cb), arg](int e) {
     if (store_) {
       store_->set_kv_engine(nullptr);
     }
@@ -252,17 +251,31 @@ void aos_runtime::stop(op_complete cb, void* arg) {
     region_length_ = 0;
     segment_size_ = 0;
     gc_pass_count_ = 0;
+    gc_in_flight_ = false;
     if (cb) {
-      cb(arg, err);
+      cb(arg, e);
     }
   };
   if (kv_) {
     kv_->stop(
-        [finish = std::move(finish)](void* /*a*/, int err) { finish(err); },
+        [finish = std::move(finish)](void* /*a*/, int e) { finish(e); },
         nullptr);
     return;
   }
-  finish(0);
+  finish(err);
+}
+
+void aos_runtime::stop(op_complete cb, void* arg) {
+  stop_gc_poller();
+  if (gc_in_flight_ || ckpt_in_flight_) {
+    stop_pending_ = true;
+    stop_cb_ = std::move(cb);
+    stop_arg_ = arg;
+    return;
+  }
+  stop_cb_ = std::move(cb);
+  stop_arg_ = arg;
+  finish_stop(0);
 }
 
 void aos_runtime::close() {

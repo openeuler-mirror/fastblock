@@ -15,6 +15,7 @@
 #include <spdk/bdev.h>
 #include <spdk/thread.h>
 
+#include <deque>
 #include <string>
 
 namespace fastblock::aos {
@@ -52,7 +53,9 @@ public:
 
   void close();
 
-  // Max concurrent write_at/append I/Os (default 32). Reactor-thread only.
+  // Max concurrent write_at/append I/Os. Default 1: aio bounce/shared
+  // DMA plus in-flight cursor notes tear records when QD>1.
+  // Extra submits are queued, never -EAGAIN after reserve().
   void set_max_write_inflight(uint32_t n);
   uint32_t max_write_inflight() const { return max_write_inflight_; }
   uint32_t write_inflight() const { return write_inflight_; }
@@ -82,6 +85,10 @@ private:
   static void flush_done(struct spdk_bdev_io* bdev_io, bool success,
                          void* cb_arg);
 
+  void submit_write(uint64_t phys_offset, void* data, uint64_t nbytes,
+                    append_complete cb, void* arg);
+  void pump_writes();
+
   bool ready() const { return desc_ != nullptr && channel_ != nullptr; }
 
   struct spdk_bdev* bdev_{nullptr};
@@ -93,9 +100,18 @@ private:
   uint64_t region_length_{0};  // capacity of this region
   uint64_t write_pointer_{0};  // relative to region start
 
-  // Concurrent write depth (queue depth > 1). Reads are unbounded for now.
-  uint32_t max_write_inflight_{32};
+  // Concurrent write depth. Reads are unbounded for now.
+  uint32_t max_write_inflight_{1};
   uint32_t write_inflight_{0};
+
+  struct pending_write {
+    uint64_t phys_offset{0};
+    void* data{nullptr};
+    uint64_t nbytes{0};
+    append_complete cb;
+    void* arg{nullptr};
+  };
+  std::deque<pending_write> write_q_;
 };
 
 } // namespace fastblock::aos

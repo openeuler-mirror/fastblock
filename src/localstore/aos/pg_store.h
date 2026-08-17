@@ -352,6 +352,9 @@ private:
     std::map<std::pair<uint64_t, uint64_t>, uint64_t> applied_writes;
     std::map<std::pair<uint64_t, uint64_t>, uint64_t> applied_discards;
     uint64_t delete_raft_index{0};
+    // Latest object_name record (GC must pin; otherwise recover/dump lose names).
+    uint64_t name_phys{0};
+    uint64_t name_len{0};
   };
 
   struct pending_op {
@@ -442,6 +445,7 @@ private:
   static void rewrite_after_flush(void* arg, int err);
   void apply_rewrite_phys(uint64_t object_id, uint64_t logical_offset,
                           uint64_t len, uint64_t new_data_phys);
+  void note_name_record(uint64_t object_id, uint64_t phys, uint64_t name_bytes);
 
   static void read_extent_done(void* arg, int err);
 
