@@ -19,6 +19,7 @@
 #include <spdk/log.h>
 
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <limits>
 #include <numeric>
@@ -43,15 +44,33 @@ private:
 
 public:
 
-    using correlation_index_type = uint32_t;
+    // 64-bit on-wire: (generation << 32) | index. index is what finish IMM
+    // carries (32-bit). generation stops late fragments from aliasing a reuse.
+    using correlation_index_type = uint64_t;
+
+    static uint32_t correlation_index_lo(correlation_index_type k) noexcept {
+        return static_cast<uint32_t>(k);
+    }
+
+    static uint32_t correlation_index_gen(correlation_index_type k) noexcept {
+        return static_cast<uint32_t>(k >> 32);
+    }
+
+    static correlation_index_type make_correlation_index(
+      uint32_t gen, uint32_t idx) noexcept {
+        return (static_cast<uint64_t>(gen) << 32) | idx;
+    }
 
     struct remote_info {
         uint32_t rkey;
         void* raddr;
     };
 
+    // is_inlined at 0, correlation_index at 8 in both headers so
+    // read_correlation_index can overlay inline_data on metadata.
     struct inline_data {
         uint8_t is_inlined{_inline_tag};
+        uint8_t _pad[7]{};
         correlation_index_type correlation_index{0};
         uint32_t io_length{0};
     };
@@ -60,6 +79,7 @@ public:
 
     struct metadata {
         uint8_t is_inlined{_no_inline_tag};
+        uint8_t _pad[7]{};
         correlation_index_type correlation_index{0};
         uint32_t metadata_count{1};
         uint32_t serial_no{0};
@@ -67,7 +87,11 @@ public:
         uint32_t io_count;
     };
 
-    static constexpr size_t metadata_header_size{sizeof(metadata)}; // 24
+    static constexpr size_t metadata_header_size{sizeof(metadata)};
+    static_assert(offsetof(inline_data, correlation_index) == 8);
+    static_assert(offsetof(metadata, correlation_index) == 8);
+    static_assert(offsetof(inline_data, is_inlined) == 0);
+    static_assert(offsetof(metadata, is_inlined) == 0);
 
 public:
 
@@ -249,7 +273,7 @@ public:
         SPDK_DEBUGLOG(
           msg,
           "[%p] _data_count: %ld, _transport_size: %ld, data->io_count: %d, "
-          "data->io_length: %d, data->is_lined: %d, data->correlation_index: %d, "
+          "data->io_length: %d, data->is_lined: %d, data->correlation_index: %lu, "
           "data->metadata_count: %d, data->serial_no: %d, _last_rm_info_index: %d, "
           "_rm_infos size: %d\n",
           this, _data_count, _transport_size, data->io_count, data->io_length,
@@ -616,7 +640,7 @@ private:
       metadata* m,
       const uint32_t io_count,
       const uint32_t io_length,
-      const uint32_t corr_idx,
+      const correlation_index_type corr_idx,
       const uint32_t serial_no) noexcept {
         m->is_inlined = _no_inline_tag;
         m->io_count = io_count;
@@ -626,7 +650,7 @@ private:
         m->metadata_count = _meta_count;
         SPDK_DEBUGLOG(
           msg,
-          "io_count: %d, io_length: %d, corr_idx: %d, serial_no: %d\n",
+          "io_count: %d, io_length: %d, corr_idx: %lu, serial_no: %d\n",
           io_count, io_length, corr_idx, serial_no);
     }
 
@@ -742,7 +766,7 @@ private:
 
                 SPDK_DEBUGLOG(
                   msg,
-                  "correlation index: %d, metadata{io_count: %d, io_length: %d, rm_info_counter: %ld, serial_no: %d}, "
+                  "correlation index: %lu, metadata{io_count: %d, io_length: %d, rm_info_counter: %ld, serial_no: %d}, "
                   "max_rm_info: %ld, _metas.size(): %ld, meta_counter: %ld\n",
                   _correlation_index, meta_ptr->io_count, meta_ptr->io_length, rm_info_counter + 1, meta_ptr->serial_no,
                   max_rm_info, _metas.size(), meta_counter);
