@@ -1,6 +1,7 @@
 /* Copyright (c) 2023-2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
  */
+#include "fastblock/msg/rdma/completed_key_ring.h"
 #include "fastblock/msg/rdma/probe.h"
 #include "fastblock/msg/rdma/types.h"
 
@@ -87,6 +88,24 @@ int main() {
   EXPECT_TRUE(dump.find("unknown_key=1") != std::string::npos);
   EXPECT_TRUE(dump.find("double=1") != std::string::npos);
   EXPECT_TRUE(dump.find("qp_teardown=1") != std::string::npos);
+
+  msg::rdma::completed_key_ring ring{4};
+  EXPECT_TRUE(!ring.contains(1));
+  ring.remember(11);
+  ring.remember(22);
+  ring.remember(33);
+  EXPECT_TRUE(ring.contains(11));
+  EXPECT_TRUE(ring.contains(22));
+  EXPECT_TRUE(ring.contains(33));
+  ring.remember(44);
+  ring.remember(55); // evicts 11
+  EXPECT_TRUE(!ring.contains(11));
+  EXPECT_TRUE(ring.contains(55));
+  EXPECT_TRUE(ring.contains(22));
+
+  const auto packed = (static_cast<uint64_t>(7) << 32) | 42u;
+  EXPECT_TRUE((packed >> 32) == 7);
+  EXPECT_TRUE(static_cast<uint32_t>(packed) == 42);
 
   if (g_failures != 0) {
     std::fprintf(stderr, "%d fail_soft checks failed\n", g_failures);
