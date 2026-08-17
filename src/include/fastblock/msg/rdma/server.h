@@ -12,6 +12,7 @@
 
 #include "fastblock/msg/rdma/connection_id.h"
 #include "fastblock/msg/rdma/cq.h"
+#include "fastblock/msg/rdma/probe.h"
 #include "fastblock/msg/rdma/socket.h"
 #include "fastblock/msg/rdma/oob_payload.h"
 #include "fastblock/msg/rdma/transport_data.h"
@@ -320,7 +321,8 @@ private:
 
     void handle_timeout_task(std::unique_ptr<rpc_task> task) {
         SPDK_ERRLOG("ERROR: Timeout on task %d\n", task->id);
-        ++rpc_timeout;
+        ++rdma_probe.rpc_timeout;
+        ++rdma_probe.rpc_complete_fail;
         enqueue_reply(std::move(task), status::request_timeout);
     }
 
@@ -334,10 +336,13 @@ private:
         if (not make_response_data(task.get(), s) or
             not task->response_data or
             not task->response_data->prepared()) {
-            ++rpc_pool_exhausted;
-            SPDK_NOTICELOG(
-              "drop rpc task %d, cannot prepare reply status %s, pool_exhausted=%lu\n",
-              task->id, string_status(s), rpc_pool_exhausted);
+            ++rdma_probe.rpc_pool_exhausted;
+            ++rdma_probe.rpc_complete_fail;
+            SPDK_WARNLOG(
+              "drop rpc task %d, cannot prepare reply status %s, data_free=%zu pool_exhausted=%lu\n",
+              task->id, string_status(s),
+              _data_pool ? _data_pool->size() : 0,
+              rdma_probe.rpc_pool_exhausted);
             drop_rpc_task(std::move(task));
             return false;
         }
@@ -376,6 +381,10 @@ private:
     }
 
     void close_connection(connection_record* conn) {
+        ++rdma_probe.rpc_qp_teardown;
+        SPDK_ERRLOG(
+          "qp teardown server close_connection qp_teardown=%lu (not unknown_key)\n",
+          rdma_probe.rpc_qp_teardown);
         _meta_pool->remove_connection();
         _data_pool->remove_connection();
         conn->recv_pool->put_bulk(std::move(conn->recv_ctx), _opts->per_post_recv_num);
@@ -779,10 +788,13 @@ private:
 
         SPDK_DEBUGLOG(msg, "task id is %d, task->response_data addr is %p\n", task->id, task->response_data.get());
         if (not task->response_data or not task->response_data->prepared()) {
-            ++rpc_pool_exhausted;
-            SPDK_NOTICELOG(
-              "drop unprepared reply task %d, pool_exhausted=%lu\n",
-              task->id, rpc_pool_exhausted);
+            ++rdma_probe.rpc_pool_exhausted;
+            ++rdma_probe.rpc_complete_fail;
+            SPDK_WARNLOG(
+              "drop unprepared reply task %d, data_free=%zu pool_exhausted=%lu\n",
+              task->id,
+              _data_pool ? _data_pool->size() : 0,
+              rdma_probe.rpc_pool_exhausted);
             drop_rpc_task(std::move(task));
             _reply_task_list.pop_front();
             return SPDK_POLLER_BUSY;
@@ -804,6 +816,7 @@ private:
 
             return SPDK_POLLER_BUSY;
         }
+        ++rdma_probe.rpc_complete_ok;
         SPDK_INFOLOG(msg, "send reply of rpc task %d\n", task->id);
         _reply_task_list.pop_front();
 
@@ -838,11 +851,34 @@ private:
         return SPDK_POLLER_BUSY;
     }
 
+    void maybe_dump_rpc_stats() {
+        auto now = std::chrono::steady_clock::now();
+        if (now < _next_stats_dump) {
+            return;
+        }
+        _next_stats_dump = now + std::chrono::seconds{default_rpc_stats_dump_interval_s};
+        const auto inflight =
+          _task_list.size() + _read_task_list.size() +
+          _on_fligh_tasks.size() + _reply_task_list.size();
+        SPDK_NOTICELOG(
+          "rpc stats server inflight=%zu data_inuse=%zu data_free=%zu data_wm=%lu "
+          "meta_inuse=%zu meta_free=%zu meta_wm=%lu %s\n",
+          inflight,
+          _data_pool ? _data_pool->inuse() : 0,
+          _data_pool ? _data_pool->size() : 0,
+          _data_pool ? _data_pool->watermark_hits() : 0,
+          _meta_pool ? _meta_pool->inuse() : 0,
+          _meta_pool ? _meta_pool->size() : 0,
+          _meta_pool ? _meta_pool->watermark_hits() : 0,
+          rdma_probe.fmt_rpc().c_str());
+    }
+
     int handle_rpc_task() {
         if (_is_terminated) {
             return SPDK_POLLER_IDLE;
         }
 
+        maybe_dump_rpc_stats();
         process_timeout_scan();
 
         if (_task_list.empty()) {
@@ -983,10 +1019,11 @@ private:
                 task_it = it;
                 _task_list.push_back(std::move(task));
             } else if (task_it == conn->rpc_tasks.end()) {
-                ++rpc_unknown_key;
-                SPDK_NOTICELOG(
+                ++rdma_probe.rpc_unknown_key;
+                SPDK_INFOLOG(
+                  msg,
                   "unknown rpc task id %d, drop and keep QP, unknown_key=%lu\n",
-                  task_id, rpc_unknown_key);
+                  task_id, rdma_probe.rpc_unknown_key);
                 auto rc = post_recv(conn.get(), recv_ctx);
                 if (rc) {
                     SPDK_ERRLOG("ERROR: Post receive wr error, '%s'\n", rc->message().c_str());
@@ -1435,11 +1472,11 @@ private:
     event_channel _channel{};
     rpc_task::server_id_type _task_id_gen{0};
     std::unique_ptr<stop_context> _stop_ctx{nullptr};
+    std::chrono::steady_clock::time_point _next_stats_dump{
+      std::chrono::steady_clock::now()};
 
 public:
-    uint64_t rpc_pool_exhausted{0};
-    uint64_t rpc_unknown_key{0};
-    uint64_t rpc_timeout{0};
+    probe rdma_probe{};
 };
 
 } // namespace rdma
