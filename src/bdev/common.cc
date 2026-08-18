@@ -9,8 +9,10 @@
  * See the Mulan PSL v2 for more details.
  */
 
+#include <csignal>
 #include <optional>
 #include "fastblock/bdev/global.h"
+#include "fastblock/msg/channel.h"
 #include "common.h"
 
 SPDK_LOG_REGISTER_COMPONENT(common)
@@ -122,15 +124,22 @@ void fb_client_init(std::optional<std::function<void()>> &&cb)
 		mon_eps.emplace_back(std::move(mon_addr), utils::default_monitor_port);
 	}
 
+    try {
+        msg::resolve_transport(g_pt);
+    } catch (const std::exception& e) {
+        SPDK_ERRLOG("ERROR: %s\n", e.what());
+        std::raise(SIGINT);
+        return;
+    }
+
     auto core_begin = core_sharded::system::begin();
     core_sharded::construct(core_begin, core_sharded::system::capacity(), g_app_name);
 
-	global::rpc_cli_opts = msg::rdma::client::make_options(g_pt);
 	auto core_no = ::spdk_env_get_current_core();
 	::spdk_cpuset cpumask{};
 	::spdk_cpuset_zero(&cpumask);
 	::spdk_cpuset_set_cpu(&cpumask, core_no, true);
-	global::conn_cache = std::make_shared<::connect_cache>(&cpumask, global::rpc_cli_opts);
+	global::conn_cache = std::make_shared<::connect_cache>(&cpumask, g_pt);
 
 	global::mon_client = std::make_unique<monitor::client>(mon_eps, std::move(cb));
     global::mon_client->start();
