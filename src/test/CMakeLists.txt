@@ -28,6 +28,21 @@ add_executable(pg_shard_table_cow_test
 )
 add_test(NAME pg_shard_table_cow_test COMMAND pg_shard_table_cow_test)
 
+add_executable(sock_frame_test
+  sock_frame_test.cc
+)
+target_include_directories(sock_frame_test
+  PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/include)
+target_link_libraries(sock_frame_test
+  PRIVATE
+    osd_msg
+    raft_msg
+    spdk::spdk)
+add_test(NAME sock_frame_test COMMAND sock_frame_test)
+
+if(FASTBLOCK_WITH_RDMA)
 add_executable(disk_log_trim_test
   disk_log_trim_test.cc
 )
@@ -155,3 +170,4 @@ target_link_libraries(snapshot_pg_stress
     osd_msg
     msg
 )
+endif()
