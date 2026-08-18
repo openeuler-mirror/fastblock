@@ -10,6 +10,14 @@
 - soft-RoCE（`rxe_*` / `rdmanic`）默认不算 RNIC。要走 rxe 设 `FASTBLOCK_USE_RXE=1`，或显式 `"msg_transport": "rdma"`。
 - 显式 `"sock"` / `"rdma"` 覆盖自动选择。强制 `rdma` 但没有 ACTIVE 设备会拒绝启动。
 - 集群里每台机器必须选出同一个后端；混运输没有 in-band 协商。
+- `vstart.sh -m dev`：有硬件 RNIC 写 `"rdma"`，否则写 `"sock"`，**不再默认造 `rdmanic`**。rxe 用 `FASTBLOCK_USE_RXE=1` 或 `-n rdmanic`。
+- vstart **只改** OSD 的 `fastblock.json`。起 `fastblock-nvmf-tgt` / `fastblock-vhost` 必须把同一个 `msg_transport` 抄进 `nvmf_tgt.json` / `vhost.json`：
+
+```bash
+# 或手工：jq --arg t sock '.msg_transport = $t' /etc/fastblock/nvmf_tgt.json
+scripts/sync-msg-transport.sh /etc/fastblock/fastblock.json \
+  /etc/fastblock/nvmf_tgt.json /etc/fastblock/vhost.json
+```
 
 ```bash
 # 帧单测（不需要网卡 / hugepage）
