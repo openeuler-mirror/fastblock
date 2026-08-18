@@ -21,6 +21,7 @@
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
 
+#include <csignal>
 #include <fstream>
 #include <sstream>
 #include <chrono>
@@ -529,10 +530,9 @@ void on_thread_received_msg(void* arg) {
     ::spdk_cpuset_zero(&cpumask);
     ::spdk_cpuset_set_cpu(&cpumask, core_no, true);
     auto* thd = ::spdk_thread_create(FB_FMT_1("blkbench_%1%", ::spdk_env_get_current_core()).c_str(), &cpumask);
-    auto opts = msg::rdma::client::make_options(g_pt);
     ctx->blk_client = std::make_unique<::libblk_client>(
       mon_client.get(),
-      thd, opts);
+      thd, g_pt);
     SPDK_DEBUGLOG(bbench, "starting block client\n");
     ctx->blk_client->start([] () {
         SPDK_NOTICELOG("block client started on core %d\n", ::spdk_env_get_current_core());
@@ -795,8 +795,7 @@ void on_app_start(void* arg) {
     ::spdk_cpuset_zero(&cpumask);
     ::spdk_cpuset_set_cpu(&cpumask, core_no, true);
 
-    auto opts = msg::rdma::client::make_options(g_pt);
-    conn_cache = std::make_shared<::connect_cache>(&cpumask, opts);
+    conn_cache = std::make_shared<::connect_cache>(&cpumask, g_pt);
     monitor::client::on_cluster_map_initialized_type cb = [watcher_ctx] () {
         int32_t pool_id;
         if(!mon_client->get_pool_id(watcher_ctx->pool_name, pool_id)){
