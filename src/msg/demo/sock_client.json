@@ -1,0 +1,6 @@
+{
+    "server_address": "127.0.0.1",
+    "server_port": 18080,
+    "msg_client_rpc_timeout_us": 200000,
+    "msg_client_rpc_batch_size": 1024
+}
