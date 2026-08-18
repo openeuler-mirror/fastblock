@@ -295,9 +295,8 @@ void on_client_thread(void*) {
   ::spdk_cpuset cpumask{};
   ::spdk_cpuset_zero(&cpumask);
   ::spdk_cpuset_set_cpu(&cpumask, core_no, true);
-  auto opts = msg::rdma::client::make_options(g_pt);
   g_app.blk_client =
-      std::make_unique<libblk_client>(g_mon_client.get(), g_app.io_thread, opts);
+      std::make_unique<libblk_client>(g_mon_client.get(), g_app.io_thread, g_pt);
   g_app.blk_client->start([]() {
     SPDK_NOTICELOG("image_verify client started\n");
     start_io();
@@ -413,8 +412,7 @@ void on_app_start(void*) {
   ::spdk_cpuset cpumask{};
   ::spdk_cpuset_zero(&cpumask);
   ::spdk_cpuset_set_cpu(&cpumask, core_no, true);
-  auto opts = msg::rdma::client::make_options(g_pt);
-  g_conn_cache = std::make_shared<connect_cache>(&cpumask, opts);
+  g_conn_cache = std::make_shared<connect_cache>(&cpumask, g_pt);
 
   monitor::client::on_cluster_map_initialized_type map_cb = []() {
     SPDK_NOTICELOG("cluster map ready\n");
