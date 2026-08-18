@@ -23,6 +23,7 @@ struct options {
     bool zcopy{true};
     uint32_t max_frame_bytes{default_max_frame_bytes};
     uint32_t max_rpc_bytes{default_max_rpc_bytes};
+    uint32_t ae_max_oob_bytes{default_ae_max_oob_bytes};
     uint32_t max_inflight_bytes{default_max_inflight_bytes};
     uint32_t max_process_inflight_bytes{default_max_process_inflight_bytes};
     uint32_t max_inflight_rpcs{default_rpc_batch_size};
@@ -36,7 +37,7 @@ struct options {
     std::chrono::microseconds rpc_timeout{rdma::default_rpc_timeout_us};
     int64_t rpc_batch_size{default_rpc_batch_size};
 
-    static std::shared_ptr<options> make(boost::property_tree::ptree& conf) {
+    static std::shared_ptr<options> make(const boost::property_tree::ptree& conf) {
         auto opts = std::make_shared<options>();
         if (conf.count("msg_server_bind_address")) {
             opts->bind_address = conf.get<std::string>("msg_server_bind_address");
@@ -46,6 +47,9 @@ struct options {
         }
         if (conf.count("msg_sock_max_rpc_bytes")) {
             opts->max_rpc_bytes = conf.get<uint32_t>("msg_sock_max_rpc_bytes");
+        }
+        if (conf.count("msg_sock_ae_max_oob_bytes")) {
+            opts->ae_max_oob_bytes = conf.get<uint32_t>("msg_sock_ae_max_oob_bytes");
         }
         if (conf.count("msg_sock_max_inflight_bytes")) {
             opts->max_inflight_bytes = conf.get<uint32_t>("msg_sock_max_inflight_bytes");

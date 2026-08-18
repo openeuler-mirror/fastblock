@@ -16,22 +16,33 @@
 #include <vector>
 #include <cstdint>
 
-#include "fastblock/msg/rdma/client.h"
+#include "fastblock/msg/channel.h"
 #include "fastblock/base/core_sharded.h"
 #include "fastblock/utils/err_num.h"
+#include "fastblock/utils/utils.h"
+
+#include <boost/property_tree/ptree.hpp>
 
 class connect_cache{
 public:
-    using connect_ptr = std::shared_ptr<msg::rdma::client::connection>;
-    using transport_client_ptr = std::shared_ptr<msg::rdma::client>;
+    using connect_ptr = std::shared_ptr<msg::channel>;
+    using transport_client_ptr = std::shared_ptr<msg::client>;
 
-    connect_cache(::spdk_cpuset* cpumask, std::shared_ptr<msg::rdma::client::options> opts, int sock_id = SPDK_ENV_SOCKET_ID_ANY)
+    connect_cache(
+      ::spdk_cpuset* /*cpumask*/,
+      const boost::property_tree::ptree& conf,
+      int sock_id = SPDK_ENV_SOCKET_ID_ANY)
       : _mutex(PTHREAD_MUTEX_INITIALIZER)
       , _shard_cores(core_sharded::get_shard_cores()) {
+          auto kind = msg::parse_transport(conf);
           auto shard_num = _shard_cores.size();
           for(uint32_t i = 0; i < shard_num; i++){
               std::string cli_name = "connect_cache" + std::to_string(i);
-              auto _transport = std::make_shared<msg::rdma::client>(cli_name, core_sharded::get_thread(i), opts, sock_id);
+              auto _transport = msg::make_client(kind, msg::client_ctor{
+                .name = std::move(cli_name),
+                .thread = core_sharded::get_thread(i),
+                .conf = &conf,
+                .numa_sock_id = sock_id});
               _transports.push_back(_transport);
               _transport->start();
               _cache.push_back(std::map<int, connect_ptr>());
@@ -46,11 +57,11 @@ public:
       int node_id,
       std::string addr,
       uint16_t port,
-      std::function<void(bool, msg::rdma::client::connection*)> raft_cb) {
+      std::function<void(bool, msg::channel*)> raft_cb) {
         _transports[shard_id]->emplace_connection(
           addr, port,
           [this, shard_id, node_id, raft_cb = std::move(raft_cb)]
-          (bool is_ok, std::shared_ptr<msg::rdma::client::connection> conn) {
+          (bool is_ok, std::shared_ptr<msg::channel> conn) {
               if (is_ok) {
                   _cache[shard_id][node_id] = conn;
               }
@@ -63,7 +74,7 @@ public:
         _transports[shard_id]->emplace_connection(
           addr, port,
           [this, shard_id, node_id, ctx, raft_cb = std::move(raft_cb)]
-          (bool is_ok, std::shared_ptr<msg::rdma::client::connection> conn) {
+          (bool is_ok, std::shared_ptr<msg::channel> conn) {
               if (is_ok) {
                 //   ::pthread_mutex_lock(&_mutex);
                   _cache[shard_id][node_id] = conn;

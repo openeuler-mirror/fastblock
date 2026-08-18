@@ -3,7 +3,7 @@
  */
 #pragma once
 
-#include "fastblock/msg/rdma/types.h"
+#include "fastblock/msg/bind_error.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -22,6 +22,7 @@ static constexpr uint8_t k_flag_known = k_flag_response | k_flag_more;
 
 static constexpr uint32_t default_max_frame_bytes = 5U * 1024U * 1024U;
 static constexpr uint32_t default_max_rpc_bytes = 16U * 1024U * 1024U;
+static constexpr uint32_t default_ae_max_oob_bytes = 8U * 1024U * 1024U;
 static constexpr uint32_t default_max_inflight_bytes = 16U * 1024U * 1024U;
 static constexpr uint32_t default_max_process_inflight_bytes = 64U * 1024U * 1024U;
 static constexpr uint32_t default_max_conns = 128;
@@ -67,9 +68,13 @@ struct wire_reply_meta {
 } __attribute__((packed));
 static_assert(sizeof(wire_reply_meta) == 12, "wire_reply_meta must be 12 bytes");
 
-class bind_error : public std::runtime_error {
+class bind_error : public ::msg::bind_error {
 public:
-    explicit bind_error(const std::string& what) : std::runtime_error(what) {}
+    explicit bind_error(const std::string& what) : _what(what) {}
+    const char* what() const noexcept override { return _what.c_str(); }
+
+private:
+    std::string _what;
 };
 
 inline uint64_t make_correlation(uint32_t gen, uint32_t idx) noexcept {
