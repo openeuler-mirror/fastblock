@@ -1,7 +1,7 @@
 /* Copyright (c) 2023-2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
  */
-#include "fastblock/msg/rdma/oob_payload.h"
+#include "fastblock/msg/oob_payload.h"
 #include "fastblock/msg/sock/frame.h"
 #include "rpc/raft_msg.pb.h"
 
