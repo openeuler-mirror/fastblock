@@ -11,7 +11,6 @@
 
 #include "fastblock/client/fb_client.h"
 #include "fastblock/monclient/client.h"
-#include "fastblock/msg/rdma/client.h"
 #include "fastblock/utils/utils.h"
 
 #include <spdk/event.h>
