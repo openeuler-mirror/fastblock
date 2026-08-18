@@ -20,9 +20,10 @@ set -x
 #   4.3 in dev mode, a default pool will be created after cluster is deployed
 #   4.4 pro mode is for production, you may run this script multiple times to add multiple osds in different machines
 #   4.5 in pro mode, you should provide monitor ip address or disks for osds
-#   4.6 in pro mode, since using a virtual rdma nic doesn't make any sense, you should provide a rdma nic name
+#   4.6 in pro mode, provide a real RDMA nic with -n (soft-RoCE is not the default)
 # 5. ssh passwordless login should be configured between machines to add remote osds
-# 6. if rdma nic is not provided, we will use a virtual rdma nic(by kernel module rdma_rxe) 
+# 6. if no hardware RNIC is found, dev mode writes msg_transport=sock (does not create rdma_rxe).
+#    FASTBLOCK_USE_RXE=1 or -n rdmanic keeps the old soft-RoCE path.
 # 7. if some osds failed to start because of lacking of hugepage, you should apply enough hugepage before running this script
 
 osdcount=0
@@ -30,6 +31,7 @@ pgcount=8
 replica=3
 mode="dev"
 nic=""
+msgTransport=""
 disks=""
 bdevtype="aio"
 remoteIp=""
@@ -75,7 +77,7 @@ usage() {
     echo "  -p, --pgcount: pg count of the default pool in dev mode, default=8"
     echo "  -i, --ip: host ip address of the disk"
     echo "  -r, --replica: replica count, default=3"
-    echo "  -n, --nic: rdma nic name"
+    echo "  -n, --nic: hardware RDMA nic (mlx5). omitted: sock if no RNIC"
     echo "  -d, --disks: disks separated by comma(,)"
     echo "  -t, --bdevtype: type of bdev, can be nvme or aio, default to aio"
     echo "  -m, --mode: deployment mode, can be dev or pro, default to dev"
@@ -83,6 +85,7 @@ usage() {
     echo "Env:"
     echo "  FASTBLOCK_RPC_TIMEOUT_US: msg_*_rpc_timeout_us (default 1000000 = 1s;"
     echo "    long regression / snapshot-wait: 600000000)"
+    echo "  FASTBLOCK_USE_RXE=1: opt-in soft-RoCE (create rdmanic) instead of sock"
 
     exit 1
 }
@@ -257,8 +260,39 @@ function stopAllLocalOsds() {
     done
 }
 
+function isRxeName() {
+    case "$1" in
+        rdmanic|rxe*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+function wantRxe() {
+    [ "${FASTBLOCK_USE_RXE:-}" = "1" ]
+}
+
 function getFirstRdmaDevice() {
-    rdma link show | awk '/^link / {split($2, a, "/"); print a[1]; exit}'
+    # Skip soft-RoCE unless FASTBLOCK_USE_RXE=1.
+    rdma link show 2>/dev/null | awk -v allow_rxe="${FASTBLOCK_USE_RXE:-0}" '
+        /^link / {
+            split($2, a, "/");
+            name = a[1];
+            if (allow_rxe != "1" && (name == "rdmanic" || name ~ /^rxe/)) {
+                next;
+            }
+            print name;
+            exit
+        }'
+}
+
+function applyMsgTransport() {
+    _file=$1
+    _transport=$2
+    _nic=$3
+    jq --arg t "$_transport" --arg n "$_nic" '
+        .msg_transport = $t
+        | if $n != "" then .rdma_device_name = $n else del(.rdma_device_name) end
+    ' "$_file" > tmp_file.json && mv tmp_file.json "$_file"
 }
 
 function getPrimaryHostIp() {
@@ -314,6 +348,7 @@ function allocateOsdId() {
 function generateLocalBenchConfig() {
     _mons=$1
     _nic=$2
+    _transport=${msgTransport:-sock}
     ensureLocalDevDirs
     cat > "$configDir/block_bench.dev.json" <<EOF
 {
@@ -335,6 +370,7 @@ function generateLocalBenchConfig() {
   "mon_host": [
     "$_mons"
   ],
+  "msg_transport": "$_transport",
   "rdma_device_name": "$_nic",
   "msg_rdma_cq_num_entries": 1024,
   "msg_server_metadata_memory_pool_capacity": 256,
@@ -494,7 +530,7 @@ function processProCluster() {
         echo "monitor ip address is $ms"
 
         # each host can have different nic name
-        ssh $remoteIp "jq '.rdma_device_name = \"$nic\"' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile"
+        ssh $remoteIp "jq --arg n \"$nic\" '.msg_transport = \"rdma\" | .rdma_device_name = \$n' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile"
         IFS=',' read -r -a device_array <<< "$disks"
 
         for ((i=0; i<${#device_array[@]}; i++)); do
@@ -511,25 +547,37 @@ function generateNicConfig() {
     if [ "$nic" = "" ];then
         nic=$(getFirstRdmaDevice)
         if [ -z "$nic" ]; then
-            _netdev=$(ip -o link show up | awk -F': ' '$2 != "lo" {print $2; exit}' | cut -d@ -f1)
-            if [ -z "$_netdev" ]; then
-                echo "failed to detect a usable netdev for rdma_rxe"
-                exit 1
-            fi
-            if ! rdma link show | grep -q '^link rdmanic/'; then
-                rdma link add rdmanic type rxe netdev "$_netdev"
-                if [ "$?" != "0" ]; then
-                    echo "failed to create rxe device rdmanic on netdev $_netdev"
-                    echo "provide an existing rdma nic with -n, or pre-create rdmanic with sufficient privileges"
+            if wantRxe; then
+                _netdev=$(ip -o link show up | awk -F': ' '$2 != "lo" {print $2; exit}' | cut -d@ -f1)
+                if [ -z "$_netdev" ]; then
+                    echo "failed to detect a usable netdev for rdma_rxe"
                     exit 1
                 fi
+                if ! rdma link show | grep -q '^link rdmanic/'; then
+                    rdma link add rdmanic type rxe netdev "$_netdev"
+                    if [ "$?" != "0" ]; then
+                        echo "failed to create rxe device rdmanic on netdev $_netdev"
+                        echo "provide an existing rdma nic with -n, or pre-create rdmanic with sufficient privileges"
+                        exit 1
+                    fi
+                fi
+                nic="rdmanic"
+                msgTransport="rdma"
+                echo "FASTBLOCK_USE_RXE=1: using soft-RoCE device $nic"
+            else
+                msgTransport="sock"
+                echo "no hardware RNIC; writing msg_transport=sock (set FASTBLOCK_USE_RXE=1 for rxe)"
             fi
-            nic="rdmanic"
+        else
+            msgTransport="rdma"
         fi
-        jq '.rdma_device_name |= '\"$nic\"'' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
     else
-        jq '.rdma_device_name |= '\"$nic\"'' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
+        if isRxeName "$nic" && ! wantRxe; then
+            echo "warning: -n $nic is soft-RoCE; set FASTBLOCK_USE_RXE=1 to make this explicit"
+        fi
+        msgTransport="rdma"
     fi
+    applyMsgTransport "$defaultConfigFile" "$msgTransport" "$nic"
     isSm=$(isSmallMemory)
     echo $isSm
     if [ "$isSm" = "true" ];then
@@ -577,7 +625,7 @@ function parametersCheck(){
     # in dev mode, we only accept monString, osdcount, pgcount, replica
     # bdevtype, nic, disks, remote_ip are not allowed, because:
     # 1. bdevtype is always aio in dev mode because it's enough to run a dev osd;
-    # 2. nic is not required in dev mode, we will use a virtual rdma nic;
+    # 2. nic is not required in dev mode: hardware RNIC -> rdma, else sock;
     # 3. disks is not required in dev mode, we will use local file as backend of osd;
     # 4. remote_ip is not required in dev mode because all osds are local;
     if [ "$mode" = "dev" ]; then
@@ -601,15 +649,13 @@ function parametersCheck(){
             exit -1
         fi
 
-        # when no nic provided, we will use a virtual rdma nic, so we need to check if rdma_rxe can be loaded
-        # note that in a physical machine, rdma_rxe may not be loaded when you already have ofed installed and service started
-        # in a physical machine with rdma nic, ofed must be installed and service started
+        # Default is sock when there is no hardware RNIC. rxe is opt-in.
         if [ "$nic" = "" ];then
             nic=$(getFirstRdmaDevice)
-            if [ -z "$nic" ] && ! lsmod | grep -q '^rdma_rxe '; then
+            if [ -z "$nic" ] && wantRxe && ! lsmod | grep -q '^rdma_rxe '; then
                 modprobe rdma_rxe
                 if [ "$?" != "0" ]; then
-                    echo "modprobe rdma_rxe failed, specify a rdma nic or check if ofed is installed correctly"
+                    echo "modprobe rdma_rxe failed, specify a rdma nic or unset FASTBLOCK_USE_RXE"
                     exit 1
                 fi
             fi
