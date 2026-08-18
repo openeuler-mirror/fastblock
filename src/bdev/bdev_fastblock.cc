@@ -26,6 +26,7 @@
 #include <cstring>
 
 #include "bdev_fastblock.h"
+#include "common.h"
 #include "fastblock/client/libfblock.h"
 #include "fastblock/bdev/global.h"
 
@@ -636,7 +637,7 @@ bdev_fastblock_create_cb(void *io_device, void *ctx_buf)
     }
 
     global::vhost_worker_threads.at(hold_index) = bdev_thd;
-    auto blk_cli = std::make_shared<::libblk_client>(global::mon_client.get(), bdev_thd, global::rpc_cli_opts);
+    auto blk_cli = std::make_shared<::libblk_client>(global::mon_client.get(), bdev_thd, g_pt);
     auto* blk_cli_ptr = blk_cli.get();
     global::blk_clients.at(hold_index) = std::move(blk_cli);
     blk_cli_ptr->start([] () {
