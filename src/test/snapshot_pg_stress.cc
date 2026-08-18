@@ -192,9 +192,7 @@ static void snapshot_pg_stress(void* arg1)
     spdk_cpuset cpumask{};
     spdk_cpuset_zero(&cpumask);
     spdk_cpuset_set_cpu(&cpumask, core_no, true);
-    auto opts = msg::rdma::client::make_options(server->pt);
-
-    auto* cli = new osd_client(server, &cpumask, opts);
+    auto* cli = new osd_client(server, &cpumask, server->pt);
     auto connect_done = [cli, server](void*, int res) {
         if (res != err::E_SUCCESS) {
             SPDK_ERRLOG("connect failed: %s(%d)\n", err::string_status(res), res);
