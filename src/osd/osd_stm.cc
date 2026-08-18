@@ -579,12 +579,16 @@ void osd_stm::write_and_wait(
       new osd_service_complete<osd::write_reply>(this, request->object_name(),
         request->data().size(), response, done);
 
-    auto write_func = [this, request, write_complete](){
+    auto write_func = [this, write_complete,
+                       object_name = request->object_name(),
+                       offset = request->offset(),
+                       data = request->data(),
+                       image_snap_seq = request->image_snap_seq()]() {
         osd::write_cmd cmd;
-        cmd.set_object_name(request->object_name());
-        cmd.set_offset(request->offset());
-        if (request->image_snap_seq() != 0) {
-            cmd.set_image_snap_seq(request->image_snap_seq());
+        cmd.set_object_name(object_name);
+        cmd.set_offset(offset);
+        if (image_snap_seq != 0) {
+            cmd.set_image_snap_seq(image_snap_seq);
         } else if (_image_snap_seq != 0) {
             cmd.set_image_snap_seq(_image_snap_seq);
         }
@@ -592,13 +596,13 @@ void osd_stm::write_and_wait(
         cmd.SerializeToString(&buf);
 
         SPDK_DEBUGLOG(osd, "process write_request , pg %lu.%lu object_name %s offset %lu len %lu image_seq %lu\n",
-                     request->pool_id(), request->pg_id(), request->object_name().c_str(), request->offset(),
-                     request->data().size(), cmd.image_snap_seq());
+                     _pool_id, _pg_id, object_name.c_str(), offset,
+                     data.size(), cmd.image_snap_seq());
 
         auto entry_ptr = std::make_shared<raft_entry_t>();
         entry_ptr->set_type(RAFT_LOGTYPE_WRITE);
         entry_ptr->set_meta(std::move(buf));
-        entry_ptr->set_data(std::move(request->data()));
+        entry_ptr->set_data(std::move(data));
 
         get_raft()->raft_write_entry(entry_ptr, write_complete);
     };
@@ -633,7 +637,12 @@ void osd_stm::read_and_wait(
       new osd_service_complete<osd::read_reply>(this, request->object_name(),
         request->length(), response, done);
 
-    auto read_func = [this, request, response, read_complete](){
+    auto read_func = [this, response, read_complete,
+                      object_name = request->object_name(),
+                      offset = request->offset(),
+                      length = request->length(),
+                      raft_read_index = request->raft_read_index(),
+                      image_read_seq = request->image_read_seq()]() {
         if(!linearization()){
             SPDK_INFOLOG(osd, "!linearization\n");
             read_complete->complete(err::RAFT_ERR_NOT_LEADER);
@@ -641,15 +650,14 @@ void osd_stm::read_and_wait(
         }
 
         SPDK_INFOLOG(osd, "process read_request , pool %lu pg %lu object_name %s offset %lu len %lu\n",
-                     request->pool_id(), request->pg_id(), request->object_name().c_str(), request->offset(),
-                     request->length());
+                     _pool_id, _pg_id, object_name.c_str(), offset, length);
 
         if (_aos == nullptr) {
             read_complete->complete(-ENODEV);
             return;
         }
 
-        uint64_t len = utils::align_up<uint64_t>(request->length(), 512 * BLOCK_UNITS);
+        uint64_t len = utils::align_up<uint64_t>(length, 512 * BLOCK_UNITS);
         char* buf = (char*)spdk_zmalloc(len, 0x1000, NULL, _sockid, SPDK_MALLOC_DMA);
         if (buf == nullptr) {
             read_complete->complete(-ENOMEM);
@@ -659,11 +667,11 @@ void osd_stm::read_and_wait(
         ctx->buf = buf;
         ctx->complete = read_complete;
         ctx->response = response;
-        ctx->size = request->length();
+        ctx->size = length;
 
-        _aos->read(_pool_id, _pg_id, request->object_name(),
-                   request->offset(), buf, request->length(),
-                   request->raft_read_index(), request->image_read_seq(),
+        _aos->read(_pool_id, _pg_id, object_name,
+                   offset, buf, length,
+                   raft_read_index, image_read_seq,
                    read_obj_done, ctx);
     };
 
@@ -679,9 +687,10 @@ void osd_stm::delete_and_wait(
       new osd_service_complete<osd::delete_reply>(this, request->object_name(), 0,
         response, done);
 
-    auto delete_func = [this, request, delete_complete](){
+    auto delete_func = [this, delete_complete,
+                        object_name = request->object_name()]() {
         osd::delete_cmd cmd;
-        cmd.set_object_name(request->object_name());
+        cmd.set_object_name(object_name);
         if (_image_snap_seq != 0) {
             cmd.set_image_snap_seq(_image_snap_seq);
         }
@@ -689,7 +698,7 @@ void osd_stm::delete_and_wait(
         cmd.SerializeToString(&buf);
 
         SPDK_INFOLOG(osd, "process delete_request , pool %lu pg %lu object_name %s \n",
-                     request->pool_id(), request->pg_id(), request->object_name().c_str());
+                     _pool_id, _pg_id, object_name.c_str());
 
         auto entry_ptr = std::make_shared<raft_entry_t>();
         entry_ptr->set_type(RAFT_LOGTYPE_DELETE);
@@ -723,20 +732,23 @@ void osd_stm::image_snap_and_wait(const osd::image_snap_request* request,
         clos->Run();
     };
 
-    switch (request->op()) {
+    const auto op = request->op();
+    const auto snap_seq = request->image_snap_seq();
+    const auto new_image_seq = request->new_image_seq();
+    const auto raft_write_index = request->raft_write_index();
+    switch (op) {
     case osd::IMAGE_SNAP_CREATE:
-        create_image_snapshot(request->image_snap_seq(), finish, nullptr);
+        create_image_snapshot(snap_seq, finish, nullptr);
         break;
     case osd::IMAGE_SNAP_CLONE:
-        clone_image(request->image_snap_seq(), finish, nullptr);
+        clone_image(snap_seq, finish, nullptr);
         break;
     case osd::IMAGE_SNAP_RELEASE:
-        release_image_snapshot(request->image_snap_seq(), finish, nullptr);
+        release_image_snapshot(snap_seq, finish, nullptr);
         break;
     case osd::IMAGE_SNAP_FLATTEN:
-        flatten_image(request->image_snap_seq(), request->new_image_seq(),
-                      request->raft_write_index() == 0 ? 1
-                                                       : request->raft_write_index(),
+        flatten_image(snap_seq, new_image_seq,
+                      raft_write_index == 0 ? 1 : raft_write_index,
                       finish, nullptr);
         break;
     default:
