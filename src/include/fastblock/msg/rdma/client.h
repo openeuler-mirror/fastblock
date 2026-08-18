@@ -31,6 +31,8 @@
 #include <spdk/log.h>
 #include <spdk/thread.h>
 
+#include <functional>
+
 #include <google/protobuf/descriptor.h>
 #include <google/protobuf/message.h>
 #include <google/protobuf/service.h>
@@ -219,6 +221,7 @@ public:
         struct shutdown_context {
             connection* this_conn{nullptr};
             state shutdown_state{};
+            std::function<void()> on_done{};
         };
 
     private:
@@ -1124,6 +1127,11 @@ read_done:
         }
 
         bool handle_cqe() {
+            if (_resources_freed or _state == state::termianted) {
+                cqe_list.clear();
+                return false;
+            }
+
             if (cqe_list.empty()) {
                 return false;
             }
@@ -1159,6 +1167,13 @@ read_done:
                 }
 
                 auto* recv_ctx = it->second;
+                if (recv_ctx == nullptr or recv_ctx->mr == nullptr or
+                    recv_ctx->mr->addr == nullptr) {
+                    SPDK_ERRLOG(
+                      "ERROR: stale recv context wr id '%ld', drop\n", cqe->wr_id);
+                    _recv_ctx_map.erase(it);
+                    return true;
+                }
                 auto req_key = transport_data::read_correlation_index(recv_ctx);
                 auto req_it = _unresponsed_requests.find(req_key);
                 if (req_it == _unresponsed_requests.end()) {
@@ -1385,11 +1400,15 @@ read_done:
                       cqe_list.size(),
                       _onflight_send_wr);
                 }
+                auto on_done = std::move(_on_shutdown_done);
                 free_resources();
                 if (master && cm_id) {
                     master->handle_connection_shutdown(cm_id, conn_id, dispatch_id);
                 }
                 _state = state::termianted;
+                if (on_done) {
+                    on_done();
+                }
                 return true;
             }
 
@@ -1444,6 +1463,11 @@ read_done:
                 _sock->close();
             }
 
+            // Drop pending CQEs and recv keys before the pool/MRs go away.
+            // handle_cqe reads recv_ctx->mr->addr.
+            cqe_list.clear();
+            _recv_ctx_map.clear();
+
             if (_recv_ctx and _recv_pool) {
                 _recv_pool->put_bulk(std::move(_recv_ctx), _opts->per_post_recv_num);
             }
@@ -1452,11 +1476,9 @@ read_done:
                 _recv_pool.reset();
             }
 
-            _recv_ctx_map.clear();
             _free_server_list.clear();
             _ctrl_ops.clear();
             _external_send_ctx.clear();
-            cqe_list.clear();
 
             _sock.reset();
             _busy_list.reset();
@@ -1467,7 +1489,28 @@ read_done:
             _opts.reset();
         }
 
-        auto async_shutdown(const state shutdown_state = state::shutdown) {
+        auto async_shutdown(
+          const state shutdown_state = state::shutdown,
+          std::function<void()> on_done = nullptr) {
+            if (on_done) {
+                if (_on_shutdown_done) {
+                    auto prev = std::move(_on_shutdown_done);
+                    _on_shutdown_done = [prev = std::move(prev),
+                                         on_done = std::move(on_done)]() {
+                        prev();
+                        on_done();
+                    };
+                } else {
+                    _on_shutdown_done = std::move(on_done);
+                }
+            }
+            if (!_master) {
+                if (_on_shutdown_done) {
+                    auto cb = std::move(_on_shutdown_done);
+                    cb();
+                }
+                return 0;
+            }
             auto* thread = _master->get_thread();
             auto* ctx = new shutdown_context{this, shutdown_state};
             return ::spdk_thread_send_msg(thread, on_async_shutdown, ctx);
@@ -1535,13 +1578,22 @@ read_done:
             return _state == state::termianted;
         }
 
+        bool resources_freed() const noexcept {
+            return _resources_freed;
+        }
+
         void shutdown_now() {
+            auto on_done = std::move(_on_shutdown_done);
             free_resources();
             _state = state::termianted;
+            if (on_done) {
+                on_done();
+            }
         }
 
         bool task_queue_empty() {
-            return _unresponsed_requests.empty() and _wait_read_requests.empty();
+            return _unresponsed_requests.empty() and _wait_read_requests.empty()
+              and cqe_list.empty();
         }
 
         bool shutdown_drained() {
@@ -1592,6 +1644,7 @@ read_done:
         std::chrono::system_clock::time_point _shutdown_timeout{};
         std::unordered_map<uint64_t, external_send_context> _external_send_ctx{};
         bool _resources_freed{false};
+        std::function<void()> _on_shutdown_done{};
         bool _quota_held{false};
         std::list<quarantined_mr> _mr_quarantine{};
         std::chrono::steady_clock::time_point _next_stats_dump{
@@ -1782,8 +1835,15 @@ public:
 
     static void on_remove_connection(void* arg){
         auto* ctx = reinterpret_cast<remove_connection_context*>(arg);
-        if (ctx->conn && not ctx->conn->is_terminated()) {
-            ctx->conn->async_shutdown();
+        if (ctx->conn && not ctx->conn->is_terminated() &&
+            not ctx->conn->resources_freed()) {
+            ctx->conn->async_shutdown(
+              connection::state::shutdown,
+              [ctx]() {
+                  ctx->cb(true);
+                  delete ctx;
+              });
+            return;
         }
         ctx->cb(true);
         delete ctx;
@@ -2129,6 +2189,9 @@ public:
             }
 
             conn = dispatch_it->second;
+            if (!conn or conn->is_terminated() or conn->resources_freed()) {
+                continue;
+            }
 
             if (cqe->status != ::IBV_WC_SUCCESS) {
                 if (not conn->is_terminated()) {
