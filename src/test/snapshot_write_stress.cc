@@ -309,8 +309,7 @@ static void start_worker()
     spdk_cpuset_set_cpu(&cpumask, current_core, true);
 
     g_ctx.blk_thread = spdk_thread_create("snapshot_stress_blk", &cpumask);
-    auto opts = msg::rdma::client::make_options(g_ctx.pt);
-    g_ctx.fb_client = std::make_unique<fblock_client>(g_ctx.mon_client.get(), g_ctx.blk_thread, opts);
+    g_ctx.fb_client = std::make_unique<fblock_client>(g_ctx.mon_client.get(), g_ctx.blk_thread, g_ctx.pt);
     g_ctx.fb_client->start([]() {
         SPDK_NOTICELOG("snapshot_write_stress block client started\n");
         if (g_mode == run_mode::write) {
