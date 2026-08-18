@@ -83,6 +83,8 @@ typedef struct
     int raft_heartbeat_period_time_msec;
     int raft_lease_time_msec;
     int raft_election_timeout_msec;
+    int boot_attempt{0};
+    struct spdk_poller* boot_retry_poller{nullptr};
 } server_t;
 
 static const char* g_json_conf{nullptr};
@@ -354,30 +356,27 @@ static void service_init(partition_manager* pm, server_t *server, std::function<
     }
 }
 
-void start_monitor(server_t* ctx) {
-    g_monitor_client->start();
-    monitor::client::on_response_callback_type cb =
-      [] (const monitor::client::response_status s, monitor::client::request_context* req_ctx) {
-            int result = s;
-            if (result != err::E_SUCCESS) {
-                SPDK_ERRLOG("ERROR: OSD boot failed: %s\n", err::string_status(result));
-                osd_exit_code = result;
-                std::raise(SIGINT);
-                return;
-            }
+static void send_osd_boot_request(server_t* ctx);
 
-            req_ctx->this_client->start_cluster_map_poller();
-            g_data_statistics->set_mon_client(g_monitor_client);
-      };
+static int osd_boot_retry_poller(void* arg) {
+    auto* ctx = static_cast<server_t*>(arg);
+    if (ctx->boot_retry_poller) {
+        spdk_poller_unregister(&ctx->boot_retry_poller);
+        ctx->boot_retry_poller = nullptr;
+    }
+    send_osd_boot_request(ctx);
+    return SPDK_POLLER_IDLE;
+}
 
+static void send_osd_boot_request(server_t* ctx) {
     std::map<uint32_t, utils::core_shard_map> sharded_ports{};
     uint32_t index = 0;
     uint32_t core_id = 0;
-    uint32_t port = 0;
-    uint32_t raw_port = 0;
     SPDK_ENV_FOREACH_CORE(core_id){
-        port = ctx->rpc_servers[index]->listen_port();
-        raw_port = global_raw_tcp_server ? global_raw_tcp_server->listen_port(index) : 0;
+        const uint32_t port = ctx->rpc_servers[index]->listen_port();
+        const uint32_t raw_port = global_raw_tcp_server
+          ? global_raw_tcp_server->listen_port(index)
+          : 0;
         SPDK_DEBUGLOG(
           osd,
           "core id : %u, shard_id: %u, rdma port: %u, raw tcp port: %u\n",
@@ -406,7 +405,32 @@ void start_monitor(server_t* ctx) {
       1024 * 1024,
       core_sharded::get_core_sharded().count(),
       ss.str(),
-      std::move(cb));
+      [ctx] (const monitor::client::response_status s, monitor::client::request_context* req_ctx) {
+            if (s == monitor::client::response_status::ok) {
+                req_ctx->this_client->start_cluster_map_poller();
+                g_data_statistics->set_mon_client(g_monitor_client);
+                return;
+            }
+            if (s == monitor::client::response_status::OSD_ERR_ID_CONFLICT &&
+                ctx->boot_attempt < 30) {
+                ctx->boot_attempt++;
+                SPDK_NOTICELOG(
+                  "OSD boot conflict (still marked up), retry %d/30 in 1s\n",
+                  ctx->boot_attempt);
+                ctx->boot_retry_poller = SPDK_POLLER_REGISTER(
+                  osd_boot_retry_poller, ctx, 1000 * 1000);
+                return;
+            }
+            SPDK_ERRLOG("ERROR: OSD boot failed: %s\n", err::string_status(s));
+            osd_exit_code = s;
+            std::raise(SIGINT);
+      });
+}
+
+void start_monitor(server_t* ctx) {
+    g_monitor_client->start();
+    ctx->boot_attempt = 0;
+    send_osd_boot_request(ctx);
 }
 
 static void pm_init(void *arg){
