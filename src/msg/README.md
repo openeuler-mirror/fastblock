@@ -2,7 +2,14 @@
 
 该目录下的代码包含 *RDMA RPC* 以及 *sock RPC*（`msg::sock`，SPDK posix `sock_group`）。
 
-`msg::sock` 是无 RNIC / 开发默认后端（设计见 `docs/msg_sock_transport_design.md`）。PR1 只提供运输层 + demo + 帧单测，OSD / Raft 尚未认 `msg_transport=sock`。
+`msg::sock` 是无 RNIC / 开发默认后端（设计见 `docs/msg_sock_transport_design.md`）。
+
+启动时 `resolve_transport` 按网卡决定运输：
+
+- `msg_transport` 缺省或 `"auto"`：有可打开的硬件 RNIC（ACTIVE，非 rxe）→ `rdma`；否则 → `sock`。
+- soft-RoCE（`rxe_*` / `rdmanic`）默认不算 RNIC。要走 rxe 设 `FASTBLOCK_USE_RXE=1`，或显式 `"msg_transport": "rdma"`。
+- 显式 `"sock"` / `"rdma"` 覆盖自动选择。强制 `rdma` 但没有 ACTIVE 设备会拒绝启动。
+- 集群里每台机器必须选出同一个后端；混运输没有 in-band 协商。
 
 ```bash
 # 帧单测（不需要网卡 / hugepage）
