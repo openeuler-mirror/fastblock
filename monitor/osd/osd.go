@@ -403,12 +403,18 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 
 	oinfo.RwMutex.Lock()
 
-	oldIsUp := oinfo.IsUp
-	if oldIsUp {
+	if oinfo.Uuid != "" && uuid != "" && oinfo.Uuid != uuid {
 		oinfo.RwMutex.Unlock()
 		AllOSDInfo.RwMutex.Unlock()
-		log.Warn(ctx, "osd is up.")
+		log.Warn(ctx, "osd ", id, " uuid mismatch, reject boot")
 		return OSD_ERR_ID_CONFLICT
+	}
+
+	oldIsUp := oinfo.IsUp
+	if oldIsUp {
+		// Same id, new process (new ports). Publish a replacement osdmap
+		// instead of rejecting; stale IsUp is common after kill -9.
+		log.Info(ctx, "osd ", id, " already up, accepting replacement boot")
 	}
 	oinfo.Config = osd_config
 
