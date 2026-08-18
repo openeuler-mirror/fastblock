@@ -82,15 +82,15 @@ void connection::detach_and_close() {
     }
 }
 
-void connection::async_shutdown() {
+int connection::async_shutdown() {
     if (_thread && _thread != ::spdk_get_thread()) {
-        ::spdk_thread_send_msg(
+        return ::spdk_thread_send_msg(
           _thread,
           [](void* arg) { static_cast<connection*>(arg)->teardown("async_shutdown"); },
           this);
-        return;
     }
     teardown("async_shutdown");
+    return 0;
 }
 
 void connection::teardown(const char* why) {
