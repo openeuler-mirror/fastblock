@@ -88,6 +88,9 @@ public:
     void send_reply(uint64_t correlation, rdma::status st, google::protobuf::Message* body);
     void send_status(uint64_t correlation, rdma::status st);
     void inject_unknown_frame();
+    // Drop one server-side inbound RPC from inflight + process quota.
+    // Must be called exactly once per reserved inbound (dispatch fail or method done).
+    void finish_server_rpc(size_t reserved);
 
     uint32_t inflight_rpcs() const noexcept { return _inflight_rpcs; }
     size_t inflight_bytes() const noexcept { return _inflight_bytes; }
@@ -119,6 +122,7 @@ private:
     };
 
     void complete_rpc(pending_rpc* req, rpc_fail why, const char* detail = nullptr);
+    void release_inflight(size_t reserved);
     void teardown(const char* why);
     void apply_sock_opts();
     hdr_status ingest_bytes();
