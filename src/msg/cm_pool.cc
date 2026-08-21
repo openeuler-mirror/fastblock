@@ -147,7 +147,7 @@ private:
             ::spdk_sock_opts opts{};
             opts.opts_size = sizeof(opts);
             ::spdk_sock_get_default_opts(&opts);
-            opts.zcopy = true;
+            opts.zcopy = false;
             ::spdk_sock* s = ::spdk_sock_connect_ext(j.ip.c_str(), j.port, "posix", &opts);
             if (is_cancelled(j.generation)) {
                 forget(j.generation);
@@ -197,6 +197,8 @@ bool cm_pool::submit(std::string ip, uint16_t port, uint64_t generation,
 }
 
 void cm_pool::cancel(uint64_t generation) { g_pool.cancel(generation); }
+
+void cm_pool::forget(uint64_t generation) { g_pool.forget(generation); }
 
 } // namespace sock
 } // namespace msg
