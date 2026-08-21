@@ -27,6 +27,7 @@
 #include <spdk/env.h>
 
 #include <cerrno>
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <unordered_map>
@@ -100,6 +101,8 @@ private:
         /** Sticky PG home shard on the leader OSD; authoritative for data-path port. */
         uint32_t home_shard{fb_client_route::k_invalid_home_shard};
         std::chrono::system_clock::time_point epoch{};
+        std::chrono::steady_clock::time_point next_query_at{};
+        int32_t last_probe_osd{-1};
         bool is_valid{false};
         bool is_onflight{true};
     };
@@ -176,6 +179,96 @@ private:
     }
 
     static constexpr auto default_connection_retry_interval{std::chrono::seconds{1}};
+    static constexpr auto unreachable_osd_ttl{std::chrono::seconds{30}};
+    static constexpr auto leader_query_cooldown{std::chrono::milliseconds{50}};
+
+    bool is_osd_unreachable(const int32_t osd_id) {
+        if (osd_id <= 0) {
+            return false;
+        }
+        auto it = _osd_unreachable_until.find(osd_id);
+        if (it == _osd_unreachable_until.end()) {
+            return false;
+        }
+        if (std::chrono::steady_clock::now() >= it->second) {
+            _osd_unreachable_until.erase(it);
+            return false;
+        }
+        return true;
+    }
+
+    void mark_osd_reachable(const int32_t osd_id) {
+        if (osd_id > 0) {
+            _osd_unreachable_until.erase(osd_id);
+        }
+    }
+
+    static void drop_cached_leader(leader_osd_info* info) {
+        if (!info) {
+            return;
+        }
+        info->is_valid = false;
+        info->leader_id = -1;
+        info->port = 0;
+        info->addr.clear();
+    }
+
+    void mark_osd_unreachable(const int32_t osd_id) {
+        if (osd_id <= 0) {
+            return;
+        }
+        const bool already = is_osd_unreachable(osd_id);
+        _osd_unreachable_until[osd_id] =
+          std::chrono::steady_clock::now() + unreachable_osd_ttl;
+        for (auto& [_, info] : _leader_osd) {
+            if (info && info->leader_id == osd_id) {
+                drop_cached_leader(info.get());
+                info->is_onflight = false;
+            }
+        }
+        if (!already) {
+            SPDK_NOTICELOG("osd %d marked unreachable for leader lookup\n", osd_id);
+        }
+    }
+
+    utils::osd_info_t* pick_get_leader_osd(
+      const int32_t pool_id, const int32_t pg_id, const int32_t skip_osd = -1) {
+        auto& pools = _mon_cli->get_pg_map().pool_pg_map;
+        auto pool_it = pools.find(pool_id);
+        if (pool_it == pools.end()) {
+            return nullptr;
+        }
+        auto pg_it = pool_it->second.find(pg_id);
+        if (pg_it == pool_it->second.end() || !pg_it->second) {
+            return nullptr;
+        }
+        utils::osd_info_t* first{nullptr};
+        utils::osd_info_t* wrap{nullptr};
+        bool past_skip = skip_osd <= 0;
+        for (auto osd_id : pg_it->second->osds) {
+            if (is_osd_unreachable(osd_id)) {
+                continue;
+            }
+            auto* info = _mon_cli->get_osd_info(osd_id);
+            if (!info || !info->isup || !info->isin) {
+                continue;
+            }
+            if (!first) {
+                first = info;
+            }
+            if (osd_id == skip_osd) {
+                past_skip = true;
+                continue;
+            }
+            if (past_skip) {
+                return info;
+            }
+            if (!wrap) {
+                wrap = info;
+            }
+        }
+        return wrap ? wrap : first;
+    }
 
     static int32_t map_rpc_error(const msg::rdma::rpc_controller& ctrlr) noexcept {
         if (not ctrlr.Failed()) {
@@ -195,9 +288,11 @@ private:
     static bool should_retry_request(const int32_t state) noexcept {
         switch (state) {
         case -ENOLINK:
+        case -EAGAIN:
         case -ENOENT:
         case -EINVAL:
         case err::RAFT_ERR_NOT_LEADER:
+        case err::RAFT_ERR_NOT_FOUND_LEADER:
         case err::RAFT_ERR_NOT_FOUND_PG:
         case err::RAFT_ERR_PG_SHUTDOWN:
         case err::RAFT_ERR_NO_CONNECTED:
@@ -280,7 +375,10 @@ private:
         // NOT_LEADER means the cached identity is stale; the QP may still be
         // fine. Only tear the transport down when the link itself is dead.
         if (state == -ENOLINK || state == err::RAFT_ERR_NO_CONNECTED ||
-            state == err::OSD_DOWN) {
+            state == err::OSD_DOWN || state == err::RAFT_ERR_PG_SHUTDOWN) {
+            if (leader && leader->leader_id > 0) {
+                mark_osd_unreachable(leader->leader_id);
+            }
             invalidate_leader_transport(stack_ptr->leader_osd_key);
         }
 
@@ -330,14 +428,18 @@ private:
 
         state->is_connecting = false;
         if (!is_connected || !conn) {
-            SPDK_NOTICELOG("connect to %s:%u failed, will retry later\n", state->addr.c_str(), state->port);
+            SPDK_NOTICELOG("connect to %s:%u failed, skip this osd for leader lookup\n",
+                           state->addr.c_str(), state->port);
+            mark_osd_unreachable(state->node_id);
             reset_conn_state(*state, false);
-            state->next_connect_retry_at = std::chrono::steady_clock::now() + default_connection_retry_interval;
+            state->next_connect_retry_at =
+              std::chrono::steady_clock::now() + default_connection_retry_interval;
             _stubs.erase(conn_id);
             return;
         }
 
         SPDK_NOTICELOG("connected to %s:%u\n", state->addr.c_str(), state->port);
+        mark_osd_reachable(state->node_id);
         state->conn = std::move(conn);
         state->next_connect_retry_at = std::chrono::steady_clock::now();
         _stubs[conn_id] = std::make_unique<osd::rpc_service_osd_Stub>(state->conn.get());
@@ -382,6 +484,9 @@ private:
               port);
             return nullptr;
         }
+        if (is_osd_unreachable(node_id)) {
+            return nullptr;
+        }
 
         auto conn_id = to_connection_id(node_id, port);
         auto conn_state = get_or_create_conn_state(node_id, addr, port);
@@ -420,13 +525,19 @@ private:
     }
 
     int enqueue_leader_request(const int32_t pool_id, const int32_t pg_id) {
-        auto* first_osd = _mon_cli->get_pg_first_available_osd_info(pool_id, pg_id);
+        auto* info = get_leader_state(make_leader_key(pool_id, pg_id));
+        const int32_t skip = info ? info->last_probe_osd : -1;
+        auto* first_osd = pick_get_leader_osd(pool_id, pg_id, skip);
         if (not first_osd) {
             if(!_mon_cli->pool_is_exist(pool_id)){
                 return err::ERR_NOT_FOUND_POOL;
             }
-            SPDK_ERRLOG("ERROR: Cant find any available osd of pool_id:%d, pg_id: %d\n", pool_id, pg_id);
-            return EAGAIN;
+            SPDK_NOTICELOG("no reachable osd yet for get_leader of pool %d pg %d\n",
+                           pool_id, pg_id);
+            return -EAGAIN;
+        }
+        if (info) {
+            info->last_probe_osd = first_osd->node_id;
         }
 
         auto req = std::make_unique<leader_request_stack_type>();
@@ -496,16 +607,18 @@ private:
           ports);
 
         if (result.invalidate) {
-            SPDK_NOTICELOG(
-              "invalidate leader transport for osd %d home_shard %u port %d "
-              "(missing sticky home port or mon down)\n",
-              info->leader_id,
-              info->home_shard,
-              info->port);
+            if (info->is_valid) {
+                SPDK_NOTICELOG(
+                  "invalidate leader transport for osd %d home_shard %u port %d "
+                  "(missing sticky home port or mon down)\n",
+                  info->leader_id,
+                  info->home_shard,
+                  info->port);
+            }
             if (info->port != 0) {
                 invalidate_connection(to_connection_id(info->leader_id, info->port));
             }
-            info->is_valid = false;
+            drop_cached_leader(info);
             return;
         }
 
@@ -724,36 +837,42 @@ public:
             auto struct_key = from_leader_key(req_stk->leader_osd_key);
             if (info_it->second->is_onflight && !inserted) {
                 // already querying
-            } else if(enqueue_leader_request(struct_key.pool_id, struct_key.pg_id) == err::ERR_NOT_FOUND_POOL){
-                SPDK_ERRLOG("pool %d does not exist.\n", struct_key.pool_id);
-
-                auto cb_handler = utils::overload {
-                    [this, req_stk] (write_object_callback &cb) {
-                        cb(req_stk->ctx, err::ERR_NOT_FOUND_POOL);
-                    },
-
-                    [this, req_stk] (read_object_callback &cb) {
-                        cb(req_stk->ctx, req_stk->obj_index, std::string{}, err::ERR_NOT_FOUND_POOL);
-                    },
-
-                    [this, req_stk] (delete_callback &cb) {
-                        auto* bdev_io = reinterpret_cast<::spdk_bdev_io*>(req_stk->ctx);
-                        cb(bdev_io, err::ERR_NOT_FOUND_POOL);
-                    },
-
-                    [] ([[maybe_unused]] auto& _) {
-                        SPDK_ERRLOG("ERROR: Un-allocated response\n");
-                        throw std::runtime_error{"un-allocated response"};
-                    }                    
-                };
-                std::visit(cb_handler, req_stk->resp_cb);
-
-                // req_stk->resp_cb(req_stk->ctx, err::ERR_NOT_FOUND_POOL);
-                _leader_osd.erase(req_stk->leader_osd_key);
-                delete req_stk;
-                return;
             } else {
-                info_it->second->is_onflight = true;
+                const int qrc = enqueue_leader_request(struct_key.pool_id, struct_key.pg_id);
+                if (qrc == err::ERR_NOT_FOUND_POOL) {
+                    SPDK_ERRLOG("pool %d does not exist.\n", struct_key.pool_id);
+
+                    auto cb_handler = utils::overload {
+                        [this, req_stk] (write_object_callback &cb) {
+                            cb(req_stk->ctx, err::ERR_NOT_FOUND_POOL);
+                        },
+
+                        [this, req_stk] (read_object_callback &cb) {
+                            cb(req_stk->ctx, req_stk->obj_index, std::string{}, err::ERR_NOT_FOUND_POOL);
+                        },
+
+                        [this, req_stk] (delete_callback &cb) {
+                            auto* bdev_io = reinterpret_cast<::spdk_bdev_io*>(req_stk->ctx);
+                            cb(bdev_io, err::ERR_NOT_FOUND_POOL);
+                        },
+
+                        [] ([[maybe_unused]] auto& _) {
+                            SPDK_ERRLOG("ERROR: Un-allocated response\n");
+                            throw std::runtime_error{"un-allocated response"};
+                        }
+                    };
+                    std::visit(cb_handler, req_stk->resp_cb);
+
+                    _leader_osd.erase(req_stk->leader_osd_key);
+                    delete req_stk;
+                    return;
+                }
+                if (qrc == 0) {
+                    info_it->second->is_onflight = true;
+                } else {
+                    info_it->second->next_query_at =
+                      std::chrono::steady_clock::now() + leader_query_cooldown;
+                }
             }
         } else if (it->second and not it->second->is_onflight) {
             req_stk->stub = get_stub(it->second->leader_id, it->second->addr, it->second->port);
@@ -860,28 +979,40 @@ public:
             return SPDK_POLLER_IDLE;
         }
 
-        auto n = std::erase_if(
-          _leader_requests,
-          [this] (auto& kv) {
-              auto& [_, stack_ptr] = kv;
-              stack_ptr->stub = get_stub(stack_ptr->osd);
-              if (not stack_ptr->stub) {
-                  return SPDK_POLLER_IDLE;
-              }
+        bool busy = false;
+        for (auto it = _leader_requests.begin(); it != _leader_requests.end();) {
+            auto& stack_ptr = it->second;
+            if (stack_ptr->osd && is_osd_unreachable(stack_ptr->osd->node_id)) {
+                auto key = make_leader_key(stack_ptr->leader_req->pool_id(),
+                                           stack_ptr->leader_req->pg_id());
+                if (auto* info = get_leader_state(key)) {
+                    info->is_onflight = false;
+                    info->next_query_at =
+                      std::chrono::steady_clock::now() + leader_query_cooldown;
+                }
+                it = _leader_requests.erase(it);
+                busy = true;
+                continue;
+            }
+            stack_ptr->stub = get_stub(stack_ptr->osd);
+            if (not stack_ptr->stub) {
+                ++it;
+                continue;
+            }
 
-              SPDK_INFOLOG(libblk, "send get_leader request for pg %lu.%lu to osd %d\n",
-                      stack_ptr->leader_req->pool_id(), stack_ptr->leader_req->pg_id(), stack_ptr->osd->node_id);
-              auto done = google::protobuf::NewCallback(
-                this, &fblock_client::on_leader_acquired, stack_ptr.get());
-              stack_ptr->ctrlr->Reset();
-              stack_ptr->stub->process_get_leader(
-                stack_ptr->ctrlr.get(), stack_ptr->leader_req.get(), stack_ptr->leader_resp.get(), done);
-              _on_flight_leader_requests.insert(std::move(kv));
-              return SPDK_POLLER_BUSY;
-          }
-        );
+            SPDK_INFOLOG(libblk, "send get_leader request for pg %lu.%lu to osd %d\n",
+                    stack_ptr->leader_req->pool_id(), stack_ptr->leader_req->pg_id(), stack_ptr->osd->node_id);
+            auto done = google::protobuf::NewCallback(
+              this, &fblock_client::on_leader_acquired, stack_ptr.get());
+            stack_ptr->ctrlr->Reset();
+            stack_ptr->stub->process_get_leader(
+              stack_ptr->ctrlr.get(), stack_ptr->leader_req.get(), stack_ptr->leader_resp.get(), done);
+            _on_flight_leader_requests.emplace(it->first, std::move(it->second));
+            it = _leader_requests.erase(it);
+            busy = true;
+        }
 
-        return SPDK_POLLER_BUSY;
+        return busy ? SPDK_POLLER_BUSY : SPDK_POLLER_IDLE;
     }
 
     int process_request() {
@@ -911,15 +1042,24 @@ public:
           osd_info_it->second->is_onflight,
           osd_info_it->second->is_valid);
 
-        refresh_leader_transport_from_cluster_map(osd_info_it->second.get());
-
-        update_leader_state(osd_info_it->second.get());
+        if (osd_info_it->second->leader_id > 0 &&
+            is_osd_unreachable(osd_info_it->second->leader_id)) {
+            drop_cached_leader(osd_info_it->second.get());
+        }
+        if (osd_info_it->second->is_valid) {
+            refresh_leader_transport_from_cluster_map(osd_info_it->second.get());
+            update_leader_state(osd_info_it->second.get());
+        }
         if (not osd_info_it->second->is_valid or osd_info_it->second->is_onflight) {
             auto* struct_key = reinterpret_cast<leader_key_type*>(&(head->leader_osd_key));
             if (osd_info_it->second->is_onflight) {
                 return SPDK_POLLER_BUSY;
             }
-            if(enqueue_leader_request(struct_key->pool_id, struct_key->pg_id) == err::ERR_NOT_FOUND_POOL){
+            if (std::chrono::steady_clock::now() < osd_info_it->second->next_query_at) {
+                return SPDK_POLLER_IDLE;
+            }
+            const int qrc = enqueue_leader_request(struct_key->pool_id, struct_key->pg_id);
+            if (qrc == err::ERR_NOT_FOUND_POOL) {
                 SPDK_ERRLOG("pool %d does not exist.\n", struct_key->pool_id);
 
                 auto cb_handler = utils::overload {
@@ -943,8 +1083,11 @@ public:
                 };
                 std::visit(cb_handler, head->resp_cb);
                 _requests.pop_front();
-            } else {
+            } else if (qrc == 0) {
                 osd_info_it->second->is_onflight = true;
+            } else {
+                osd_info_it->second->next_query_at =
+                  std::chrono::steady_clock::now() + leader_query_cooldown;
             }
 
             return SPDK_POLLER_BUSY;
@@ -1024,6 +1167,11 @@ private:
         osd_info->is_onflight = false;
         if (it->second->ctrlr->Failed()) {
             osd_info->is_valid = false;
+            if (it->second->ctrlr->is_connection_failure() && it->second->osd) {
+                mark_osd_unreachable(it->second->osd->node_id);
+            }
+            osd_info->next_query_at =
+              std::chrono::steady_clock::now() + leader_query_cooldown;
             SPDK_NOTICELOG(
               "get leader transport failed for pg %lu.%lu: %s\n",
               it->second->leader_req->pool_id(),
@@ -1036,11 +1184,28 @@ private:
         auto* resp = it->second->leader_resp.get();
         if (resp->state() != err::E_SUCCESS) {
             osd_info->is_valid = false;
+            osd_info->next_query_at =
+              std::chrono::steady_clock::now() + leader_query_cooldown;
             SPDK_NOTICELOG(
               "get leader for pg %lu.%lu returned state %d, will retry\n",
               it->second->leader_req->pool_id(),
               it->second->leader_req->pg_id(),
               resp->state());
+            it->second->ctrlr->Reset();
+            _on_flight_leader_requests.erase(it);
+            return;
+        }
+
+        if (is_osd_unreachable(resp->leader_id())) {
+            drop_cached_leader(osd_info);
+            osd_info->next_query_at =
+              std::chrono::steady_clock::now() + leader_query_cooldown;
+            SPDK_INFOLOG(
+              libblk,
+              "get_leader for pg %lu.%lu returned unreachable osd %d, try another replica\n",
+              it->second->leader_req->pool_id(),
+              it->second->leader_req->pg_id(),
+              resp->leader_id());
             it->second->ctrlr->Reset();
             _on_flight_leader_requests.erase(it);
             return;
@@ -1240,6 +1405,7 @@ private:
     ::spdk_thread* _current_thread{};
 
     std::unordered_map<uint64_t, std::unique_ptr<leader_osd_info>> _leader_osd{};
+    std::unordered_map<int32_t, std::chrono::steady_clock::time_point> _osd_unreachable_until{};
 
     int32_t _io_queue_size{128};
     int32_t _io_queue_request{1024};
