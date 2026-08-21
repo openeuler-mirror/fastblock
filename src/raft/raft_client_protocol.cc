@@ -202,22 +202,40 @@ void raft_client_protocol::maybe_reconnect(raft_server_t* raft, int32_t node_id)
     }
     const auto shard_id = _get_shard_id();
     const auto key = std::make_pair(shard_id, node_id);
-    if (_reconnecting.count(key) != 0) {
+    auto now = std::chrono::steady_clock::now();
+    auto& st = _reconnect[key];
+    if (st.inflight || now < st.next_try) {
         return;
     }
     auto node = raft->raft_get_cfg_node(node_id);
     if (!node) {
+        _reconnect.erase(key);
         return;
     }
     const auto& info = node->raft_get_node_info();
     if (info.addr().empty() || info.port() == 0) {
+        _reconnect.erase(key);
         return;
     }
-    _reconnecting.insert(key);
+    st.inflight = true;
     SPDK_NOTICELOG("raft reconnect to node %d %s:%d shard %u\n", node_id,
                    info.addr().c_str(), info.port(), shard_id);
     create_connect(node_id, shard_id, info.addr(), static_cast<int>(info.port()),
-                   [this, key](void*, int) { _reconnecting.erase(key); });
+                   [this, key](void*, int rc) {
+                       auto it = _reconnect.find(key);
+                       if (it == _reconnect.end()) {
+                           return;
+                       }
+                       if (rc == 0) {
+                           _reconnect.erase(it);
+                           return;
+                       }
+                       constexpr auto k_max = std::chrono::milliseconds{8000};
+                       auto backoff = it->second.backoff;
+                       it->second.inflight = false;
+                       it->second.next_try = std::chrono::steady_clock::now() + backoff;
+                       it->second.backoff = backoff < k_max / 2 ? backoff * 2 : k_max;
+                   });
 }
 
 int raft_client_protocol::send_appendentries(raft_server_t *raft, int32_t target_node_id, msg_appendentries_t* request){
