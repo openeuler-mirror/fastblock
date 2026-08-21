@@ -11,7 +11,10 @@
 #include <spdk/sock.h>
 #include <spdk/thread.h>
 
+#include <algorithm>
+#include <chrono>
 #include <netinet/in.h>
+#include <vector>
 
 namespace msg {
 namespace sock {
@@ -78,6 +81,13 @@ void client::handle_stop() {
         return;
     }
     _stopping = true;
+    for (auto& [gen, p] : _pending_connects) {
+        cm_pool::instance().cancel(gen);
+        if (p.cb) {
+            p.cb(false, nullptr);
+        }
+    }
+    _pending_connects.clear();
     for (auto& c : _conns) {
         if (c) {
             c->async_shutdown();
@@ -121,44 +131,88 @@ void client::emplace_connection(std::string addr, uint16_t port,
           const auto port = ctx->port;
           auto addr = std::move(ctx->addr);
           delete ctx;
+          self->_pending_connects[gen] = pending_connect{
+            .cb = std::move(cb),
+            .deadline = std::chrono::system_clock::now() + self->_opts->connect_timeout,
+          };
           if (!cm_pool::instance().submit(
                 std::move(addr), port, gen, self->_thread,
-                [self, gen, cb = std::move(cb)](::spdk_sock* s, uint64_t g) {
-                    self->on_connected(s, g, cb);
-                    (void)gen;
-                })) {
-              ++self->_probe.connect_fail;
-              cb(false, nullptr);
+                [self](::spdk_sock* s, uint64_t g) { self->on_connected(s, g); })) {
+              self->fail_pending_connect(gen, false);
           }
       },
       ctx);
 }
 
-void client::on_connected(::spdk_sock* s, uint64_t generation,
-                         std::function<void(bool, std::shared_ptr<connection>)> cb) {
+void client::fail_pending_connect(uint64_t generation, bool cancel_cm) {
+    auto it = _pending_connects.find(generation);
+    if (it == _pending_connects.end()) {
+        return;
+    }
+    if (cancel_cm) {
+        cm_pool::instance().cancel(generation);
+    }
+    auto cb = std::move(it->second.cb);
+    _pending_connects.erase(it);
+    ++_probe.connect_fail;
+    if (cb) {
+        cb(false, nullptr);
+    }
+}
+
+void client::scan_connect_timeouts(std::chrono::system_clock::time_point now) {
+    std::vector<uint64_t> expired;
+    expired.reserve(_pending_connects.size());
+    for (const auto& [gen, p] : _pending_connects) {
+        if (now > p.deadline) {
+            expired.push_back(gen);
+        }
+    }
+    for (auto gen : expired) {
+        fail_pending_connect(gen, true);
+    }
+}
+
+void client::on_connected(::spdk_sock* s, uint64_t generation) {
+    cm_pool::instance().forget(generation);
+    auto it = _pending_connects.find(generation);
+    if (it == _pending_connects.end()) {
+        if (s) {
+            ::spdk_sock_close(&s);
+        }
+        return;
+    }
+    auto cb = std::move(it->second.cb);
+    _pending_connects.erase(it);
     if (_stopping || !s) {
         if (s) {
             ::spdk_sock_close(&s);
         }
         ++_probe.connect_fail;
-        cb(false, nullptr);
+        if (cb) {
+            cb(false, nullptr);
+        }
         return;
     }
-    (void)generation;
     auto conn = std::make_shared<connection>(s, _group, _opts, false, &_probe, _thread);
     conn->set_client(this);
     if (!conn->attach()) {
         ++_probe.connect_fail;
-        cb(false, nullptr);
+        if (cb) {
+            cb(false, nullptr);
+        }
         return;
     }
     _conns.push_back(conn);
-    cb(true, conn);
+    if (cb) {
+        cb(true, conn);
+    }
 }
 
 void client::remove_connection(std::shared_ptr<connection> conn, std::function<void(bool)> cb) {
     if (conn) {
         conn->async_shutdown();
+        std::erase(_conns, conn);
     }
     if (cb) {
         cb(true);
@@ -166,6 +220,9 @@ void client::remove_connection(std::shared_ptr<connection> conn, std::function<v
 }
 
 int client::poll() {
+    std::erase_if(_conns, [](const std::shared_ptr<connection>& c) {
+        return !c || c->is_terminated();
+    });
     int rc = SPDK_POLLER_IDLE;
     if (_group) {
         const int n = ::spdk_sock_group_poll(_group);
@@ -181,6 +238,7 @@ int client::poll() {
     const auto now = std::chrono::system_clock::now();
     if (now - _last_scan >= _opts->timeout_scan) {
         _last_scan = now;
+        scan_connect_timeouts(now);
         for (auto& c : _conns) {
             if (c && !c->is_terminated()) {
                 c->scan_timeouts(now);
