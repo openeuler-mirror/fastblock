@@ -12,6 +12,8 @@
 #pragma once
 #include <google/protobuf/stubs/callback.h>
 #include <concepts>
+#include <set>
+#include <utility>
 
 #include "fastblock/rpc/connect_cache.h"
 #include "rpc/raft_msg.pb.h"
@@ -231,8 +233,10 @@ public:
                 _cache->remove_connect(
                   shard_id, node_id, complete,
                   [this, shard_id, node_id] () {
-                      auto &stub = _stubs[shard_id];
-                      stub.erase(node_id);
+                      auto conn = _cache->get_connect(shard_id, node_id);
+                      if (!conn || conn->is_terminated()) {
+                          _stubs[shard_id].erase(node_id);
+                      }
                   }
                 );
               });
@@ -256,8 +260,10 @@ public:
             _cache->remove_connect(
               shard_id, node_id, complete,
               [this, shard_id, node_id] () {
-                  auto &stub = _stubs[shard_id];
-                  stub.erase(node_id);
+                  auto conn = _cache->get_connect(shard_id, node_id);
+                  if (!conn || conn->is_terminated()) {
+                      _stubs[shard_id].erase(node_id);
+                  }
               }
             );
           });
@@ -293,15 +299,31 @@ private:
     }
 
     std::shared_ptr<rpc_service_raft_Stub> _get_stub(uint32_t shard_id, int32_t  node_id) {
+        auto conn = _cache->get_connect(shard_id, node_id);
+        if (conn && conn->is_terminated()) {
+            _cache->drop_if_dead(shard_id, node_id);
+            conn = nullptr;
+        }
         auto &stubs = _stubs[shard_id];
-        if(stubs.find(node_id) == stubs.end())
+        if (!conn) {
+            stubs.erase(node_id);
             return nullptr;
-        return stubs[node_id];
+        }
+        auto it = stubs.find(node_id);
+        if (it != stubs.end() && it->second && it->second->channel() == conn.get()) {
+            return it->second;
+        }
+        auto stub = std::make_shared<rpc_service_raft_Stub>(conn.get());
+        stubs[node_id] = stub;
+        return stub;
     }
+
+    void maybe_reconnect(raft_server_t* raft, int32_t node_id);
 
     std::shared_ptr<connect_cache> _cache;
     std::vector<uint32_t> _shard_cores;
     //每个cpu核上有一个map
     std::vector<std::map<int, std::shared_ptr<rpc_service_raft_Stub>>> _stubs;
     core_sharded &_shard;
+    std::set<std::pair<uint32_t, int32_t>> _reconnecting;
 };
