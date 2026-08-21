@@ -125,12 +125,11 @@ void raft_log::disk_append(raft_index_t start_idx, raft_index_t end_idx, utils::
 
 int raft_log::log_truncate(raft_index_t idx, log_op_complete cb_fn, void* arg)
 {
-    auto last_cache_idx = get_last_cache_entry();
-    raft_write_entry_finish(idx, last_cache_idx, 0);
-    remove_entry_between(idx, last_cache_idx);
-    
+    // lower_bound drop: idx itself may already be gone from cache after apply
+    // trim, but a higher orphan (last_cache) must not survive. Also reset
+    // _next_idx so the next append reuses idx instead of skipping a hole.
+    drop_cache_from(idx, 0);
     _raft->get_node_configuration_manager().truncate_by_idx(idx);
-    
     _log->truncate(idx, std::move(cb_fn), arg);
 
     return 0;
