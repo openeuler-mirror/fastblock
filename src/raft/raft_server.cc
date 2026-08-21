@@ -1293,8 +1293,15 @@ static int raft_task_func(void* arg){
     if(!raft->raft_is_leader()){
         return 0;
     }
-    if(raft->raft_get_current_idx() > raft->raft_get_commit_idx()){
-        //上一批还没处理完
+    // Skip only while a flushed batch is waiting for commit
+    // (current == last_cache > commit, queue empty). A recovered suffix
+    // has current > commit but last_cache == current; the election NOOP
+    // is queued, then moved to cache (last_cache > current) and still
+    // needs a second flush to disk_append / replicate.
+    const auto current = raft->raft_get_current_idx();
+    const auto commit = raft->raft_get_commit_idx();
+    const auto last_cache = raft->raft_get_last_cache_entry();
+    if (current > commit && last_cache == current && !raft->has_queued_entries()) {
         return 0;
     }
     raft->raft_flush();
@@ -1341,6 +1348,40 @@ void raft_server_t::raft_flush(){
     }
     _first_idx = _current_idx + 1;
     auto entry = raft_get_log()->get_entry(_first_idx);
+    if (!entry) {
+        raft_term_t disk_term = 0;
+        const bool on_disk = raft_get_log()->disk_get_term(_first_idx, disk_term);
+        if (on_disk) {
+            if (_flush_hole_idx != _first_idx) {
+                _flush_hole_idx = _first_idx;
+                SPDK_WARNLOG(
+                  "pg %lu.%lu flush hole at idx %ld last_cache %ld current %ld "
+                  "(present on disk term %ld), skip this tick\n",
+                  raft_get_pool_id(), raft_get_pg_id(), _first_idx, last_cache_idx,
+                  _current_idx, disk_term);
+            }
+            return;
+        }
+        if (last_cache_idx > _current_idx) {
+            // Truncate used to miss orphans when idx itself was already
+            // gone from cache; last_cache then sat past a hole and this
+            // poller spun at 100us logging 8GB. Drop the suffix and
+            // re-queue a current-term NOOP so unified-log can commit.
+            SPDK_WARNLOG(
+              "pg %lu.%lu flush hole at idx %ld last_cache %ld current %ld, "
+              "drop orphan cache suffix\n",
+              raft_get_pool_id(), raft_get_pg_id(), _first_idx, last_cache_idx,
+              _current_idx);
+            raft_get_log()->drop_cache_from(_first_idx, err::RAFT_ERR_LOG_NOT_MATCH);
+            if (fastblock::aos::unified_log_enabled()) {
+                auto noop = std::make_shared<raft_entry_t>();
+                noop->set_type(RAFT_LOGTYPE_NOOP);
+                raft_write_entry(noop, nullptr);
+            }
+            entry_queue_flush();
+        }
+        return;
+    }
     if(raft_entry_is_cfg_change(entry)){
         _current_idx = _first_idx;
         process_conf_change_entry(entry);
@@ -1955,6 +1996,9 @@ bool raft_entry_is_voting_cfg_change(raft_entry_t* ety)
 
 bool raft_entry_is_cfg_change(std::shared_ptr<raft_entry_t> ety)
 {
+    if (!ety) {
+        return false;
+    }
     return RAFT_LOGTYPE_ADD_NONVOTING_NODE == ety->type() ||
            RAFT_LOGTYPE_CONFIGURATION  == ety->type();
 }
