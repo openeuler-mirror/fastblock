@@ -519,6 +519,10 @@ public:
         return raft_get_log()->entry_queue_flush();
     }
 
+    bool has_queued_entries() const {
+        return _log && _log->has_queued_entries();
+    }
+
     raft_index_t raft_get_last_cache_entry(){
         return raft_get_log()->get_last_cache_entry();
     }
@@ -949,6 +953,7 @@ private:
 
     raft_index_t _first_idx;     //当前正在处理的一批log中第一个的idx(只用在leader中)
     raft_index_t _current_idx;   //leader中是当前正在处理的一批log中最后一个的idx，follower中是已经处理的最新的idx
+    raft_index_t _flush_hole_idx{0}; // last hole we logged; avoid 100us WARN flood
     raft_client_protocol& _client;
 
     append_entries_buffer _append_entries_buffer;
