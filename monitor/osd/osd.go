@@ -27,10 +27,12 @@ type OSDID int
 
 // (fixme) make it configurable
 const (
-	heartbeatInterval = 3 * time.Second
+	heartbeatInterval = 1 * time.Second
 	// min heartbeats before we mark it up
 	minSuccessAttempts = 1
-	osdDownInterval    = 10 * time.Second
+	// OSD clustermap poll is 1s; 3s is three missed heartbeats, aligned
+	// with raft election rather than the old 10s IO-stall floor.
+	osdDownInterval    = 3 * time.Second
 	osdDownOutInterval = 30 * time.Second
 )
 
