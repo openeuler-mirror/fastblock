@@ -41,7 +41,14 @@ public:
         if (n == 0) {
             return;
         }
-        _used.fetch_sub(n, std::memory_order_acq_rel);
+        auto cur = _used.load(std::memory_order_relaxed);
+        while (true) {
+            const auto next = cur > n ? cur - n : 0;
+            if (_used.compare_exchange_weak(cur, next, std::memory_order_acq_rel,
+                                            std::memory_order_relaxed)) {
+                return;
+            }
+        }
     }
 
 private:
