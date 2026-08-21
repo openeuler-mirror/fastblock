@@ -138,7 +138,8 @@ int main(int argc, char** argv) {
     }
     opts.name = "sock_client";
     opts.shutdown_cb = on_close;
-    opts.reactor_mask = "0x1";
+    // Distinct from sock_server (0x1) so both can run on one machine.
+    opts.reactor_mask = "0x2";
     const int rc = ::spdk_app_start(&opts, start, nullptr);
     ::spdk_app_fini();
     return rc;
