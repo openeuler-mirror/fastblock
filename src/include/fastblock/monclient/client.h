@@ -397,22 +397,33 @@ public:
     auto is_pg_map_empty() noexcept { return _pg_map.pool_pg_map.empty(); }
 
     std::pair<std::string, int> get_osd_addr(int osd_id, uint32_t shard_id) {
-        auto it = _osd_map.data.find(osd_id);
-        if (it == _osd_map.data.end()) {
+        if (osd_id <= 0) {
             return std::make_pair<std::string, int>("", 0);
         }
-
-        return std::pair<std::string, int>{it->second->address, it->second->sharded_ports.at(shard_id).port};
+        auto it = _osd_map.data.find(osd_id);
+        if (it == _osd_map.data.end() || !it->second) {
+            return std::make_pair<std::string, int>("", 0);
+        }
+        auto pit = it->second->sharded_ports.find(shard_id);
+        if (pit == it->second->sharded_ports.end()) {
+            return std::make_pair<std::string, int>("", 0);
+        }
+        return std::pair<std::string, int>{it->second->address, static_cast<int>(pit->second.port)};
     }
 
     std::pair<std::string, int> get_osd_raw_addr(int osd_id, uint32_t shard_id) {
-        auto it = _osd_map.data.find(osd_id);
-        if (it == _osd_map.data.end()) {
+        if (osd_id <= 0) {
             return std::make_pair<std::string, int>("", 0);
         }
-
-        auto& shard = it->second->sharded_ports.at(shard_id);
-        auto raw_port = shard.raw_port != 0 ? shard.raw_port : shard.port;
+        auto it = _osd_map.data.find(osd_id);
+        if (it == _osd_map.data.end() || !it->second) {
+            return std::make_pair<std::string, int>("", 0);
+        }
+        auto pit = it->second->sharded_ports.find(shard_id);
+        if (pit == it->second->sharded_ports.end()) {
+            return std::make_pair<std::string, int>("", 0);
+        }
+        auto raw_port = pit->second.raw_port != 0 ? pit->second.raw_port : pit->second.port;
         return std::pair<std::string, int>{it->second->address, static_cast<int>(raw_port)};
     }
 
