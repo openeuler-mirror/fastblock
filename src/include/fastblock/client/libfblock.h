@@ -15,6 +15,7 @@
 #include "fastblock/client/fb_client.h"
 #include "fastblock/monclient/client.h"
 
+#include <unordered_map>
 #include <vector>
 
 constexpr size_t KiB = 1024;
@@ -110,6 +111,10 @@ public:
       struct spdk_bdev_io *bdev_io,
       read_callback cb);
 
+    int cancel(struct spdk_bdev_io *bdev_io);
+
+    void forget_io(struct spdk_bdev_io *bdev_io, void *src);
+
     std::string calc_image_object_prefix(const uint64_t pool_id, const std::string &image_name);
 
     std::tuple<size_t, uint64_t, uint64_t>
@@ -124,4 +129,5 @@ public:
 private:
 
     monitor::client* _mon_cli{nullptr};
+    std::unordered_map<struct spdk_bdev_io*, void*> _io_src{};
 };
