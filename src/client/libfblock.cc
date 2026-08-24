@@ -11,7 +11,19 @@
 
 #include "fastblock/client/libfblock.h"
 #include <spdk/bdev_module.h>
+#include <spdk/thread.h>
+#include <cerrno>
 #include <thread>
+
+static void
+run_on_origin_thread(struct spdk_thread *thread, spdk_msg_fn fn, void *arg)
+{
+    if (thread != nullptr && spdk_get_thread() != thread &&
+        spdk_thread_send_msg(thread, fn, arg) == 0) {
+        return;
+    }
+    fn(arg);
+}
 
 #include "fastblock/bdev/global.h"
 #include "fastblock/utils/utils.h"
@@ -118,13 +130,16 @@ struct write_source
     struct spdk_bdev_io *bdev_io;
     int32_t result;
     struct spdk_thread *thread;
+    libblk_client *owner;
 
-    write_source(write_callback _cb, uint32_t _obj_num, struct spdk_bdev_io *_bdev_io)
+    write_source(write_callback _cb, uint32_t _obj_num, struct spdk_bdev_io *_bdev_io,
+                 libblk_client *_owner)
     : cb(_cb)
     , obj_num(_obj_num)
     , bdev_io(_bdev_io)
     , result(err::E_SUCCESS)
-    , thread(spdk_get_thread()) {}
+    , thread(spdk_get_thread())
+    , owner(_owner) {}
 
     ~write_source() {}
 
@@ -137,19 +152,21 @@ struct write_source
 
     void invoke()
     {
-#ifdef DEBUG
-        /*
-           debug模式下，回调cb里调用spdk_bdev_io_complete时，会开启assert检查当前spdk thread与_bdev_io的spdk thread是否相同
-        */
-        spdk_thread_send_msg(thread, &thread_run, (void *)this);
-#else
-        cb(bdev_io, result);
-        delete this;
-#endif
+        if (owner) {
+            owner->forget_io(bdev_io, this);
+            owner = nullptr;
+        }
+        // spdk_bdev_io_complete must run on the submitting thread in
+        // Release too; DEBUG previously asserted this and hopped, NDEBUG
+        // completed inline on the client poller and nvmf never saw it.
+        run_on_origin_thread(thread, &thread_run, this);
     }
 
     static void write_done(void *src, int32_t state) {
         write_source* source = (write_source*)src;
+        if (source->obj_num == 0) {
+            return;
+        }
         if(state != err::E_SUCCESS){
             source->result = state;
         }
@@ -160,8 +177,6 @@ struct write_source
         {
             SPDK_INFOLOG(libblk, "write_done\n");
             source->invoke();
-            // source->cb(source->bdev_io, source->result);
-            // delete source;
         }
     }
 };
@@ -190,7 +205,8 @@ int libblk_client::write(const uint64_t pool_id, const std::string image_name, c
 
     auto obj_num = get_obj_num(offset, length);
     // 建立回调函数
-    write_source *source = new write_source(cb, obj_num, bdev_io);
+    write_source *source = new write_source(cb, obj_num, bdev_io, this);
+    _io_src[bdev_io] = source;
 
     SPDK_INFOLOG(libblk, "write pool: %lu image_name: %s offset: %lu length: %lu  obj_num: %lu \n",
             pool_id, image_name.c_str(), offset, length, obj_num);
@@ -228,8 +244,10 @@ struct read_source
     struct spdk_thread *thread;
 
 
+    libblk_client *owner;
+
     read_source(read_callback _cb, uint32_t _obj_num, uint64_t _len, struct spdk_bdev_io *_bdev_io, uint64_t _first_object_size,
-            uint64_t _offset)
+            uint64_t _offset, libblk_client *_owner)
     : cb(_cb)
     , obj_num(_obj_num)
     , len(_len)
@@ -237,7 +255,8 @@ struct read_source
     , first_object_size(_first_object_size)
     , result(err::E_SUCCESS)
     , offset(_offset)
-    , thread(spdk_get_thread()) {
+    , thread(spdk_get_thread())
+    , owner(_owner) {
         buf = new char[len];
         memset(buf, 0, len);
     }
@@ -255,19 +274,18 @@ struct read_source
 
     void invoke()
     {
-#ifdef DEBUG
-        /*
-           debug模式下，回调cb里调用spdk_bdev_io_complete时，会开启assert检查当前spdk thread与_bdev_io的spdk thread是否相同
-        */
-        spdk_thread_send_msg(thread, &thread_run, (void *)this);
-#else
-        cb(bdev_io, buf, len, result);
-        delete this;
-#endif
+        if (owner) {
+            owner->forget_io(bdev_io, this);
+            owner = nullptr;
+        }
+        run_on_origin_thread(thread, &thread_run, this);
     }
 
     static void read_done(void *src, uint64_t object_idx, const std::string& data, int32_t state) {
         read_source* source = (read_source*)src;
+        if (source->obj_num == 0) {
+            return;
+        }
         char* ptr = source->buf;
         if(state == err::E_SUCCESS){
             if(object_idx == 0){
@@ -306,7 +324,8 @@ int libblk_client::read(const uint64_t pool_id, const std::string image_name, co
     size_t read_bytes = 0;
 
     auto obj_num = get_obj_num(offset, length);
-    read_source* source = new read_source(cb, obj_num, length, bdev_io, expected_object_size, offset);
+    read_source* source = new read_source(cb, obj_num, length, bdev_io, expected_object_size, offset, this);
+    _io_src[bdev_io] = source;
     uint64_t object_idx = 0;
     SPDK_INFOLOG(libblk, "read pool: %lu image_name: %s offset: %lu length: %lu  obj_num: %lu\n",
                  pool_id, image_name.c_str(), offset, length, obj_num);
@@ -327,6 +346,27 @@ int libblk_client::read(const uint64_t pool_id, const std::string image_name, co
     }
 
     return 0;
+}
+
+int libblk_client::cancel(struct spdk_bdev_io *bdev_io)
+{
+    if (!bdev_io || !_client) {
+        return -ENOENT;
+    }
+    auto it = _io_src.find(bdev_io);
+    if (it == _io_src.end() || !it->second) {
+        return -ENOENT;
+    }
+    _client->cancel_ctx(it->second);
+    return 0;
+}
+
+void libblk_client::forget_io(struct spdk_bdev_io *bdev_io, void *src)
+{
+    auto it = _io_src.find(bdev_io);
+    if (it != _io_src.end() && it->second == src) {
+        _io_src.erase(it);
+    }
 }
 
 std::string libblk_client::calc_image_object_prefix(const uint64_t pool_id, const std::string &image_name)
