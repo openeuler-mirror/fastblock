@@ -86,6 +86,8 @@ ExternalProject_Add(spdk
     isa-l-crypto
   GIT_SUBMODULES_RECURSE OFF
   UPDATE_COMMAND ""
+  PATCH_COMMAND
+    /bin/sh -c "patch -p1 -N --forward -i @CMAKE_SOURCE_DIR@/cmake/patches/spdk-nvmf-dnr-on-bdev-error.patch || grep -q 'status.dnr = 1' lib/nvmf/ctrlr_bdev.c"
   BUILD_IN_SOURCE ON
   INSTALL_DIR    @FASTBLOCK_DEPS_INSTALL_DIR@
   CONFIGURE_COMMAND
