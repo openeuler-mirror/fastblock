@@ -180,7 +180,8 @@ enum class rpc_error_class : uint8_t {
     too_large,
     application,
     peer_terminating,
-    connection
+    connection,
+    canceled
 };
 
 inline bool is_retryable(rpc_error_class c) noexcept {
@@ -218,6 +219,9 @@ inline rpc_error_class classify_rpc_error(std::string_view err) noexcept {
     }
     if (err == "connection terminated" || err == "bad ib/cm event") {
         return rpc_error_class::connection;
+    }
+    if (err == "canceled") {
+        return rpc_error_class::canceled;
     }
     return rpc_error_class::application;
 }
