@@ -12,6 +12,7 @@
 
 #include "fastblock/msg/types.h"
 
+#include <functional>
 #include <string>
 
 #include <google/protobuf/service.h>
@@ -35,13 +36,30 @@ public:
         _error_class = rpc_error_class::ok;
         _pd = nullptr;
         _peer_address.clear();
+        _canceled = false;
+        _cancel_fn = nullptr;
+        _notify_on_cancel = nullptr;
     };
 
     virtual bool Failed() const override { return _failed; }
 
     virtual std::string ErrorText() const override { return _error_reason; }
 
-    virtual void StartCancel() override { /*TODO:*/ }
+    virtual void StartCancel() override {
+        if (_canceled) {
+            return;
+        }
+        _canceled = true;
+        if (_cancel_fn) {
+            auto fn = std::move(_cancel_fn);
+            fn();
+        }
+        if (_notify_on_cancel) {
+            auto* cb = _notify_on_cancel;
+            _notify_on_cancel = nullptr;
+            cb->Run();
+        }
+    }
 
     virtual void SetFailed(const std::string& error) override {
         SetFailed(error, classify_rpc_error(error));
@@ -53,11 +71,13 @@ public:
         _error_class = cls;
     }
 
-    virtual bool IsCanceled() const override { return false; /*TODO:*/ }
+    virtual bool IsCanceled() const override { return _canceled; }
 
-    virtual void NotifyOnCancel(::google::protobuf::Closure* /* callback */) override {
-        /*TODO:*/
+    virtual void NotifyOnCancel(::google::protobuf::Closure* callback) override {
+        _notify_on_cancel = callback;
     }
+
+    void set_cancel_fn(std::function<void()> fn) { _cancel_fn = std::move(fn); }
 
     rpc_error_class error_class() const noexcept {
         return _failed ? _error_class : rpc_error_class::ok;
@@ -97,6 +117,9 @@ private:
     rpc_error_class _error_class{rpc_error_class::ok};
     ::ibv_pd* _pd{nullptr};
     std::string _peer_address{};
+    bool _canceled{false};
+    std::function<void()> _cancel_fn{};
+    ::google::protobuf::Closure* _notify_on_cancel{nullptr};
 };
 
 inline void fail_rpc(
