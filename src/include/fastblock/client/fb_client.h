@@ -28,6 +28,7 @@
 
 #include <cerrno>
 #include <chrono>
+#include <list>
 #include <memory>
 #include <optional>
 #include <unordered_map>
@@ -87,6 +88,11 @@ private:
         uint64_t leader_osd_key{};
         fblock_client* this_client{nullptr};
         bool is_connecting{false};
+        bool canceled{false};
+        bool cb_done{false};
+        uint32_t retry_count{0};
+        std::chrono::steady_clock::time_point started_at{};
+        std::chrono::steady_clock::time_point retry_at{};
     };
 
     struct leader_key_type {
@@ -102,9 +108,10 @@ private:
         uint32_t home_shard{fb_client_route::k_invalid_home_shard};
         std::chrono::system_clock::time_point epoch{};
         std::chrono::steady_clock::time_point next_query_at{};
+        std::chrono::steady_clock::time_point onflight_since{};
         int32_t last_probe_osd{-1};
         bool is_valid{false};
-        bool is_onflight{true};
+        bool is_onflight{false};
     };
 
     struct connection_id {
@@ -181,6 +188,9 @@ private:
     static constexpr auto default_connection_retry_interval{std::chrono::seconds{1}};
     static constexpr auto unreachable_osd_ttl{std::chrono::seconds{30}};
     static constexpr auto leader_query_cooldown{std::chrono::milliseconds{50}};
+    static constexpr auto request_retry_cooldown{std::chrono::milliseconds{50}};
+    static constexpr auto io_deadline{std::chrono::seconds{6}};
+    static constexpr auto leader_onflight_watchdog{std::chrono::seconds{2}};
 
     bool is_osd_unreachable(const int32_t osd_id) {
         if (osd_id <= 0) {
@@ -280,6 +290,8 @@ private:
         case msg::rdma::rpc_error_class::timeout:
         case msg::rdma::rpc_error_class::request_timeout:
             return -EAGAIN;
+        case msg::rdma::rpc_error_class::canceled:
+            return -ECANCELED;
         default:
             return -ENOLINK;
         }
@@ -366,7 +378,54 @@ private:
         invalidate_connection(to_connection_id(leader->leader_id, leader->port));
     }
 
+    void finish_stack_cb(request_stack_type* stack_ptr, const int32_t state) {
+        if (!stack_ptr || stack_ptr->cb_done) {
+            return;
+        }
+        stack_ptr->cb_done = true;
+        auto cb_handler = utils::overload {
+            [stack_ptr, state] (write_object_callback& cb) {
+                cb(stack_ptr->ctx, state);
+            },
+            [stack_ptr, state] (read_object_callback& cb) {
+                cb(stack_ptr->ctx, stack_ptr->obj_index, std::string{}, state);
+            },
+            [stack_ptr, state] (delete_callback& cb) {
+                auto* bdev_io = reinterpret_cast<::spdk_bdev_io*>(stack_ptr->ctx);
+                cb(bdev_io, state);
+            },
+            [] ([[maybe_unused]] auto& _) {
+                SPDK_ERRLOG("ERROR: Un-allocated response\n");
+            }
+        };
+        std::visit(cb_handler, stack_ptr->resp_cb);
+    }
+
+    bool stack_expired(const request_stack_type* stack_ptr,
+                       const std::chrono::steady_clock::time_point now) const {
+        return stack_ptr && stack_ptr->started_at.time_since_epoch().count() != 0 &&
+               now - stack_ptr->started_at > io_deadline;
+    }
+
+    void expire_stack(request_stack_type* stack_ptr) {
+        if (!stack_ptr || stack_ptr->cb_done) {
+            return;
+        }
+        stack_ptr->canceled = true;
+        SPDK_NOTICELOG("expire inflight request after 6s\n");
+        finish_stack_cb(stack_ptr, -ETIMEDOUT);
+        stack_ptr->ctrlr->StartCancel();
+    }
+
     void retry_request(std::unique_ptr<request_stack_type> stack_ptr, const int32_t state) {
+        if (!stack_ptr || stack_ptr->canceled || stack_ptr->cb_done) {
+            return;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (stack_expired(stack_ptr.get(), now)) {
+            expire_stack(stack_ptr.get());
+            return;
+        }
         auto* leader = get_leader_state(stack_ptr->leader_osd_key);
         if (leader) {
             leader->is_valid = false;
@@ -386,8 +445,18 @@ private:
         stack_ptr->is_responsed = false;
         stack_ptr->ctrlr->Reset();
         stack_ptr->resp = std::monostate{};
-        _requests.push_front(std::move(stack_ptr));
-        SPDK_NOTICELOG("retry request after transient state %d\n", state);
+        stack_ptr->retry_count++;
+        stack_ptr->retry_at = now + request_retry_cooldown;
+        if ((stack_ptr->retry_count & 31u) == 1u) {
+            SPDK_NOTICELOG(
+              "retry request after transient state %d count %u\n",
+              state, stack_ptr->retry_count);
+        } else {
+            SPDK_DEBUGLOG(
+              libblk, "retry request after transient state %d count %u\n",
+              state, stack_ptr->retry_count);
+        }
+        _requests.push_back(std::move(stack_ptr));
     }
 
     void on_connection_ready(
@@ -659,6 +728,7 @@ private:
         req_stk->obj_index = obj_idx;
         req_stk->leader_osd_key = make_leader_key(pool_id, pg_id);
         req_stk->this_client = this;
+        req_stk->started_at = std::chrono::steady_clock::now();
         SPDK_DEBUGLOG(
           libblk,
           "pool_id: %d, pg_id: %d, leader_osd_key: %lu\n",
@@ -670,6 +740,52 @@ private:
         }
         return 0;
 }
+
+public:
+    void cancel_ctx(void* ctx) {
+        if (!ctx) {
+            return;
+        }
+        if (_current_thread && ::spdk_get_thread() != _current_thread) {
+            struct cancel_arg {
+                fblock_client* self;
+                void* ctx;
+            };
+            auto* arg = new cancel_arg{this, ctx};
+            ::spdk_thread_send_msg(
+              _current_thread,
+              [](void* p) {
+                  auto* a = static_cast<cancel_arg*>(p);
+                  a->self->cancel_ctx(a->ctx);
+                  delete a;
+              },
+              arg);
+            return;
+        }
+
+        auto drop = [this](request_stack_type* s) {
+            if (!s || s->cb_done) {
+                return;
+            }
+            s->canceled = true;
+            finish_stack_cb(s, -ECANCELED);
+            s->ctrlr->StartCancel();
+        };
+
+        for (auto it = _requests.begin(); it != _requests.end();) {
+            if ((*it)->ctx == ctx) {
+                drop(it->get());
+                it = _requests.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (auto& s : _on_flight_requests) {
+            if (s && s->ctx == ctx) {
+                drop(s.get());
+            }
+        }
+    }
 
 public:
 
@@ -869,6 +985,7 @@ public:
                 }
                 if (qrc == 0) {
                     info_it->second->is_onflight = true;
+                    info_it->second->onflight_since = std::chrono::steady_clock::now();
                 } else {
                     info_it->second->next_query_at =
                       std::chrono::steady_clock::now() + leader_query_cooldown;
@@ -890,10 +1007,23 @@ public:
             return SPDK_POLLER_IDLE;
         }
 
-        auto& head_ref = _on_flight_requests.front();
-        auto* head = head_ref.get();
-        if (not head->is_responsed) {
-            return SPDK_POLLER_IDLE;
+        const auto now = std::chrono::steady_clock::now();
+        for (auto it = _on_flight_requests.begin(); it != _on_flight_requests.end();) {
+            auto* head = it->get();
+            if (stack_expired(head, now) && !head->cb_done) {
+                expire_stack(head);
+            }
+            if (not head->is_responsed) {
+                ++it;
+                continue;
+            }
+
+        if (head->cb_done || head->canceled) {
+            if (!head->cb_done) {
+                finish_stack_cb(head, -ECANCELED);
+            }
+            it = _on_flight_requests.erase(it);
+            return SPDK_POLLER_BUSY;
         }
 
         auto finish_request = [this](std::unique_ptr<request_stack_type> stack_ptr) {
@@ -916,6 +1046,7 @@ public:
                 }
                 auto cb = std::get<write_object_callback>(stack_ptr->resp_cb);
                 cb(stack_ptr->ctx, state);
+                stack_ptr->cb_done = true;
                 return std::optional<int32_t>{};
             },
 
@@ -935,6 +1066,7 @@ public:
                 }
                 auto cb = std::get<read_object_callback>(stack_ptr->resp_cb);
                 cb(stack_ptr->ctx, stack_ptr->obj_index, data, state);
+                stack_ptr->cb_done = true;
                 return std::optional<int32_t>{};
             },
 
@@ -952,6 +1084,7 @@ public:
                 auto* bdev_io = reinterpret_cast<::spdk_bdev_io*>(stack_ptr->ctx);
                 auto cb = std::get<delete_callback>(stack_ptr->resp_cb);
                 cb(bdev_io, state);
+                stack_ptr->cb_done = true;
                 return std::optional<int32_t>{};
             },
 
@@ -962,8 +1095,11 @@ public:
         };
 
         auto retry_state = std::visit(response_handler, head->resp);
-        auto stack_ptr = std::move(_on_flight_requests.front());
-        _on_flight_requests.pop_front();
+        auto stack_ptr = std::move(*it);
+        it = _on_flight_requests.erase(it);
+        if (stack_ptr->canceled || stack_ptr->cb_done) {
+            return SPDK_POLLER_BUSY;
+        }
         if (retry_state.has_value()) {
             retry_request(std::move(stack_ptr), retry_state.value());
             return SPDK_POLLER_BUSY;
@@ -972,6 +1108,8 @@ public:
         finish_request(std::move(stack_ptr));
 
         return SPDK_POLLER_BUSY;
+        }
+        return SPDK_POLLER_IDLE;
     }
 
     int process_leader_request() {
@@ -1020,14 +1158,42 @@ public:
             return SPDK_POLLER_IDLE;
         }
 
+        const auto now = std::chrono::steady_clock::now();
         auto& head = _requests.front();
+        if (head->canceled || head->cb_done) {
+            _requests.pop_front();
+            return SPDK_POLLER_BUSY;
+        }
+        if (stack_expired(head.get(), now)) {
+            expire_stack(head.get());
+            _requests.pop_front();
+            return SPDK_POLLER_BUSY;
+        }
+        if (now < head->retry_at) {
+            if (_requests.size() > 1) {
+                auto delayed = std::move(_requests.front());
+                _requests.pop_front();
+                _requests.push_back(std::move(delayed));
+            }
+            return SPDK_POLLER_IDLE;
+        }
         auto osd_info_it = _leader_osd.find(head->leader_osd_key);
         if (osd_info_it == _leader_osd.end()) {
             return SPDK_POLLER_IDLE;
         }
 
         if (osd_info_it->second->is_onflight) {
-            return SPDK_POLLER_IDLE;
+            if (osd_info_it->second->onflight_since.time_since_epoch().count() != 0 &&
+                now - osd_info_it->second->onflight_since > leader_onflight_watchdog) {
+                osd_info_it->second->is_onflight = false;
+            } else {
+                if (_requests.size() > 1) {
+                    auto delayed = std::move(_requests.front());
+                    _requests.pop_front();
+                    _requests.push_back(std::move(delayed));
+                }
+                return SPDK_POLLER_IDLE;
+            }
         }
 
         SPDK_DEBUGLOG(
@@ -1053,7 +1219,7 @@ public:
         if (not osd_info_it->second->is_valid or osd_info_it->second->is_onflight) {
             auto* struct_key = reinterpret_cast<leader_key_type*>(&(head->leader_osd_key));
             if (osd_info_it->second->is_onflight) {
-                return SPDK_POLLER_BUSY;
+                return SPDK_POLLER_IDLE;
             }
             if (std::chrono::steady_clock::now() < osd_info_it->second->next_query_at) {
                 return SPDK_POLLER_IDLE;
@@ -1085,6 +1251,7 @@ public:
                 _requests.pop_front();
             } else if (qrc == 0) {
                 osd_info_it->second->is_onflight = true;
+                osd_info_it->second->onflight_since = std::chrono::steady_clock::now();
             } else {
                 osd_info_it->second->next_query_at =
                   std::chrono::steady_clock::now() + leader_query_cooldown;
@@ -1098,6 +1265,11 @@ public:
           osd_info_it->second->addr,
           osd_info_it->second->port);
         if (not head->stub) {
+            if (_requests.size() > 1) {
+                auto delayed = std::move(_requests.front());
+                _requests.pop_front();
+                _requests.push_back(std::move(delayed));
+            }
             return SPDK_POLLER_IDLE;
         }
 
@@ -1186,7 +1358,8 @@ private:
             osd_info->is_valid = false;
             osd_info->next_query_at =
               std::chrono::steady_clock::now() + leader_query_cooldown;
-            SPDK_NOTICELOG(
+            SPDK_INFOLOG(
+              libblk,
               "get leader for pg %lu.%lu returned state %d, will retry\n",
               it->second->leader_req->pool_id(),
               it->second->leader_req->pg_id(),
@@ -1266,6 +1439,7 @@ private:
             auto done = google::protobuf::NewCallback(
               this, &fblock_client::on_leader_acquired, stack_ptr);
             osd_info->is_onflight = true;
+            osd_info->onflight_since = std::chrono::steady_clock::now();
             stack_ptr->ctrlr->Reset();
             stack_ptr->stub->process_get_leader(
               stack_ptr->ctrlr.get(), stack_ptr->leader_req.get(), stack_ptr->leader_resp.get(), done);
@@ -1285,6 +1459,7 @@ private:
             auto done = google::protobuf::NewCallback(
               this, &fblock_client::on_leader_acquired, stack_ptr);
             osd_info->is_onflight = true;
+            osd_info->onflight_since = std::chrono::steady_clock::now();
             stack_ptr->ctrlr->Reset();
             stack_ptr->stub->process_get_leader(
               stack_ptr->ctrlr.get(), stack_ptr->leader_req.get(), stack_ptr->leader_resp.get(), done);
