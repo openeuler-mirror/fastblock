@@ -42,7 +42,8 @@ enum class rpc_fail : uint8_t {
     too_large,
     connection_dead,
     unserialize,
-    other
+    other,
+    canceled
 };
 
 struct assembled_rpc {
@@ -122,6 +123,7 @@ private:
     };
 
     void complete_rpc(pending_rpc* req, rpc_fail why, const char* detail = nullptr);
+    void cancel_rpc(uint64_t correlation);
     void release_inflight(size_t reserved);
     void teardown(const char* why);
     void apply_sock_opts();
