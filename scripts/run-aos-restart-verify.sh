@@ -15,6 +15,7 @@ verify_bin="${FASTBLOCK_IMAGE_VERIFY_BIN:-$script_root/build/src/tools/image_ver
 image_name="${AOS_RESTART_IMAGE:-aos-restart-$(date +%s)}"
 seed="${AOS_VERIFY_SEED:-$(date +%s)}"
 expected_osds="${RAFT_REGRESSION_OSD_COUNT:-3}"
+replica="${RAFT_REGRESSION_REPLICA:-3}"
 expected_pgs="${RAFT_REGRESSION_PG_COUNT:-1}"
 cpu_mask="${BLOCK_BENCH_CPU_MASK:-0x8}"
 boot_wait="${AOS_RESTART_BOOT_WAIT:-30}"
@@ -137,7 +138,8 @@ dump_files=()
 for id in $(seq 1 "$expected_osds"); do
     dump_files+=("$data_dir/osd-$id/aos_file")
 done
-"$verify_bin" -M dump-compare --align "$align" --seed "$seed" "${dump_files[@]}"
+"$verify_bin" -M dump-compare --align "$align" --seed "$seed" \
+    --min-replicas "$replica" "${dump_files[@]}"
 
 echo "Checking recover kv / shutdown after restart"
 fail_cfg=0
