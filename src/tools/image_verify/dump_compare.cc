@@ -344,7 +344,9 @@ file_view load_one(const char* path, uint32_t align,
 void usage() {
   std::fprintf(stderr,
                "Usage: image_verify --mode dump-compare [--align N] [--seed N] "
-               "<aos-file>...\n"
+               "[--min-replicas N] <aos-file>...\n"
+               "  --min-replicas N: an extent counts as present when at least N\n"
+               "  dumps hold it (default: every dump, i.e. one PG's replicas).\n"
                "  Scan one or more AOS device images and compare last-writer-wins\n"
                "  object extents (by object name, not local object_id — snapshot\n"
                "  ingest restages new ids). With --seed, only VERIFYA1 payloads of\n"
@@ -356,6 +358,7 @@ void usage() {
 int run_dump_compare(int argc, char** argv) {
   uint32_t align = 512;
   std::optional<uint64_t> seed;
+  uint64_t min_replicas = 0;
   std::vector<const char*> files;
 
   for (int i = 1; i < argc; ++i) {
@@ -387,6 +390,13 @@ int run_dump_compare(int argc, char** argv) {
         return 2;
       }
       seed = s;
+      continue;
+    }
+    if (std::strcmp(a, "--min-replicas") == 0) {
+      if (i + 1 >= argc || !parse_u64(argv[++i], &min_replicas)) {
+        std::fprintf(stderr, "invalid --min-replicas\n");
+        return 2;
+      }
       continue;
     }
     if (std::strcmp(a, "-C") == 0 || std::strcmp(a, "-m") == 0) {
@@ -470,25 +480,41 @@ int run_dump_compare(int argc, char** argv) {
   uint64_t missing = 0;
   uint64_t mismatch = 0;
   constexpr uint64_t kMaxPrint = 16;
+  // 0 keeps the original contract: every dump must hold every live extent,
+  // which only holds when the dumps are the replicas of one PG.  With
+  // --min-replicas N an extent is present once N dumps hold it, so dumps
+  // spanning several PGs (more OSDs than the replica count) still compare.
+  const size_t required =
+    (min_replicas == 0 || min_replicas >= views.size())
+      ? views.size()
+      : static_cast<size_t>(min_replicas);
   for (const auto& kv : union_map) {
+    size_t have = 0;
+    for (size_t i = 0; i < views.size(); ++i) {
+      if (views[i].live.count(kv.first) != 0) {
+        ++have;
+      }
+    }
+    if (have < required) {
+      ++missing;
+      if (missing + mismatch <= kMaxPrint) {
+        std::cout << "  MISSING " << have << "/" << views.size()
+                  << " pg=" << kv.first.pool_id << "." << kv.first.pg_id;
+        if (!kv.first.name.empty()) {
+          std::cout << " name=" << kv.first.name;
+        } else {
+          std::cout << " obj=0x" << std::hex << kv.first.object_id << std::dec;
+        }
+        std::cout << " obj_off=" << kv.first.object_offset;
+        if (kv.second.patterned) {
+          std::cout << " image_off=" << kv.second.image_offset;
+        }
+        std::cout << "\n";
+      }
+    }
     for (size_t i = 0; i < views.size(); ++i) {
       auto it = views[i].live.find(kv.first);
       if (it == views[i].live.end()) {
-        ++missing;
-        if (missing + mismatch <= kMaxPrint) {
-          std::cout << "  MISSING replica[" << i << "] " << views[i].path
-                    << " pg=" << kv.first.pool_id << "." << kv.first.pg_id;
-          if (!kv.first.name.empty()) {
-            std::cout << " name=" << kv.first.name;
-          } else {
-            std::cout << " obj=0x" << std::hex << kv.first.object_id << std::dec;
-          }
-          std::cout << " obj_off=" << kv.first.object_offset;
-          if (kv.second.patterned) {
-            std::cout << " image_off=" << kv.second.image_offset;
-          }
-          std::cout << "\n";
-        }
         continue;
       }
       if (it->second.payload_crc != kv.second.payload_crc ||
@@ -511,6 +537,7 @@ int run_dump_compare(int argc, char** argv) {
   }
 
   std::cout << "live extents (union): " << union_map.size()
+            << " required=" << required
             << " missing=" << missing << " mismatch=" << mismatch << "\n";
   if (any_fail || missing != 0 || mismatch != 0) {
     std::cout << "dump-compare: FAIL\n";
