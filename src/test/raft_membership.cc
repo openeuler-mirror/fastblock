@@ -12,6 +12,9 @@
 
 #include "osd_client.h"
 
+#include <cerrno>
+#include <cstdlib>
+
 static constexpr const char *k_osd_iobuf_small_pool_count_key = "osd_iobuf_small_pool_count";
 static constexpr const char *k_osd_iobuf_large_pool_count_key = "osd_iobuf_large_pool_count";
 
@@ -130,10 +133,49 @@ fbbench_parse_arg(int ch, char *arg)
     return 0;
 }
 
+// A membership op that neither completes nor fails wedges this binary forever:
+// the reactor is poll-mode so nothing is logged, and the only exit path is the
+// rpc callback.  Watch the op and stop the app when it overruns.
+static uint64_t g_watchdog_timeout_s = 180;
+static struct spdk_poller *g_watchdog_poller = nullptr;
+static uint64_t g_op_start_ticks = 0;
+
+static int
+membership_watchdog_poll(void * /* arg */)
+{
+    const uint64_t elapsed_s =
+      (spdk_get_ticks() - g_op_start_ticks) / spdk_get_ticks_hz();
+
+    if (elapsed_s >= g_watchdog_timeout_s) {
+        SPDK_ERRLOG(
+          "membership op did not finish within %lu s, stopping.\n"
+          "If connects were refused, the ports this run holds may be stale\n"
+          "(osd ports are reassigned at every boot).\n",
+          (unsigned long)elapsed_s);
+        spdk_app_stop(-ETIMEDOUT);
+        return SPDK_POLLER_BUSY;
+    }
+    if (elapsed_s > 0 && elapsed_s % 30 == 0) {
+        SPDK_NOTICELOG("membership op still waiting, %lu s elapsed\n",
+          (unsigned long)elapsed_s);
+    }
+    return 0;
+}
+
 static void
 raft_membership(void *arg1)
 {
     server_t *server = (server_t *)arg1;
+
+    if (const char *wd = std::getenv("RAFT_MEMBERSHIP_TIMEOUT_SECONDS")) {
+        const long long parsed = std::atoll(wd);
+        if (parsed > 0) {
+            g_watchdog_timeout_s = static_cast<uint64_t>(parsed);
+        }
+    }
+    g_op_start_ticks = spdk_get_ticks();
+    g_watchdog_poller = spdk_poller_register(membership_watchdog_poll, nullptr,
+                                             1000 * 1000);
 
     SPDK_NOTICELOG("------block start, cpu count : %u \n", spdk_env_get_core_count());
     core_sharded::construct(
