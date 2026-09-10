@@ -61,16 +61,16 @@ latest_core() {
 
 load_osd_map() {
     local parsed
-    parsed="$(perl -0777 -ne '
-        my @lines = /^(.*ProcessGetOsdMapMessage done.*)$/mg;
-        my $line = @lines ? $lines[-1] : "";
-        while ($line =~ /osdid:(\d+)\s+address:"([^"]+)".*?sharded_ports:<key:0 value:<(?:coreid:\d+\s+)?port:(\d+)/g) {
-            print "$1 $2 $3\n";
-        }
-    ' "$monitor_log")"
+    # Query the live osd map instead of scraping monitor.log: the log line only
+    # appears when some client pulls the map, so after an osd restart (ports are
+    # reassigned at every boot) the last logged line holds stale ports and the
+    # membership tool gets refused connections it never recovers from.  The
+    # -detail view prints one row per shard; take shard 0.
+    parsed="$("$client_bin" -conf="$conf" -op=getosdmap -detail 2>/dev/null \
+        | awk 'NR > 1 && $4 == 0 {print $1, $2, $5}')"
 
     if [ -z "$parsed" ]; then
-        echo "failed to derive OSD map from $monitor_log" >&2
+        echo "failed to derive OSD map via $client_bin -op=getosdmap -detail" >&2
         exit 1
     fi
 
