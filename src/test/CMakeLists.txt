@@ -105,6 +105,7 @@ target_include_directories(raft_contract_test
 target_link_libraries(raft_contract_test
   PUBLIC
     raft_msg
+    aos
     spdk::spdk
 )
 add_test(NAME raft_contract_test COMMAND raft_contract_test)
