@@ -22,8 +22,8 @@ start_cluster="${SIGNOFF_START_CLUSTER:-1}"
 # AOS mkfs writes the whole sparse backing file, so the vstart default of 100G
 # fills a small root partition and fails with ENOSPC (aio rc -28).
 export FASTBLOCK_VSTART_AIO_FILE_SIZE="${FASTBLOCK_VSTART_AIO_FILE_SIZE:-4G}"
-# Three OSDs claim core 0/1/2, so the bench cannot keep its 0x4 default.
-export BLOCK_BENCH_CPU_MASK="${BLOCK_BENCH_CPU_MASK:-0x8}"
+# OSDs claim cores 0..osd_count-1, so the bench cannot keep its 0x4 default.
+export BLOCK_BENCH_CPU_MASK="${BLOCK_BENCH_CPU_MASK:-$(printf '0x%x' "$((1 << osd_count))")}"
 export RAFT_REGRESSION_OSD_COUNT="$osd_count"
 export RAFT_REGRESSION_PG_COUNT="$pg_count"
 export RAFT_SNAPSHOT_OSD_COUNT="$osd_count"
@@ -92,7 +92,12 @@ step "2/4 aos restart verify"
 wait_ready
 
 step "3/4 raft dev regression"
-"$script_root/scripts/run-raft-dev-regression.sh"
+if [ "$osd_count" -le "$replica" ]; then
+    echo "skipped: membership regression needs a spare OSD outside the PG;"
+    echo "         re-run with SIGNOFF_OSD_COUNT=$((replica + 1)) on this box"
+else
+    "$script_root/scripts/run-raft-dev-regression.sh"
+fi
 
 step "4/4 raft install-snapshot regression (brings up its own cluster)"
 "$script_root/scripts/run-raft-install-snapshot-regression.sh"
