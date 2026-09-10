@@ -133,8 +133,11 @@ ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0}" \
     "$verify_bin" -m "$cpu_mask" -C "$bench_conf" -M verify -S "$seed" -I "$image_name"
 
 echo "dump-compare after restart seed=$seed"
-"$verify_bin" -M dump-compare --align "$align" --seed "$seed" \
-    "$data_dir/osd-1/aos_file" "$data_dir/osd-2/aos_file" "$data_dir/osd-3/aos_file"
+dump_files=()
+for id in $(seq 1 "$expected_osds"); do
+    dump_files+=("$data_dir/osd-$id/aos_file")
+done
+"$verify_bin" -M dump-compare --align "$align" --seed "$seed" "${dump_files[@]}"
 
 echo "Checking recover kv / shutdown after restart"
 fail_cfg=0
