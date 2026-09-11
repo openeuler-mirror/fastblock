@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 #include <deque>
+#include <utility>
 #include <memory>
 
 #include "raft_types.h"
@@ -671,6 +672,12 @@ public:
      * nodes that need a snapshot while a session is running wait here and are
      * dispatched when the running session ends. */
     void dispatch_pending_recovery();
+
+    /* Live endpoint of a raft peer: the mon map first (an osd re-registers a
+     * new port at every boot), falling back to the raft node info, which on a
+     * peer keeps the port recorded when the pg was created. */
+    std::pair<std::string, int> resolve_node_addr(std::shared_ptr<raft_node> node,
+                                                  uint32_t shard_id);
     void do_recovery(std::shared_ptr<raft_node> node);
 
     void raft_set_op_state(raft_op_state op_state){
