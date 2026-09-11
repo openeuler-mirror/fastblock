@@ -1641,10 +1641,8 @@ void raft_server_t::process_conf_change_add_nonvoting(std::shared_ptr<raft_entry
                 return;
             }
 
-            const auto& node_info = node->raft_get_node_info();
             const auto node_id = node->raft_node_get_id();
-            const auto addr = node_info.addr();
-            const auto port = node_info.port();
+            auto [addr, port] = resolve_node_addr(node, _shard_id);
 
             _client.create_connect(
               node_id,
@@ -2866,6 +2864,18 @@ int raft_server_t::raft_send_installsnapshot(installsnapshot_request *req, raft_
       "send installsnapshot_request to node %d pg %lu.%lu term %ld last_idx %ld last_term %ld done %d object_size %d\n",
       node_id, _pool_id, _pg_id, req->term(), req->last_idx(), req->last_term(), req->done(), req->objects_size());
     return _client.send_install_snapshot(this, node_id, req);
+}
+
+std::pair<std::string, int> raft_server_t::resolve_node_addr(std::shared_ptr<raft_node> node,
+                                                             uint32_t shard_id) {
+    if (_mon_client) {
+        auto addr = _mon_client->get_osd_addr(node->raft_node_get_id(), shard_id);
+        if (!addr.first.empty() && addr.second != 0) {
+            return addr;
+        }
+    }
+    const auto& info = node->raft_get_node_info();
+    return {info.addr(), static_cast<int>(info.port())};
 }
 
 void raft_server_t::dispatch_pending_recovery() {
