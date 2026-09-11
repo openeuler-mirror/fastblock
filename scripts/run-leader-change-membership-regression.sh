@@ -36,12 +36,16 @@ kill_osd() {
         pid="$(pgrep -f "fastblock-os[d].* --id ${id} " | head -1 || true)"
     fi
     if [ -n "$pid" ]; then
+        killed_victim_pids="${killed_victim_pids} ${pid}"
         kill -9 "$pid" 2>/dev/null || true
     fi
     rm -f "$run_dir/osd-${id}.pid"
 }
 
 killed_victim=""
+# PIDs we deliberately kill -9.  On this host an SPDK reactor so killed is
+# recorded by systemd-coredump as SIGSEGV; those cores are not test failures.
+killed_victim_pids=""
 
 # On any exit path, make sure a victim killed for the scenario is running
 # again; leaving it dead poisons the next run of this or any other script.
@@ -269,16 +273,33 @@ scan_fatal_logs() {
     fi
 }
 
+core_pid_from_path() {
+    # systemd-coredump: core.comm.uid.bootid.pid.timestamp.lz4
+    local base
+    base="$(basename "${1:-}")"
+    awk -F. '{print $(NF-2)}' <<<"$base"
+}
+
 check_no_new_core() {
     local before="$1"
     local after
     after="$(latest_core || true)"
-    if [ "$after" != "$before" ]; then
-        echo "new coredump detected" >&2
-        echo "before: ${before:-<none>}" >&2
-        echo "after : ${after:-<none>}" >&2
-        exit 1
+    if [ "$after" = "$before" ]; then
+        return 0
     fi
+    local core_pid
+    core_pid="$(core_pid_from_path "$after")"
+    local victim_pid
+    for victim_pid in $killed_victim_pids; do
+        if [ -n "$core_pid" ] && [ "$core_pid" = "$victim_pid" ]; then
+            echo "ignoring coredump from deliberately killed pid $core_pid"
+            return 0
+        fi
+    done
+    echo "new coredump detected" >&2
+    echo "before: ${before:-<none>}" >&2
+    echo "after : ${after:-<none>}" >&2
+    exit 1
 }
 
 if [ "$osd_count" -le 3 ]; then
