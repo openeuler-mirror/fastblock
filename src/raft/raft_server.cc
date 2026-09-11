@@ -2268,9 +2268,10 @@ int raft_server_t::raft_process_installsnapshot_reply(installsnapshot_response *
         (void)arg;
         (void)rerrno;
         unpin_and_free_object_recovery(
-            [node](void*, int) {
+            [this, node](void*, int) {
                 node->raft_set_suppress_heartbeats(false);
                 node->raft_node_set_recovering(false);
+                dispatch_pending_recovery();
             },
             nullptr);
     };
@@ -2282,6 +2283,7 @@ int raft_server_t::raft_process_installsnapshot_reply(installsnapshot_response *
             [this, node](void*, int) {
                 node->raft_set_suppress_heartbeats(false);
                 dispatch_recovery(node);
+                dispatch_pending_recovery();
             },
             nullptr);
     };
@@ -2866,6 +2868,25 @@ int raft_server_t::raft_send_installsnapshot(installsnapshot_request *req, raft_
     return _client.send_install_snapshot(this, node_id, req);
 }
 
+void raft_server_t::dispatch_pending_recovery() {
+    while (!_recovery_pending.empty()) {
+        auto node_id = _recovery_pending.front();
+        _recovery_pending.pop_front();
+        auto node = raft_get_cfg_node(node_id);
+        if (!node) {
+            continue;
+        }
+        if (node->raft_node_get_match_idx() == raft_get_current_idx()) {
+            node->raft_node_set_recovering(false);
+            continue;
+        }
+        SPDK_NOTICELOG("pg: %lu.%lu, dispatch queued recovery for node %d\n",
+                       _pool_id, _pg_id, node_id);
+        dispatch_recovery(node);
+        break;
+    }
+}
+
 int raft_server_t::_recovery_by_snapshot(std::shared_ptr<raft_node> node){
     raft_set_snapshot_in_progress(true);
     node->raft_set_suppress_heartbeats(true);
@@ -2874,8 +2895,24 @@ int raft_server_t::_recovery_by_snapshot(std::shared_ptr<raft_node> node){
                    _pool_id, _pg_id, node->raft_node_get_id(),
                    _machine->uses_aos_objects() ? 1 : 0);
     if (_obr != nullptr) {
-        SPDK_ERRLOG("pg: %lu.%lu, snapshot recovery already in progress\n",
-                    _pool_id, _pg_id);
+        SPDK_NOTICELOG("pg: %lu.%lu, snapshot recovery already in progress, "
+                       "queueing node %d\n",
+                       _pool_id, _pg_id, node->raft_node_get_id());
+        // One session at a time: the object batch reader is shared, so a
+        // second session would tear down the first and both installs would
+        // keep restarting from scratch.  Queue this node; the running session
+        // dispatches the queue when it ends.  Heartbeats to the queued node
+        // stay on so its election timer keeps being fed.
+        bool queued = false;
+        for (auto id : _recovery_pending) {
+            if (id == node->raft_node_get_id()) {
+                queued = true;
+                break;
+            }
+        }
+        if (!queued) {
+            _recovery_pending.push_back(node->raft_node_get_id());
+        }
         raft_set_snapshot_in_progress(false);
         node->raft_set_suppress_heartbeats(false);
         node->raft_node_set_recovering(false);
@@ -2890,6 +2927,7 @@ int raft_server_t::_recovery_by_snapshot(std::shared_ptr<raft_node> node){
                 node->raft_node_set_recovering(false);
             },
             nullptr);
+        dispatch_pending_recovery();
     };
 
     _snapshot_index = _machine->get_last_applied_idx();
