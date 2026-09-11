@@ -21,7 +21,11 @@ pg_id="${LEADER_SNAPSHOT_PG_ID:-0}"
 osd_count="${LEADER_SNAPSHOT_OSD_COUNT:-3}"
 pg_count=8
 replica=3
-snapshot_objects="${LEADER_SNAPSHOT_OBJECTS:-400}"
+# 80 objects x 4MiB units ~= 320M per osd: enough to force the trim/snapshot
+# with a 2G backing file, while leaving room for the checkpoint the leader
+# writes when it creates the raft snapshot view.  400 objects filled a 2G
+# device completely and create_raft_snapshot blocked forever with no error.
+snapshot_objects="${LEADER_SNAPSHOT_OBJECTS:-200}"
 concurrent_writes=16
 append_writes=16
 io_size=4096
@@ -131,7 +135,7 @@ load_osd_map() {
 
 load_pg_members() {
     local pg_line
-    pg_line="$("$client_bin" -conf="$conf" -op=getpgmap | awk -v pg="$pool_id.$pg_id" '$1 == pg {print; exit}')"
+    pg_line="$("$client_bin" -conf="$conf" -op=getpgmap | awk -v pg="$pool_id.$pg_id" '$1 == pg {print}')"
     if [ -z "$pg_line" ]; then
         echo "failed to find PG $pool_id.$pg_id in pg map" >&2
         exit 1
@@ -275,6 +279,14 @@ for _ in $(seq 1 30); do
     pkill -9 -f "build/src/osd/fastblock-osd" 2>/dev/null || true
     sleep 1
 done
+# The monitor is not always tracked by a pid file: a mon started outside
+# vstart keeps port 3333, the new mon cannot bind, and then every osd id
+# allocation fails.  Wait the mon out as well.
+for _ in $(seq 1 15); do
+    pgrep -f "monitor/fastblock-mon" >/dev/null || break
+    pkill -9 -f "monitor/fastblock-mo[n]" 2>/dev/null || true
+    sleep 1
+done
 rm -rf "$script_root/.vstart"
 
 echo "Starting dev cluster with raft trim trigger=$FASTBLOCK_RAFT_LOG_TRIM_TRIGGER_ENTRIES keep=$FASTBLOCK_RAFT_LOG_TRIM_KEEP_ENTRIES"
@@ -287,7 +299,7 @@ load_osd_map
 load_pg_members
 leader="$(find_pg_leader)"
 lagging="$(pick_other "$leader")"
-original_members="$(awk '{print $4}' <<<"$( "$client_bin" -conf="$conf" -op=getpgmap | awk -v pg="$pool_id.$pg_id" '$1 == pg {print; exit}')" | tr -d '[]')"
+original_members="$(awk '{print $4}' <<<"$( "$client_bin" -conf="$conf" -op=getpgmap | awk -v pg="$pool_id.$pg_id" '$1 == pg {print}')" | tr -d '[]')"
 
 echo "Target PG $pool_id.$pg_id members: $original_members"
 echo "Leader: osd$leader"
