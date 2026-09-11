@@ -13,6 +13,15 @@
 
 void get_leader_source::process_response(){
     SPDK_NOTICELOG("leader of the pg %lu.%lu is %d\n", _request->pool_id(), _request->pg_id(), response.leader_id());
+    if (response.leader_id() <= 0) {
+        SPDK_ERRLOG(
+          "pg %lu.%lu has no raft leader yet (leader_id=%d state=%d)\n",
+          _request->pool_id(), _request->pg_id(), response.leader_id(),
+          response.state());
+        spdk_app_stop(err::RAFT_ERR_NOT_FOUND_LEADER);
+        delete this;
+        return;
+    }
     _client->set_leader_id(response.leader_id());
     if(_node_id != response.leader_id()){
         _client->create_connect(response.leader_addr(), response.leader_port(), response.leader_id(),
