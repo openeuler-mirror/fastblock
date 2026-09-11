@@ -349,7 +349,16 @@ check_full_health "after leader restart"
 echo "Waiting for the install snapshot to finish under the new leader"
 wait_for_log "install snapshot completed" "pg ${pool_id}\\.${pg_id}, snapshot is end\\."
 
-recovery_rounds="$(grep -E -c "recovery by snapshot to node ${lagging}" "$log_dir"/osd*.log 2>/dev/null | awk -F: '{s += $NF} END {print s + 0}')"
+# Count only sessions that really started.  A dispatch refused because one is
+# already running logs "already in progress" on the very next line — that is a
+# re-dispatch of the same session, not a restart.
+recovery_rounds="$(awk 'FNR == 1 { pending = 0 }
+    /recovery by snapshot to node/ { pending = FNR; next }
+    pending && FNR == pending + 1 {
+        if ($0 !~ /already in progress/) rounds++
+        pending = 0
+    }
+    END { print rounds + 0 }' "$log_dir"/osd*.log 2>/dev/null)"
 if [ "$recovery_rounds" -gt "$max_recovery_rounds" ]; then
     echo "_recovery_by_snapshot looped $recovery_rounds times (max $max_recovery_rounds)" >&2
     exit 1
