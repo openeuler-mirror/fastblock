@@ -212,15 +212,19 @@ void raft_client_protocol::maybe_reconnect(raft_server_t* raft, int32_t node_id)
         _reconnect.erase(key);
         return;
     }
-    const auto& info = node->raft_get_node_info();
-    if (info.addr().empty() || info.port() == 0) {
+    // Resolve through the mon map: the node info here is the port recorded
+    // when the pg was created, and an osd that rebooted into a new port would
+    // never be reachable through it (same root cause the get_leader fix in
+    // osd_service covers for clients).
+    auto [addr, port] = raft->resolve_node_addr(node, shard_id);
+    if (addr.empty() || port == 0) {
         _reconnect.erase(key);
         return;
     }
     st.inflight = true;
     SPDK_NOTICELOG("raft reconnect to node %d %s:%d shard %u\n", node_id,
-                   info.addr().c_str(), info.port(), shard_id);
-    create_connect(node_id, shard_id, info.addr(), static_cast<int>(info.port()),
+                   addr.c_str(), port, shard_id);
+    create_connect(node_id, shard_id, addr, port,
                    [this, key](void*, int rc) {
                        auto it = _reconnect.find(key);
                        if (it == _reconnect.end()) {
