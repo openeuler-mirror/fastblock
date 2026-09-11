@@ -19,6 +19,7 @@
 #include <assert.h>
 #include <string>
 #include <vector>
+#include <deque>
 #include <memory>
 
 #include "raft_types.h"
@@ -665,6 +666,11 @@ public:
 
     msg_appendentries_t* create_appendentries(std::shared_ptr<raft_node> node, raft_index_t next_idx);
     void dispatch_recovery(std::shared_ptr<raft_node> node);
+
+    /* Install-snapshot recovery is serialized (single object batch reader):
+     * nodes that need a snapshot while a session is running wait here and are
+     * dispatched when the running session ends. */
+    void dispatch_pending_recovery();
     void do_recovery(std::shared_ptr<raft_node> node);
 
     void raft_set_op_state(raft_op_state op_state){
@@ -974,6 +980,7 @@ private:
     raft_term_t _snapshot_term;
 
     object_recovery *_obr;
+    std::deque<raft_node_id_t> _recovery_pending;
     std::queue<task_info> _tasks;
 
     std::shared_ptr<monitor::client> _mon_client;
