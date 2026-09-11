@@ -1678,46 +1678,6 @@ void raft_server_t::process_conf_change_add_nonvoting(std::shared_ptr<raft_entry
         }
     }
 
-    // Persist and replicate ADD_NONVOTING to the current members before
-    // catch-up.  raft_flush advances current_idx to this entry and then
-    // returns without the normal disk_append/AE path, so existing
-    // followers never saw the index.  The later CONFIGURATION AE then
-    // has prev_log_idx sitting in a hole.
-    //
-    // Use entry->idx(), not the leftover _first_idx/_current_idx from a
-    // previous flush: the CFG_CATCHING_START path processes this entry
-    // without updating those fields, and re-appending the last durable
-    // index returns EEXIST (-17).
-    {
-        const raft_index_t index = entry->idx();
-        if (index > 0) {
-            raft_term_t existing_term = 0;
-            const bool already_on_disk =
-              raft_get_log() && raft_get_log()->disk_get_term(index, existing_term);
-            if (_current_idx < index) {
-                _current_idx = index;
-            }
-            _first_idx = index;
-            if (!already_on_disk && raft_get_log() &&
-                raft_get_log()->get_entry(index)) {
-                disk_append_complete *append_complete =
-                  new disk_append_complete(index, index, this);
-                raft_disk_append_entries(index, index, append_complete);
-            }
-            auto send_to_current = [this, index](std::shared_ptr<raft_node> node) {
-                if (!node || raft_is_self(node)) {
-                    return;
-                }
-                if (node->raft_node_is_recovering()) {
-                    return;
-                }
-                node->raft_set_end_idx(index);
-                raft_send_appendentries(node, index, index);
-            };
-            _nodes_stat.for_all_node(std::move(send_to_current));
-        }
-    }
-
     std::vector<raft_node_info> create_pg_nodes;
     for (auto& new_node : config.new_nodes()) {
         create_pg_nodes.emplace_back(new_node);
@@ -3242,6 +3202,7 @@ raft_server_t::raft_server_t(raft_client_protocol& client, disk_log* log,
     , _configuration_manager(this)
     , _snapshot_index(0)
     , _snapshot_term(0)
+    , _obr(nullptr)
     , _mon_client(mon_client)
     , _disk_io_num(0)
     , _merger_tow_num(0)
