@@ -227,20 +227,36 @@ run_pg_stress() {
     local object_count="$5"
     local port="${osd_port[$contact_osd]}"
     local addr="${osd_addr[$contact_osd]}"
+    local attempt rc
 
-    FB_PG_OBJECT="$object" \
-    FB_PG_WRITES="$write_count" \
-    FB_PG_OBJECT_COUNT="$object_count" \
-    FB_PG_IO_SIZE="$io_size" \
-    FB_PG_MODE="$mode" \
-    ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0}" \
-        "$stress_bin" --no-huge -s 1024 -m "$cpu_mask" \
-        -C "$conf" \
-        -I "$contact_osd" \
-        -o "$addr" \
-        -t "$port" \
-        -P "$pool_id" \
-        -G "$pg_id"
+    # A pg that just restarted its raft (a leader we killed and brought back)
+    # can answer get_leader with 0 for a while; the tool fails fast on that,
+    # so give it a few tries.
+    for attempt in 1 2 3 4; do
+        FB_PG_OBJECT="$object" \
+        FB_PG_WRITES="$write_count" \
+        FB_PG_OBJECT_COUNT="$object_count" \
+        FB_PG_IO_SIZE="$io_size" \
+        FB_PG_MODE="$mode" \
+        ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0}" \
+            "$stress_bin" --no-huge -s 1024 -m "$cpu_mask" \
+            -C "$conf" \
+            -I "$contact_osd" \
+            -o "$addr" \
+            -t "$port" \
+            -P "$pool_id" \
+            -G "$pg_id"
+        rc=$?
+        if [ "$rc" -eq 0 ]; then
+            return 0
+        fi
+        if [ "$rc" -ne 113 ]; then
+            return "$rc"
+        fi
+        echo "pg_stress $mode $object: no raft leader yet (attempt $attempt/4), retrying in 10s"
+        sleep 10
+    done
+    return "$rc"
 }
 
 scan_fatal_logs() {
