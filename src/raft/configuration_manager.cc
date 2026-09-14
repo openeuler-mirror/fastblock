@@ -153,8 +153,9 @@ int node_configuration_manager::cfg_change_process(int result, raft_index_t rsp_
     switch (get_state()){
     case  cfg_state::CFG_CATCHING_UP:
     {
-        if(!get_catch_up_node(node->raft_node_get_id()))
+        if(!get_catch_up_node(node->raft_node_get_id())){
             return 0;
+        }
         // A catch-up completion can arrive after the config entry was already
         // consumed and reset: a snapshot catch-up hands over to AE recovery at
         // snapshot-end, and that second completion re-enters here.  Walking a
@@ -239,15 +240,23 @@ int node_configuration_manager::cfg_change_process(int result, raft_index_t rsp_
     {
         if(_configuration_index == 0 || _configuration_index != rsp_current_idx)
             return 0;
-        SPDK_INFOLOG(pg_group, "in pg %s , state: %d node_id: %d rsp_current_idx: %ld result: %d\n", 
+        SPDK_INFOLOG(pg_group, "in pg %s , state: %d node_id: %d rsp_current_idx: %ld result: %d\n",
                 _pg_name.c_str(), (int)get_state(), node->raft_node_get_id(), _configuration_index, result);
+        // This state is the new configuration, so a vote counts when the node
+        // is in the new set.  Only checking the previous configuration left the
+        // node that was just added uncounted, and with a replica of 3 the
+        // majority (match > size/2) was never reached: the change hung until
+        // the client rpc timed out.
+        auto in_new_cfg = [this](raft_node_id_t node_id){
+            return find_node(node_id) || find_new_node(node_id);
+        };
         if(result != 0){
             if(result == err::RAFT_ERR_NOT_LEADER || result == err::RAFT_ERR_PG_DELETED){
                 finish_func(result);
                 // _raft->raft_flush();
                 return 1;
             }
-            if(find_node(node->raft_node_get_id()))
+            if(in_new_cfg(node->raft_node_get_id()))
                 _new_node_fail_size++;
             if(_new_node_fail_size > (get_node_size() / 2)){
                 finish_func(result);
@@ -255,7 +264,7 @@ int node_configuration_manager::cfg_change_process(int result, raft_index_t rsp_
                 return 1;
             }
         }else{
-            if(find_node(node->raft_node_get_id()))
+            if(in_new_cfg(node->raft_node_get_id()))
                 _new_node_match_size++;
         }       
         if(_new_node_match_size > get_node_size() / 2){
