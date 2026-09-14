@@ -34,6 +34,9 @@ void node_configuration_manager::add_catch_up_node(const raft_node_info& node_in
 }
 
 int node_configuration_manager::cfg_change_process(int result, raft_index_t rsp_current_idx, std::shared_ptr<raft_node> node){
+    if(!node){
+        return 0;
+    }
     auto finish_func = [this](int result){
         auto* cfg_complete = _cfg_complete;
         auto final_result = result;
@@ -55,8 +58,11 @@ int node_configuration_manager::cfg_change_process(int result, raft_index_t rsp_
     };
 
     auto get_change_num = [this](std::shared_ptr<raft_entry_t> entry){
+        if(!entry){
+            return 0;
+        }
         raft_configuration config;
-        config.ParseFromString(entry->meta()); 
+        config.ParseFromString(entry->meta());
 
         std::map<int32_t, int32_t> new_nodes;
         auto new_node_size = config.new_nodes_size();
@@ -80,11 +86,14 @@ int node_configuration_manager::cfg_change_process(int result, raft_index_t rsp_
     };
 
     auto process_cfg_change = [this](
-                            cfg_state next_state, 
-                            std::shared_ptr<raft_entry_t> entry, 
+                            cfg_state next_state,
+                            std::shared_ptr<raft_entry_t> entry,
                             utils::context* complete){
+        if(!entry){
+            return -EINVAL;
+        }
         raft_configuration config;
-        config.ParseFromString(entry->meta()); 
+        config.ParseFromString(entry->meta());
         auto node_size = config.new_nodes_size();
 
         raft_configuration cfg;
@@ -146,7 +155,17 @@ int node_configuration_manager::cfg_change_process(int result, raft_index_t rsp_
     {
         if(!get_catch_up_node(node->raft_node_get_id()))
             return 0;
-        SPDK_INFOLOG(pg_group, "in pg %s , state: %d node_id: %d result: %d\n", 
+        // A catch-up completion can arrive after the config entry was already
+        // consumed and reset: a snapshot catch-up hands over to AE recovery at
+        // snapshot-end, and that second completion re-enters here.  Walking a
+        // null _cfg_entry crashed the leader.
+        if(!_cfg_entry){
+            SPDK_WARNLOG(
+              "in pg %s, config entry already consumed, ignoring late catch-up of node %d\n",
+              _pg_name.c_str(), node->raft_node_get_id());
+            return 0;
+        }
+        SPDK_INFOLOG(pg_group, "in pg %s , state: %d node_id: %d result: %d\n",
                 _pg_name.c_str(), (int)get_state(), node->raft_node_get_id(), result);
         if(result != 0){
             finish_func(result);
