@@ -111,6 +111,8 @@ public:
   /**
    * After install-snapshot: make last_index == index with term on disk.
    * Empty log: append a snapshot-base entry at index (need not start at 1).
+   * Shorter non-empty log: same marker replaces the index map once durable.
+   * Replay of that marker drops every earlier index (apply_record).
    * Already at/above index: no-op success (idempotent / catchup already ahead).
    * Completes after the marker is durable (or immediately if no I/O).
    */
