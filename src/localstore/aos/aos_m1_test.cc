@@ -2033,6 +2033,65 @@ void test_log_store_install_snapshot_base() {
   EXPECT_EQ(log2.get_term(133), 8);
 }
 
+void test_log_store_install_snapshot_base_replaces_shorter_log() {
+  mem_device_backend dev(4 * 1024 * 1024);
+  auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
+                                                   dev.block_size());
+  EXPECT_EQ(alloc->ensure_open(), 0);
+  log_store log(&dev, pg_id{5, 1, 7}, alloc, buffer_mode::heap);
+
+  log_entry old_e;
+  old_e.term = 1;
+  old_e.index = 10;
+  old_e.type = 0;
+  old_e.meta = "old";
+  sync_result r;
+  log.append(old_e, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(log.contains(10));
+
+  // Same index is still a no-op, not a truncate.
+  r = {};
+  log.install_snapshot_base(10, 1, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(log.contains(10));
+  EXPECT_EQ(log.last_index(), 10);
+
+  r = {};
+  log.install_snapshot_base(50, 4, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(!log.contains(10));
+  EXPECT_TRUE(log.contains(50));
+  EXPECT_EQ(log.base_index(), 50);
+  EXPECT_EQ(log.last_index(), 50);
+  EXPECT_EQ(log.get_term(50), 4);
+
+  log_entry next;
+  next.term = 4;
+  next.index = 51;
+  next.type = 0;
+  next.meta = "n";
+  r = {};
+  log.append(next, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(log.last_index(), 51);
+
+  std::vector<uint8_t> image(static_cast<size_t>(dev.write_pointer()));
+  r = {};
+  dev.read(0, image.data(), image.size(), on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  auto alloc2 = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
+                                                    dev.block_size());
+  log_store log2(&dev, pg_id{5, 1, 7}, alloc2, buffer_mode::heap);
+  log2.rebuild_from_image(image.data(), image.size());
+  EXPECT_TRUE(!log2.contains(10));
+  EXPECT_TRUE(log2.contains(50));
+  EXPECT_TRUE(log2.contains(51));
+  EXPECT_EQ(log2.base_index(), 50);
+  EXPECT_EQ(log2.last_index(), 51);
+  EXPECT_EQ(log2.get_term(50), 4);
+}
+
 void test_log_store_truncate_from() {
   mem_device_backend dev(4 * 1024 * 1024);
   auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
@@ -5255,6 +5314,37 @@ void test_pg_store_list_live_names_snapshot_view() {
   EXPECT_TRUE(names.size() == 1 && names[0] == "ghost");
 }
 
+// open() used to close() a never-started runtime. That latched stop_finished_
+// and the OSD --mkfs shutdown never invoked the stop callback.
+void test_runtime_close_before_open_does_not_swallow_stop() {
+  struct stop_result {
+    int calls{0};
+    int err{1};
+  };
+  aos_runtime rt;
+  rt.close();
+  stop_result first;
+  rt.stop(
+      [](void* arg, int e) {
+        auto* r = static_cast<stop_result*>(arg);
+        r->calls += 1;
+        r->err = e;
+      },
+      &first);
+  EXPECT_EQ(first.calls, 1);
+  EXPECT_EQ(first.err, 0);
+  stop_result second;
+  rt.stop(
+      [](void* arg, int e) {
+        auto* r = static_cast<stop_result*>(arg);
+        r->calls += 1;
+        r->err = e;
+      },
+      &second);
+  EXPECT_EQ(second.calls, 1);
+  EXPECT_EQ(second.err, 0);
+}
+
 } // namespace
 
 int main() {
@@ -5325,6 +5415,7 @@ int main() {
   test_kv_engine_torn_wal_keeps_prior();
   test_kv_engine_torn_checkpoint_keeps_prior();
   test_log_store_install_snapshot_base();
+  test_log_store_install_snapshot_base_replaces_shorter_log();
   test_log_store_truncate_from();
   test_gc_preserves_live_log_and_frees_after_trim();
   test_gc_preserves_live_kv_and_frees_after_checkpoint();
@@ -5370,6 +5461,7 @@ int main() {
   test_append_as_log_missing_name_not_published();
   test_truncate_log_and_pending();
   test_pg_store_list_live_names_snapshot_view();
+  test_runtime_close_before_open_does_not_swallow_stop();
 
   if (g_failures != 0) {
     std::fprintf(stderr, "aos_m1_test: %d failure(s)\n", g_failures);
