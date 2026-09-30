@@ -67,6 +67,9 @@ public:
   pg_store& operator=(const pg_store&) = delete;
 
   const pg_id& id() const { return id_; }
+  // True while an op is running or queued. Shutdown waits for this to drop
+  // before destroying the borrowed device_backend.
+  bool io_busy() const { return busy_ || !queue_.empty(); }
   device_backend* backend() const { return backend_; }
   buffer_mode mode() const { return mode_; }
   segment_allocator* allocator() { return alloc_.get(); }
