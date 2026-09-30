@@ -95,6 +95,8 @@ private:
         // request/response/done; the unique_ptr stays in _on_fligh_tasks
         // until handle_rpc_done.
         bool replied{false};
+        // process_change_nodes / image_snap outlive the 1s data-path deadline.
+        bool long_running{false};
     };
 
 public:
@@ -321,7 +323,12 @@ private:
      */
 
     bool is_timeout(const rpc_task* task) noexcept {
-        return task->start_at + _opts->rpc_timeout < std::chrono::system_clock::now();
+        auto limit = std::chrono::duration_cast<std::chrono::microseconds>(
+          _opts->rpc_timeout);
+        if (task->long_running) {
+            limit = rpc_timeout_for_method("process_change_nodes", limit);
+        }
+        return task->start_at + limit < std::chrono::system_clock::now();
     }
 
     bool is_all_tasks_done() noexcept {
@@ -785,6 +792,7 @@ private:
             }
         }
 
+        task->long_running = rpc_method_is_long_running(method_name);
         task->request_data.reset(nullptr);
         task->response_body = std::unique_ptr<google::protobuf::Message>{
           service_it->second->data->GetResponsePrototype(method).New()};
