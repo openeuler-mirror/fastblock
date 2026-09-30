@@ -68,6 +68,15 @@ public:
 
   size_t pg_count() const { return pgs_.size(); }
 
+  bool io_busy() const {
+    for (const auto& kv : pgs_) {
+      if (kv.second && kv.second->io_busy()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /**
    * Distinct (pool_id, pg_id) known after recover/manifest (latest_epoch > 0).
    * Used by OSD load to rebuild raft PGs without blobstore scan (design v2 P3).
