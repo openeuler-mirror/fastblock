@@ -59,6 +59,16 @@ public:
   void set_max_write_inflight(uint32_t n);
   uint32_t max_write_inflight() const { return max_write_inflight_; }
   uint32_t write_inflight() const { return write_inflight_; }
+  // Writes in the driver or the queue, plus reads and flushes in the driver.
+  // Shutdown must see zero before the backend object is destroyed.
+  bool io_pending() const {
+    return write_inflight_ != 0 || !write_q_.empty() || read_inflight_ != 0 ||
+           flush_inflight_ != 0;
+  }
+  bool driver_idle() const {
+    return write_inflight_ == 0 && read_inflight_ == 0 && flush_inflight_ == 0;
+  }
+  void fail_queued(int err);
 
   // After crash recovery, set pointer to end of last good record.
   void set_write_pointer(uint64_t bytes_from_region_start) override;
@@ -103,6 +113,8 @@ private:
   // Concurrent write depth. Reads are unbounded for now.
   uint32_t max_write_inflight_{1};
   uint32_t write_inflight_{0};
+  uint32_t read_inflight_{0};
+  uint32_t flush_inflight_{0};
 
   struct pending_write {
     uint64_t phys_offset{0};
