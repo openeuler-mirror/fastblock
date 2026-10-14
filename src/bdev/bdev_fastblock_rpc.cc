@@ -25,12 +25,15 @@ struct rpc_create_fastblock
 	uint64_t object_size;
 	uint32_t block_size;
 	char *monitor_address;
+	uint64_t iops_limit;
+	uint64_t bw_limit_mib_per_sec;
 };
 
 static void
 free_rpc_create_fastblock(struct rpc_create_fastblock *req)
 {
 	free(req->name);
+	free(req->pool_name);
 	free(req->image_name);
 	free(req->monitor_address);
 }
@@ -88,7 +91,9 @@ static const struct spdk_json_object_decoder rpc_create_fastblock_decoders[] = {
 	{"image_size", offsetof(struct rpc_create_fastblock, image_size), spdk_json_decode_uint64},
 	{"object_size", offsetof(struct rpc_create_fastblock, object_size), spdk_json_decode_uint64},
 	{"block_size", offsetof(struct rpc_create_fastblock, block_size), spdk_json_decode_uint32},
-	{"monitor_address", offsetof(struct rpc_create_fastblock, monitor_address), spdk_json_decode_string}};
+	{"monitor_address", offsetof(struct rpc_create_fastblock, monitor_address), spdk_json_decode_string},
+	{"iops_limit", offsetof(struct rpc_create_fastblock, iops_limit), spdk_json_decode_uint64, true},
+	{"bw_limit_mib_per_sec", offsetof(struct rpc_create_fastblock, bw_limit_mib_per_sec), spdk_json_decode_uint64, true}};
 
 static void
 rpc_bdev_fastblock_create(struct spdk_jsonrpc_request *request,
@@ -115,7 +120,9 @@ rpc_bdev_fastblock_create(struct spdk_jsonrpc_request *request,
 							   req.image_size,
 							   req.block_size,
 							   req.object_size,
-							   req.monitor_address);
+							   req.monitor_address,
+							   req.iops_limit,
+							   req.bw_limit_mib_per_sec);
 	if (rc)
 	{
 		spdk_jsonrpc_send_error_response(request, rc, spdk_strerror(-rc));
@@ -246,3 +253,146 @@ cleanup:
 }
 
 SPDK_RPC_REGISTER("bdev_fastblock_resize", rpc_bdev_fastblock_resize, SPDK_RPC_RUNTIME)
+
+struct rpc_bdev_fastblock_qos
+{
+	char *name;
+	uint64_t iops_limit;
+	uint64_t bw_limit_mib_per_sec;
+};
+
+static void
+free_rpc_bdev_fastblock_qos(struct rpc_bdev_fastblock_qos *req)
+{
+	free(req->name);
+}
+
+static const struct spdk_json_object_decoder rpc_bdev_fastblock_update_qos_decoders[] = {
+	{"name", offsetof(struct rpc_bdev_fastblock_qos, name), spdk_json_decode_string},
+	{"iops_limit", offsetof(struct rpc_bdev_fastblock_qos, iops_limit), spdk_json_decode_uint64},
+	{"bw_limit_mib_per_sec", offsetof(struct rpc_bdev_fastblock_qos, bw_limit_mib_per_sec), spdk_json_decode_uint64, true},
+};
+
+static void
+rpc_bdev_fastblock_update_qos_cb(void *cb_arg, int status)
+{
+	struct spdk_jsonrpc_request *request = (struct spdk_jsonrpc_request *)cb_arg;
+
+	if (status != 0)
+	{
+		spdk_jsonrpc_send_error_response(request, status, spdk_strerror(-status));
+		return;
+	}
+
+	spdk_jsonrpc_send_bool_response(request, true);
+}
+
+static void
+rpc_bdev_fastblock_update_qos(struct spdk_jsonrpc_request *request,
+							  const struct spdk_json_val *params)
+{
+	struct rpc_bdev_fastblock_qos req = {};
+	struct spdk_bdev *bdev;
+	int rc;
+
+	if (spdk_json_decode_object(params, rpc_bdev_fastblock_update_qos_decoders,
+								SPDK_COUNTOF(rpc_bdev_fastblock_update_qos_decoders),
+								&req))
+	{
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INTERNAL_ERROR,
+										 "spdk_json_decode_object failed");
+		goto cleanup;
+	}
+
+	bdev = spdk_bdev_get_by_name(req.name);
+	if (bdev == NULL)
+	{
+		spdk_jsonrpc_send_error_response(request, -ENODEV, spdk_strerror(ENODEV));
+		goto cleanup;
+	}
+
+	rc = bdev_fastblock_update_qos(bdev, req.iops_limit, req.bw_limit_mib_per_sec,
+								   rpc_bdev_fastblock_update_qos_cb, request);
+	if (rc)
+	{
+		spdk_jsonrpc_send_error_response(request, rc, spdk_strerror(-rc));
+		goto cleanup;
+	}
+
+	free_rpc_bdev_fastblock_qos(&req);
+	return;
+
+cleanup:
+	free_rpc_bdev_fastblock_qos(&req);
+}
+
+SPDK_RPC_REGISTER("bdev_fastblock_update_qos", rpc_bdev_fastblock_update_qos, SPDK_RPC_RUNTIME)
+
+static const struct spdk_json_object_decoder rpc_bdev_fastblock_get_qos_decoders[] = {
+	{"name", offsetof(struct rpc_bdev_fastblock_qos, name), spdk_json_decode_string},
+};
+
+static void
+rpc_bdev_fastblock_get_qos(struct spdk_jsonrpc_request *request,
+						   const struct spdk_json_val *params)
+{
+	struct rpc_bdev_fastblock_qos req = {};
+	struct spdk_json_write_ctx *w;
+	struct spdk_bdev *bdev;
+	uint64_t iops_limit = 0;
+	uint64_t bw_limit_mib_per_sec = 0;
+	uint64_t spdk_iops_limit = 0;
+	uint64_t spdk_bw_limit_mib_per_sec = 0;
+	uint64_t spdk_read_bw_limit_mib_per_sec = 0;
+	uint64_t spdk_write_bw_limit_mib_per_sec = 0;
+	int rc;
+
+	if (spdk_json_decode_object(params, rpc_bdev_fastblock_get_qos_decoders,
+								SPDK_COUNTOF(rpc_bdev_fastblock_get_qos_decoders),
+								&req))
+	{
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INTERNAL_ERROR,
+										 "spdk_json_decode_object failed");
+		goto cleanup;
+	}
+
+	bdev = spdk_bdev_get_by_name(req.name);
+	if (bdev == NULL)
+	{
+		spdk_jsonrpc_send_error_response(request, -ENODEV, spdk_strerror(ENODEV));
+		goto cleanup;
+	}
+
+	rc = bdev_fastblock_get_qos(bdev,
+								&iops_limit,
+								&bw_limit_mib_per_sec,
+								&spdk_iops_limit,
+								&spdk_bw_limit_mib_per_sec,
+								&spdk_read_bw_limit_mib_per_sec,
+								&spdk_write_bw_limit_mib_per_sec);
+	if (rc)
+	{
+		spdk_jsonrpc_send_error_response(request, rc, spdk_strerror(-rc));
+		goto cleanup;
+	}
+
+	w = spdk_jsonrpc_begin_result(request);
+	spdk_json_write_object_begin(w);
+	spdk_json_write_named_object_begin(w, "configured");
+	spdk_json_write_named_uint64(w, "iops_limit", iops_limit);
+	spdk_json_write_named_uint64(w, "bw_limit_mib_per_sec", bw_limit_mib_per_sec);
+	spdk_json_write_object_end(w);
+	spdk_json_write_named_object_begin(w, "spdk_assigned");
+	spdk_json_write_named_uint64(w, "rw_ios_per_sec", spdk_iops_limit);
+	spdk_json_write_named_uint64(w, "rw_mbytes_per_sec", spdk_bw_limit_mib_per_sec);
+	spdk_json_write_named_uint64(w, "r_mbytes_per_sec", spdk_read_bw_limit_mib_per_sec);
+	spdk_json_write_named_uint64(w, "w_mbytes_per_sec", spdk_write_bw_limit_mib_per_sec);
+	spdk_json_write_object_end(w);
+	spdk_json_write_object_end(w);
+	spdk_jsonrpc_end_result(request, w);
+
+cleanup:
+	free_rpc_bdev_fastblock_qos(&req);
+}
+
+SPDK_RPC_REGISTER("bdev_fastblock_get_qos", rpc_bdev_fastblock_get_qos, SPDK_RPC_RUNTIME)

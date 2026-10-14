@@ -14,6 +14,7 @@
 #include "fastblock/msg/rdma/cq.h"
 #include "fastblock/msg/rdma/memory_pool.h"
 #include "fastblock/msg/rdma/probe.h"
+#include "fastblock/msg/rdma/ring_write_pool.h"
 #include "fastblock/msg/rdma/work_request_id.h"
 #include "fastblock/msg/rdma/socket.h"
 #include "fastblock/msg/rdma/transport_data.h"
@@ -207,6 +208,7 @@ public:
           std::shared_ptr<options> opts,
           std::shared_ptr<memory_pool<::ibv_send_wr>> meta_pool,
           std::shared_ptr<memory_pool<::ibv_send_wr>> data_pool,
+          std::shared_ptr<::msg::rdma::ring_write_pool> ring_write_pool,
           std::shared_ptr<std::list<std::weak_ptr<connection>>> busy_list,
           std::shared_ptr<std::list<std::weak_ptr<connection>>> busy_priority_list,
           std::shared_ptr<client> master,
@@ -217,6 +219,7 @@ public:
           , _opts{opts}
           , _meta_pool{meta_pool}
           , _data_pool{data_pool}
+          , _ring_write_pool{ring_write_pool}
           , _recv_pool{nullptr}
           , _recv_ctx{nullptr}
           , _busy_list{busy_list}
@@ -1107,6 +1110,7 @@ read_done:
             _master.reset();
             _meta_pool.reset();
             _data_pool.reset();
+            _ring_write_pool.reset();
             _opts.reset();
         }
 
@@ -1134,6 +1138,11 @@ read_done:
 
         socket& fd() noexcept {
             return *_sock;
+        }
+
+        std::shared_ptr<::msg::rdma::ring_write_pool>
+        ring_write_pool() noexcept {
+            return _ring_write_pool;
         }
 
         auto post_send_wr(::ibv_send_wr* wr, const size_t n_wrs = 1) {
@@ -1202,6 +1211,7 @@ read_done:
 
         std::shared_ptr<memory_pool<::ibv_send_wr>> _meta_pool{nullptr};
         std::shared_ptr<memory_pool<::ibv_send_wr>> _data_pool{nullptr};
+        std::shared_ptr<::msg::rdma::ring_write_pool> _ring_write_pool{nullptr};
         std::unique_ptr<memory_pool<::ibv_recv_wr>> _recv_pool{nullptr};
         std::unique_ptr<memory_pool<::ibv_recv_wr>::net_context*[]> _recv_ctx{nullptr};
         std::unordered_map<work_request_id::value_type, memory_pool<::ibv_recv_wr>::net_context*> _recv_ctx_map{};
@@ -1284,6 +1294,10 @@ public:
 
     client() = delete;
 
+    static constexpr size_t ring_write_pool_min_capacity{128};
+    static constexpr size_t ring_write_pool_max_capacity{512};
+    static constexpr size_t ring_write_pool_element_size{256 * 1024};
+
     // Thread is passed by caller and must be released by caller
     client(std::string name, ::spdk_thread* thread, std::shared_ptr<options> opts, int sock_id = SPDK_ENV_SOCKET_ID_ANY)
       : _opts{opts}
@@ -1302,7 +1316,12 @@ public:
       , _data_pool{std::make_shared<memory_pool<::ibv_send_wr>>(
         _pd->value(), FB_FMT_1("%1%_d", name),
         _opts->data_memory_pool_capacity,
-        _opts->data_memory_pool_element_size, 0, _sock_id)} {}
+        _opts->data_memory_pool_element_size, 0, _sock_id)}
+      , _ring_write_pool{std::make_shared<::msg::rdma::ring_write_pool>(
+        _pd->value(), FB_FMT_1("%1%_rw", name),
+        ring_write_pool_min_capacity,
+        ring_write_pool_max_capacity,
+        ring_write_pool_element_size, _sock_id)} {}
 
     client(const client&) = delete;
 
@@ -1362,6 +1381,10 @@ private:
         if (_data_pool) {
             _data_pool->free();
             _data_pool.reset();
+        }
+        if (_ring_write_pool) {
+            _ring_write_pool->free();
+            _ring_write_pool.reset();
         }
         _wcs.reset();
         _cq.reset();
@@ -1476,6 +1499,7 @@ public:
           _opts,
           _meta_pool,
           _data_pool,
+          _ring_write_pool,
           _busy_connections,
           _busy_priority_connections,
           shared_from_this(),
@@ -1537,6 +1561,7 @@ public:
               _opts,
               _meta_pool,
               _data_pool,
+              _ring_write_pool,
               _busy_connections,
               _busy_priority_connections,
               shared_from_this(),
@@ -1843,6 +1868,7 @@ private:
     int _sock_id{SPDK_ENV_SOCKET_ID_ANY};
     std::shared_ptr<memory_pool<::ibv_send_wr>> _meta_pool{nullptr};
     std::shared_ptr<memory_pool<::ibv_send_wr>> _data_pool{nullptr};
+    std::shared_ptr<::msg::rdma::ring_write_pool> _ring_write_pool{nullptr};
 
     std::shared_ptr<std::list<std::weak_ptr<connection>>> _busy_connections{
       std::make_shared<std::list<std::weak_ptr<connection>>>()};

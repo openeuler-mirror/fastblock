@@ -22,6 +22,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_UNITY_BUILD_BATCH_SIZE 10)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+option(FASTBLOCK_ENABLE_SANITIZERS "Build FastBlock dependencies with sanitizers" OFF)
 
 if (DEPS_INSTALL_DIR)
   set(FASTBLOCK_DEPS_INSTALL_DIR ${DEPS_INSTALL_DIR} CACHE STRING "Managed dependencies install directory")
@@ -29,38 +30,73 @@ else ()
   set(FASTBLOCK_DEPS_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/deps_install CACHE STRING "Managed dependencies install directory")
 endif()
 
+set(FASTBLOCK_RDMA_CORE_INSTALL_DIR "" CACHE PATH "RDMA core install prefix")
+set(FASTBLOCK_LIBAIO_ROOT "" CACHE PATH "Local libaio root")
+
 if (FASTBLOCK_COLLECT_DURATION)
     add_compile_definitions(FASTBLOCK_COLLECT_DURATION)
 endif()
 
 message("deps will install to ${FASTBLOCK_DEPS_INSTALL_DIR}")
 
+include_directories(SYSTEM
+  ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include
+)
+
+if(FASTBLOCK_RDMA_CORE_INSTALL_DIR)
+  include_directories(SYSTEM
+    ${FASTBLOCK_RDMA_CORE_INSTALL_DIR}/include
+  )
+endif()
+
 list(APPEND BASE_LD_FLAGS_LIST
   -L${FASTBLOCK_DEPS_INSTALL_DIR}/lib
   -L${FASTBLOCK_DEPS_INSTALL_DIR}/lib64
   )
+
+if(FASTBLOCK_RDMA_CORE_INSTALL_DIR)
+  list(APPEND BASE_LD_FLAGS_LIST
+    -L${FASTBLOCK_RDMA_CORE_INSTALL_DIR}/lib
+  )
+  list(APPEND CMAKE_PREFIX_PATH
+    ${FASTBLOCK_RDMA_CORE_INSTALL_DIR}
+  )
+endif()
+
+if(FASTBLOCK_LIBAIO_ROOT)
+  list(APPEND BASE_LD_FLAGS_LIST
+    -L${FASTBLOCK_LIBAIO_ROOT}/lib/x86_64-linux-gnu
+  )
+endif()
+
 set(PKG_CONFIG_PATH_LIST
   ${FASTBLOCK_DEPS_INSTALL_DIR}/lib64/pkgconfig
   ${FASTBLOCK_DEPS_INSTALL_DIR}/share/pkgconfig
   ${FASTBLOCK_DEPS_INSTALL_DIR}/lib/pkgconfig
   )
 
+if(FASTBLOCK_RDMA_CORE_INSTALL_DIR)
+  list(APPEND PKG_CONFIG_PATH_LIST
+    ${FASTBLOCK_RDMA_CORE_INSTALL_DIR}/lib/pkgconfig
+  )
+endif()
+
 list(APPEND BASE_CXX_FLAGS_LIST -fPIC)
 list(APPEND BASE_C_FLAGS_LIST -fPIC)
 
 if ("${CMAKE_BUILD_TYPE}" MATCHES "Debug")
-  set(COMMON_LINKOPTS "-lasan -lubsan")
   add_compile_definitions(DEBUG)
-
-  list(APPEND BASE_CXX_FLAGS_LIST
-    -fsanitize=undefined
-    -fsanitize=address)
-  list(APPEND BASE_C_FLAGS_LIST
-    -fsanitize=undefined
-    -fsanitize=address)
-  list(APPEND BASE_LD_FLAGS_LIST
-    -fsanitize=undefined
-    -fsanitize=address)
+  if (FASTBLOCK_ENABLE_SANITIZERS)
+    set(COMMON_LINKOPTS "-lasan")
+    list(APPEND BASE_CXX_FLAGS_LIST
+      -fsanitize=address)
+    list(APPEND BASE_C_FLAGS_LIST
+      -fsanitize=address)
+    list(APPEND BASE_LD_FLAGS_LIST
+      -fsanitize=address)
+  else()
+    set(COMMON_LINKOPTS)
+  endif()
 else()
   set(COMMON_LINKOPTS)
 endif()
@@ -73,12 +109,10 @@ string(JOIN " " BASE_LD_FLAGS ${BASE_LD_FLAGS_LIST})
 string(JOIN ":" PKG_CONFIG_PATH ${PKG_CONFIG_PATH_LIST})
 
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(PROTOBUF REQUIRED IMPORTED_TARGET protobuf)
-
+find_package(Protobuf CONFIG REQUIRED)
 if(NOT TARGET protobuf)
   add_library(protobuf INTERFACE IMPORTED)
-  target_link_libraries(protobuf INTERFACE PkgConfig::PROTOBUF)
+  target_link_libraries(protobuf INTERFACE protobuf::libprotobuf)
 endif()
 
 set(ENV{PKG_CONFIG_PATH}  "${PKG_CONFIG_PATH}")

@@ -3,6 +3,7 @@ add_executable(fastblock-vhost
   common.cc
   bdev_fastblock.cc
   bdev_fastblock_rpc.cc
+  volume_qos.cc
   vhost.cc
   )
 
@@ -11,6 +12,7 @@ add_executable(fastblock-nvmf-tgt
   common.cc
   bdev_fastblock.cc
   bdev_fastblock_rpc.cc
+  volume_qos.cc
   nvmf_tgt.cc
   )
 
@@ -19,6 +21,7 @@ add_executable(bdevperf
   common.cc
   bdev_fastblock.cc
   bdev_fastblock_rpc.cc
+  volume_qos.cc
   bdevperf.cc
   )
 

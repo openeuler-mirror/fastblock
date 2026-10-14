@@ -23,8 +23,10 @@
 #include <spdk/bdev_module.h>
 #include <spdk/log.h>
 #include <cstring>
+#include <new>
 
 #include "bdev_fastblock.h"
+#include "volume_qos.h"
 #include "fastblock/client/libfblock.h"
 #include "fastblock/bdev/global.h"
 
@@ -34,6 +36,8 @@
 static uint64_t future_id = 0;
 
 static int bdev_fastblock_count = 0;
+
+static constexpr uint64_t qos_iops_granularity = 1000;
 
 struct bdev_fastblock
 {
@@ -45,6 +49,7 @@ struct bdev_fastblock
 	uint64_t image_size;
 	uint32_t block_size;
 	uint64_t object_size;
+	QoS::volume_qos *qos;
 	// fastblock_image_info_t info;
 	TAILQ_ENTRY(bdev_fastblock)
 	tailq;
@@ -87,7 +92,18 @@ bdev_fastblock_free(struct bdev_fastblock *fastblock)
 		free(fastblock->monitor_address);
 	if (fastblock->pool_name)
 		free(fastblock->pool_name);
-	free(fastblock);
+	if (fastblock->qos) {
+		QoS::volume_qos_fini(fastblock->qos);
+		delete fastblock->qos;
+	}
+	delete fastblock;
+}
+
+static bool
+bdev_fastblock_qos_iops_valid(uint64_t iops_limit)
+{
+	return iops_limit == 0 ||
+		   (iops_limit >= qos_iops_granularity && iops_limit % qos_iops_granularity == 0);
 }
 
 void bdev_fastblock_free_config(char **config)
@@ -392,10 +408,8 @@ bdev_fastblock_get_buf_cb(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_
  * 改成直接调用_bdev_fastblock_submit_request(bdev_io)
  * 返回 void
  */
-static void _bdev_fastblock_submit_request(struct spdk_bdev_io *bdev_io)
+static void bdev_fastblock_submit_request(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_io)
 {
-	struct bdev_fastblock *fastblock = (struct bdev_fastblock *)bdev_io->bdev->ctxt;
-
 	switch (bdev_io->type)
 	{
 	case SPDK_BDEV_IO_TYPE_READ:
@@ -421,14 +435,6 @@ static void _bdev_fastblock_submit_request(struct spdk_bdev_io *bdev_io)
 		return;
 	}
 	return;
-}
-
-/*
- * 改成直接调用_bdev_fastblock_submit_request(bdev_io)
- */
-static void bdev_fastblock_submit_request(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_io)
-{
-	_bdev_fastblock_submit_request(bdev_io);
 }
 
 static bool
@@ -610,6 +616,15 @@ bdev_fastblock_dump_info_json(void *ctx, struct spdk_json_write_ctx *w)
 
 	spdk_json_write_named_string(w, "image_name", fastblock_bdev->image_name);
 
+	uint64_t iops_limit = 0;
+	uint64_t bw_limit_mib_per_sec = 0;
+	if (QoS::volume_qos_get_config(fastblock_bdev->qos, &iops_limit, &bw_limit_mib_per_sec) == 0) {
+		spdk_json_write_named_object_begin(w, "qos");
+		spdk_json_write_named_uint64(w, "iops_limit", iops_limit);
+		spdk_json_write_named_uint64(w, "bw_limit_mib_per_sec", bw_limit_mib_per_sec);
+		spdk_json_write_object_end(w);
+	}
+
 	/*
 		if (fastblock_bdev->config) {
 			char **entry = fastblock_bdev->config;
@@ -646,6 +661,12 @@ bdev_fastblock_write_config_json(struct spdk_bdev *bdev, struct spdk_json_write_
 	spdk_json_write_named_uint32(w, "block_size", bdev->blocklen);
 	spdk_json_write_named_uint64(w, "object_size", fastblock->object_size);
 	spdk_json_write_named_string(w, "monitor_address", fastblock->monitor_address);
+	uint64_t iops_limit = 0;
+	uint64_t bw_limit_mib_per_sec = 0;
+	if (QoS::volume_qos_get_config(fastblock->qos, &iops_limit, &bw_limit_mib_per_sec) == 0) {
+		spdk_json_write_named_uint64(w, "iops_limit", iops_limit);
+		spdk_json_write_named_uint64(w, "bw_limit_mib_per_sec", bw_limit_mib_per_sec);
+	}
 
 	/*
 		if (fastblock->config) {
@@ -680,12 +701,20 @@ int bdev_fastblock_create(struct spdk_bdev **bdev, const char *name,
 						  uint64_t image_size,
 						  uint32_t block_size,
 						  uint64_t object_size,
-						  const char *monitor_address)
+						  const char *monitor_address,
+						  uint64_t iops_limit,
+						  uint64_t bw_limit_mib_per_sec)
 {
 	struct bdev_fastblock *fastblock = NULL;
 	int ret;
 	if (image_name == NULL)
 	{
+		return -EINVAL;
+	}
+	if (!bdev_fastblock_qos_iops_valid(iops_limit))
+	{
+		SPDK_ERRLOG("invalid iops_limit=%lu, minimum/granularity is %lu\n",
+			iops_limit, qos_iops_granularity);
 		return -EINVAL;
 	}
 
@@ -698,10 +727,16 @@ int bdev_fastblock_create(struct spdk_bdev **bdev, const char *name,
 	SPDK_INFOLOG(bdev_fastblock, "pool name %s, pool id %d\n", pool_name, pool_id);
 
 	SPDK_INFOLOG(bdev_fastblock, "create fastblock bdev on core %d\n", spdk_env_get_current_core());
-	fastblock = (struct bdev_fastblock *)calloc(1, sizeof(struct bdev_fastblock));
+	fastblock = new (std::nothrow) bdev_fastblock{};
 	if (fastblock == NULL)
 	{
 		SPDK_ERRLOG("Failed to allocate bdev_fastblock struct\n");
+		return -ENOMEM;
+	}
+	fastblock->qos = new (std::nothrow) QoS::volume_qos{};
+	if (fastblock->qos == NULL)
+	{
+		bdev_fastblock_free(fastblock);
 		return -ENOMEM;
 	}
 
@@ -761,6 +796,7 @@ int bdev_fastblock_create(struct spdk_bdev **bdev, const char *name,
 	fastblock->disk.module = &fastblock_if;
 
 	SPDK_INFOLOG(bdev_fastblock, "Add %s fastblock disk to lun\n", fastblock->disk.name);
+	QoS::volume_qos_init(fastblock->qos, iops_limit, bw_limit_mib_per_sec);
 
 	spdk_io_device_register(fastblock, bdev_fastblock_create_cb,
 							bdev_fastblock_destroy_cb,
@@ -772,6 +808,12 @@ int bdev_fastblock_create(struct spdk_bdev **bdev, const char *name,
 		spdk_io_device_unregister(fastblock, NULL);
 		bdev_fastblock_free(fastblock);
 		return ret;
+	}
+
+	ret = QoS::volume_qos_apply(fastblock->qos, &fastblock->disk);
+	if (ret)
+	{
+		SPDK_ERRLOG("Failed to apply QoS to fastblock bdev %s: %d\n", fastblock->disk.name, ret);
 	}
 
 	*bdev = &(fastblock->disk);
@@ -825,6 +867,50 @@ int bdev_fastblock_resize(struct spdk_bdev *bdev, const uint64_t new_size_in_mb)
 	}
 
 	return rc;
+}
+
+int bdev_fastblock_update_qos(struct spdk_bdev *bdev, uint64_t iops_limit, uint64_t bw_limit_mib_per_sec,
+							  spdk_fastblock_qos_update_complete cb_fn, void *cb_arg)
+{
+	if (!bdev || !bdev->ctxt || bdev->module != &fastblock_if)
+	{
+		return -EINVAL;
+	}
+
+	auto *fastblock = static_cast<struct bdev_fastblock *>(bdev->ctxt);
+	return QoS::volume_qos_update(fastblock->qos, bdev, iops_limit, bw_limit_mib_per_sec, cb_fn, cb_arg);
+}
+
+int bdev_fastblock_get_qos(struct spdk_bdev *bdev,
+						   uint64_t *iops_limit,
+						   uint64_t *bw_limit_mib_per_sec,
+						   uint64_t *spdk_iops_limit,
+						   uint64_t *spdk_bw_limit_mib_per_sec,
+						   uint64_t *spdk_read_bw_limit_mib_per_sec,
+						   uint64_t *spdk_write_bw_limit_mib_per_sec)
+{
+	if (!bdev || !bdev->ctxt || bdev->module != &fastblock_if ||
+		!iops_limit || !bw_limit_mib_per_sec ||
+		!spdk_iops_limit || !spdk_bw_limit_mib_per_sec ||
+		!spdk_read_bw_limit_mib_per_sec || !spdk_write_bw_limit_mib_per_sec)
+	{
+		return -EINVAL;
+	}
+
+	auto *fastblock = static_cast<struct bdev_fastblock *>(bdev->ctxt);
+	int rc = QoS::volume_qos_get_config(fastblock->qos, iops_limit, bw_limit_mib_per_sec);
+	if (rc)
+	{
+		return rc;
+	}
+
+	uint64_t limits[SPDK_BDEV_QOS_NUM_RATE_LIMIT_TYPES] = {};
+	spdk_bdev_get_qos_rate_limits(bdev, limits);
+	*spdk_iops_limit = limits[SPDK_BDEV_QOS_RW_IOPS_RATE_LIMIT];
+	*spdk_bw_limit_mib_per_sec = limits[SPDK_BDEV_QOS_RW_BPS_RATE_LIMIT];
+	*spdk_read_bw_limit_mib_per_sec = limits[SPDK_BDEV_QOS_R_BPS_RATE_LIMIT];
+	*spdk_write_bw_limit_mib_per_sec = limits[SPDK_BDEV_QOS_W_BPS_RATE_LIMIT];
+	return 0;
 }
 
 static int
