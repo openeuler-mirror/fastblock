@@ -102,6 +102,8 @@ message create_pg_request
     uint64 pool_id = 1;
     uint64 pg_id = 2;
     int64  vision_id = 3;
+    uint32 coreindex = 4;
+    repeated raft_node_info nodes = 5;
 }
 
 message create_pg_response
