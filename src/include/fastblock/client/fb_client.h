@@ -14,6 +14,7 @@
 #include "fastblock/monclient/client.h"
 #include "fastblock/msg/rpc_controller.h"
 #include "fastblock/msg/rdma/client.h"
+#include "fastblock/client/pg_home_shard.h"
 #include "fastblock/utils/overload.h"
 #include "fastblock/utils/simple_poller.h"
 #include "fastblock/utils/err_num.h"
@@ -117,6 +118,8 @@ private:
         int32_t leader_id{-1};
         std::string addr{};
         int32_t port{};
+        /** Sticky PG home shard on the leader OSD; authoritative for data-path port. */
+        uint32_t home_shard{fb_client_route::k_invalid_home_shard};
         std::chrono::system_clock::time_point epoch{};
         bool is_valid{false};
         bool is_onflight{true};
@@ -181,12 +184,28 @@ private:
         }
     }
 
+    /**
+     * Probe-only stub for get_leader.
+     * Uses conservative fixed shard (prefer 0); never client_shard % n.
+     * Must not be used for write/read/delete/ring data paths.
+     */
     auto get_stub(utils::osd_info_t *osdinfo) {
-        auto shard_id = utils::get_current_shard_id() % osdinfo->sharded_ports.size();
-        SPDK_DEBUGLOG(libblk, "currentcore: %u, first core: %u, shard_id: %lu\n", ::spdk_env_get_current_core(),
-                ::spdk_env_get_first_core(), shard_id);
-        // print_osd(osdinfo);
-        return get_stub(osdinfo->node_id, osdinfo->address, osdinfo->sharded_ports.at(shard_id).port);
+        if (!osdinfo || osdinfo->sharded_ports.empty()) {
+            return static_cast<osd::rpc_service_osd_Stub*>(nullptr);
+        }
+        const auto ports = fb_client_route::to_shard_port_map(osdinfo->sharded_ports);
+        const auto probe_port = fb_client_route::probe_port_for_get_leader(ports);
+        if (!probe_port.has_value()) {
+            return static_cast<osd::rpc_service_osd_Stub*>(nullptr);
+        }
+        const auto probe_shard = fb_client_route::probe_shard_for_get_leader(ports);
+        SPDK_DEBUGLOG(
+          libblk,
+          "get_leader probe osd %d via home-safe fixed shard %u port %d (not client shard)\n",
+          osdinfo->node_id,
+          probe_shard.value_or(fb_client_route::k_invalid_home_shard),
+          *probe_port);
+        return get_stub(osdinfo->node_id, osdinfo->address, *probe_port);
     }
 
     auto get_stub(leader_osd_info* info) {
@@ -586,6 +605,15 @@ private:
 
     osd::rpc_service_osd_Stub*
     get_stub(const int node_id, std::string addr, const int port) {
+        if (node_id <= 0 || addr.empty() || port <= 0) {
+            SPDK_NOTICELOG(
+              "skip creating osd stub for invalid endpoint osd %d %s:%d\n",
+              node_id,
+              addr.c_str(),
+              port);
+            return nullptr;
+        }
+
         auto conn_id = to_connection_id(node_id, port);
         auto ring_state = get_or_create_write_ring_state(node_id, addr, port);
         if (ring_state->is_connecting) {
@@ -650,8 +678,20 @@ private:
             return;
         }
 
+        // Sticky home_shard is required for data-path RTC routing (PR-1).
+        if (!fb_client_route::is_valid_home_shard(info->home_shard)) {
+            info->is_valid = false;
+            return;
+        }
+
         auto* mon_osd_info = _mon_cli->get_osd_info(info->leader_id);
         if (mon_osd_info and mon_osd_info->isin and mon_osd_info->isup) {
+            // Ensure sticky home still has a port on the current map.
+            const auto ports = fb_client_route::to_shard_port_map(mon_osd_info->sharded_ports);
+            if (!fb_client_route::port_for_home_shard(ports, info->home_shard).has_value()) {
+                info->is_valid = false;
+                return;
+            }
             info->is_valid = true;
             return;
         }
@@ -671,20 +711,40 @@ private:
         }
 
         auto* mon_osd_info = _mon_cli->get_osd_info(info->leader_id);
-        if (!mon_osd_info || !mon_osd_info->isin || !mon_osd_info->isup ||
-            mon_osd_info->sharded_ports.empty()) {
+        const bool mon_up_and_in =
+          mon_osd_info && mon_osd_info->isin && mon_osd_info->isup &&
+          !mon_osd_info->sharded_ports.empty();
+        const auto ports = mon_up_and_in
+          ? fb_client_route::to_shard_port_map(mon_osd_info->sharded_ports)
+          : fb_client_route::shard_port_map{};
+        const auto mon_addr = mon_up_and_in ? mon_osd_info->address : std::string{};
+
+        // Sticky home_shard only — never client_shard % n (RTC PR-1).
+        const auto result = fb_client_route::compute_refresh_transport(
+          info->home_shard,
+          info->port,
+          info->addr,
+          mon_up_and_in,
+          mon_addr,
+          ports);
+
+        if (result.invalidate) {
+            SPDK_NOTICELOG(
+              "invalidate leader transport for osd %d home_shard %u port %d "
+              "(missing sticky home port or mon down)\n",
+              info->leader_id,
+              info->home_shard,
+              info->port);
+            if (info->port != 0) {
+                invalidate_connection(to_connection_id(info->leader_id, info->port));
+            }
+            info->is_valid = false;
             return;
         }
 
-        const auto shard_id = utils::get_current_shard_id() % mon_osd_info->sharded_ports.size();
-        const auto shard_it = mon_osd_info->sharded_ports.find(shard_id);
-        if (shard_it == mon_osd_info->sharded_ports.end()) {
-            return;
-        }
-
-        const auto new_addr = mon_osd_info->address;
-        const auto new_port = static_cast<int32_t>(shard_it->second.port);
-        if (info->addr == new_addr && info->port == new_port) {
+        if (!result.changed) {
+            info->epoch = _mon_cli->last_cluster_map_at();
+            info->is_valid = true;
             return;
         }
 
@@ -694,14 +754,15 @@ private:
         }
 
         SPDK_NOTICELOG(
-          "refresh leader transport for osd %d from %s:%d to %s:%d\n",
+          "refresh leader transport for osd %d home_shard %u from %s:%d to %s:%d\n",
           info->leader_id,
+          info->home_shard,
           info->addr.c_str(),
           info->port,
-          new_addr.c_str(),
-          new_port);
-        info->addr = new_addr;
-        info->port = new_port;
+          result.new_addr.c_str(),
+          result.new_port);
+        info->addr = result.new_addr;
+        info->port = result.new_port;
         info->epoch = _mon_cli->last_cluster_map_at();
         info->is_valid = true;
     }
@@ -1077,23 +1138,17 @@ public:
 
         SPDK_DEBUGLOG(
           libblk,
-          "head->leader_osd_key: %lu, leader_id: %u, addr: '%s:%d' is_onflight: %d, is_valid: %d\n",
+          "head->leader_osd_key: %lu, leader_id: %u, addr: '%s:%d' home_shard: %u "
+          "is_onflight: %d, is_valid: %d\n",
           head->leader_osd_key,
           osd_info_it->second->leader_id,
           osd_info_it->second->addr.c_str(),
           osd_info_it->second->port,
+          osd_info_it->second->home_shard,
           osd_info_it->second->is_onflight,
-          osd_info_it->second->port);
+          osd_info_it->second->is_valid);
 
         refresh_leader_transport_from_cluster_map(osd_info_it->second.get());
-
-        head->stub = get_stub(
-          osd_info_it->second->leader_id,
-          osd_info_it->second->addr,
-          osd_info_it->second->port);
-        if (not head->stub) {
-            return SPDK_POLLER_IDLE;
-        }
 
         update_leader_state(osd_info_it->second.get());
         if (not osd_info_it->second->is_valid or osd_info_it->second->is_onflight) {
@@ -1125,6 +1180,14 @@ public:
             }
 
             return SPDK_POLLER_BUSY;
+        }
+
+        head->stub = get_stub(
+          osd_info_it->second->leader_id,
+          osd_info_it->second->addr,
+          osd_info_it->second->port);
+        if (not head->stub) {
+            return SPDK_POLLER_IDLE;
         }
 
         auto request_handler = utils::overload {
@@ -1229,13 +1292,79 @@ private:
             return;
         }
         auto* resp = it->second->leader_resp.get();
+        if (resp->state() != err::E_SUCCESS) {
+            osd_info->is_valid = false;
+            SPDK_NOTICELOG(
+              "get leader for pg %lu.%lu returned state %d, will retry\n",
+              it->second->leader_req->pool_id(),
+              it->second->leader_req->pg_id(),
+              resp->state());
+            it->second->ctrlr->Reset();
+            _on_flight_leader_requests.erase(it);
+            return;
+        }
+
         osd_info->epoch = std::chrono::system_clock::now();
         osd_info->leader_id = resp->leader_id();
         osd_info->addr = resp->leader_addr();
         osd_info->port = resp->leader_port();
-        SPDK_DEBUGLOG(libblk, "Got leader osd of pg %lu.%lu: osd id %d osd address: '%s:%d'\n",
-                it->second->leader_req->pool_id(), it->second->leader_req->pg_id(), osd_info->leader_id,
-                osd_info->addr.c_str(), osd_info->port);
+
+        // Seed sticky home_shard (PR-1 + PR-6): mon coreindex preferred, else reverse-lookup.
+        {
+            const auto mon_core = _mon_cli->get_pg_coreindex(
+              static_cast<int32_t>(it->second->leader_req->pool_id()),
+              static_cast<int32_t>(it->second->leader_req->pg_id()));
+            if (fb_client_route::is_valid_home_shard(mon_core)) {
+                osd_info->home_shard = mon_core;
+            }
+
+            if (auto* mon_osd = _mon_cli->get_osd_info(osd_info->leader_id);
+                mon_osd && !mon_osd->sharded_ports.empty()) {
+                const auto ports = fb_client_route::to_shard_port_map(mon_osd->sharded_ports);
+                if (!fb_client_route::is_valid_home_shard(osd_info->home_shard)) {
+                    osd_info->home_shard = fb_client_route::seed_home_shard_from_leader_port(
+                      ports, osd_info->port, osd_info->home_shard);
+                }
+                // Prefer sticky home port if map already has it.
+                if (const auto sticky_port =
+                      fb_client_route::port_for_home_shard(ports, osd_info->home_shard)) {
+                    osd_info->port = *sticky_port;
+                    if (!mon_osd->address.empty()) {
+                        osd_info->addr = mon_osd->address;
+                    }
+                }
+            } else if (!fb_client_route::is_valid_home_shard(osd_info->home_shard)) {
+                osd_info->home_shard = fb_client_route::k_invalid_home_shard;
+            }
+        }
+
+        SPDK_DEBUGLOG(
+          libblk,
+          "Got leader osd of pg %lu.%lu: osd id %d osd address: '%s:%d' home_shard %u\n",
+          it->second->leader_req->pool_id(),
+          it->second->leader_req->pg_id(),
+          osd_info->leader_id,
+          osd_info->addr.c_str(),
+          osd_info->port,
+          osd_info->home_shard);
+
+        if (!fb_client_route::is_valid_home_shard(osd_info->home_shard)) {
+            osd_info->is_valid = false;
+            SPDK_NOTICELOG(
+              "Got leader osd(%s:%d) id %d without resolvable home_shard, will retry\n",
+              resp->leader_addr().c_str(),
+              resp->leader_port(),
+              resp->leader_id());
+
+            auto done = google::protobuf::NewCallback(
+              this, &fblock_client::on_leader_acquired, stack_ptr);
+            osd_info->is_onflight = true;
+            stack_ptr->ctrlr->Reset();
+            stack_ptr->stub->process_get_leader(
+              stack_ptr->ctrlr.get(), stack_ptr->leader_req.get(), stack_ptr->leader_resp.get(), done);
+
+            return;
+        }
 
         update_leader_state(info_it->second.get());
         if (not info_it->second->is_valid) {
@@ -1247,6 +1376,7 @@ private:
 
             auto done = google::protobuf::NewCallback(
               this, &fblock_client::on_leader_acquired, stack_ptr);
+            osd_info->is_onflight = true;
             stack_ptr->ctrlr->Reset();
             stack_ptr->stub->process_get_leader(
               stack_ptr->ctrlr.get(), stack_ptr->leader_req.get(), stack_ptr->leader_resp.get(), done);
