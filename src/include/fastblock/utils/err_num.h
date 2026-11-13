@@ -55,6 +55,10 @@ enum {
     OSD_ERR_CORE_NUM = -160,
     OSD_BLOBSTORE_NO_INIT = -161,
     ERR_NOT_FOUND_POOL  = -162,
+    /** Deprecated: process_create_pg disable path is no longer used. */
+    OSD_ERR_CREATE_PG_DISABLED = -163,
+    /** Optional strict wrong-shard (PR-7); reserved. */
+    ERR_WRONG_SHARD = -164,
 
     RAFT_ERR_UNKNOWN = -199,
     RAFT_ERR_LAST = -200,
@@ -127,7 +131,11 @@ enum {
     case OSD_BLOBSTORE_NO_INIT:
         return "blobstore has not been initialized";
     case ERR_NOT_FOUND_POOL:
-        return "pool does not exist."; 
+        return "pool does not exist.";
+    case OSD_ERR_CREATE_PG_DISABLED:
+        return "create_pg RPC disabled";
+    case ERR_WRONG_SHARD:
+        return "request arrived on wrong OSD shard";
     default:
         return "unknown errno";
     }
