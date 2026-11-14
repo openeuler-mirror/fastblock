@@ -11,6 +11,7 @@
 #pragma once
 
 #include "fastblock/rpc/osd_msg.pb.h"
+#include "fastblock/utils/rtc_local_first.h"
 #include "fastblock/utils/simple_poller.h"
 #include "partition_manager.h"
 #include "mon_client.h"
@@ -96,9 +97,13 @@ public:
                            const osd::bench_request *request,
                            osd::bench_response *response,
                            google::protobuf::Closure *done) override;
+    /**
+     * Resolve leader endpoint. Always reads raft on PG home SPDK thread (RTC PR-3).
+     * Safe to call from raw TCP worker threads (uses blocking bridge).
+     */
     leader_endpoint resolve_pg_leader(uint64_t pool_id,
                                       uint64_t pg_id,
-                                      bool use_raw_port) const;
+                                      bool use_raw_port);
     void process_get_leader(google::protobuf::RpcController *controller,
                             const osd::pg_leader_request *request,
                             osd::pg_leader_response *response,
@@ -225,9 +230,12 @@ void osd_service::process(const request_type* request, reply_type* response, goo
         return;
     }
 
-    _pm->get_shard().invoke_on(
+    // RTC PR-2: local-first on home SPDK thread; wrong port / raw → invoke_on + metrics.
+    rtc::local_first(
+      _pm->get_shard(),
       shard_id,
-      [this, request, response, done, shard_id](){
+      [this, request, response, done, shard_id]() {
+        rtc::maybe_log_metrics_notice();
         auto raft = _pm->get_pg(shard_id, request->pool_id(), request->pg_id());
         if(!raft){
             SPDK_WARNLOG("not find pg %lu.%lu\n", request->pool_id(), request->pg_id());
@@ -260,5 +268,6 @@ void osd_service::process(const request_type* request, reply_type* response, goo
             return;
         }
         process(osd_stm_p, request, response, done);
-      });
+      },
+      rtc::hop_kind::client_data);
 }
