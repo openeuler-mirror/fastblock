@@ -45,7 +45,6 @@ constexpr float  TRIM_PERCENTAGE  =  0.2;
 
 struct log_append_ctx {
   std::vector<std::tuple<uint64_t,uint64_t,uint64_t,uint64_t>> idx_pos;
-  std::vector<spdk_buffer> headers;
   buffer_list bl;
 
   log_op_complete cb_fn;
@@ -94,9 +93,6 @@ public:
             auto sbuf = buffer_pool_get();
             EncodeLogHeader(sbuf, entry);
 
-            // 注意：append时，entry.data是从外面传进来的，而header是在本函数中申请的。
-            //      所以在回调函数中回收这些，并不回收后面的buffer_list
-            ctx->headers.emplace_back(sbuf);
             ctx->bl.append_buffer(sbuf);
             ctx->bl.append_buffer(entry.data);
             /// NOTE: 这个vector是写完之后要往map里保存的，从raft_index到rblob中pos和size的映射，
@@ -115,7 +111,6 @@ public:
         auto sbuf = buffer_pool_get();
         EncodeLogHeader(sbuf, entry);
 
-        ctx->headers.emplace_back(sbuf);
         ctx->bl.append_buffer(sbuf);
         ctx->bl.append_buffer(entry.data);
         ctx->idx_pos.emplace_back(entry.index, pos, entry.size + 4_KB, entry.term_id);
@@ -199,18 +194,13 @@ private:
 
         if (rberrno) {
             SPDK_ERRLOG("log append fail. start:%lu len:%lu error:%s\n", result.start_pos, result.len, spdk_strerror(rberrno));
-            for (auto header : ctx->headers) {
-                buffer_pool_put(header);
-            }
+            free_buffer_list(ctx->bl);
             ctx->cb_fn(ctx->arg, rberrno);
             delete ctx;
             return;
         }
 
-        // 回收header
-        for (auto header : ctx->headers) {
-            buffer_pool_put(header);
-        }
+        free_buffer_list(ctx->bl);
 
         // 保存每个index到pos和size的映射
         for (auto [idx, pos, size, term_id] : ctx->idx_pos) {
@@ -245,8 +235,8 @@ private:
             DecodeLogHeader(sbuf, entry);
             buffer_pool_put(sbuf);
 
-            buffer_list&& bl = ctx->bl.pop_front_list(entry.size / 4096);
-            entry.data = bl;
+            auto bl = ctx->bl.pop_front_list(entry.size / 4096);
+            entry.data = std::move(bl);
         }
 
         if (ctx->bl.bytes()) {
