@@ -21,11 +21,47 @@ SPDK_LOG_REGISTER_COMPONENT(osd)
 
 bool partition_manager::get_pg_shard(uint64_t pool_id, uint64_t pg_id, uint32_t &shard_id){
     std::string name = pg_id_to_name(pool_id, pg_id);
-    if(_shard_table.count(name) == 0)
+    auto table = _shard_table_ro.load(std::memory_order_acquire);
+    if (!table) {
         return false;
-
-    shard_id = _shard_table[name]._shard;
+    }
+    auto it = table->find(name);
+    if (it == table->end()) {
+        return false;
+    }
+    shard_id = it->second._shard;
     return true;
+}
+
+void partition_manager::publish_shard_table(std::shared_ptr<const pg_shard_table> next) {
+    _shard_table_ro.store(std::move(next), std::memory_order_release);
+}
+
+void partition_manager::mutate_shard_table(std::function<void(pg_shard_table&)> mutator) {
+    std::lock_guard<std::mutex> lk(_shard_table_mu);
+    auto cur = _shard_table_ro.load(std::memory_order_acquire);
+    auto next = std::make_shared<pg_shard_table>(cur ? *cur : pg_shard_table{});
+    mutator(*next);
+    publish_shard_table(std::shared_ptr<const pg_shard_table>(std::move(next)));
+}
+
+int partition_manager::add_pg_shard(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id, int64_t revision_id){
+    std::string name = pg_id_to_name(pool_id, pg_id);
+    mutate_shard_table([name = std::move(name), shard_id, revision_id](pg_shard_table& t) {
+        t[name] = shard_revision{shard_id, revision_id};
+    });
+    return 0;
+}
+
+int partition_manager::remove_pg_shard(uint64_t pool_id, uint64_t pg_id){
+    std::string name = pg_id_to_name(pool_id, pg_id);
+    int result = 0;
+    mutate_shard_table([name = std::move(name), &result](pg_shard_table& t) {
+        if (t.erase(name) == 0) {
+            result = -EEXIST;
+        }
+    });
+    return result;
 }
 
 struct make_log_context{
@@ -52,8 +88,17 @@ static void make_log_done(void *arg, struct disk_log* dlog, int rberrno){
     SPDK_INFOLOG(osd, "make_disk_log success  for pg %lu.%lu shard_id %u \n",
             mlc->pool_id, mlc->pg_id,  mlc->shard_id);
     partition_manager* pm = mlc->pm;
-    auto sm = std::make_shared<osd_stm>();
     auto pg = pg_id_to_name(mlc->pool_id, mlc->pg_id);
+    if (pm->get_pg_group().get_pg(mlc->shard_id, pg)) {
+        SPDK_INFOLOG(osd, "pg %lu.%lu already exists on shard %u after make_disk_log\n",
+                mlc->pool_id, mlc->pg_id, mlc->shard_id);
+        delete dlog;
+        mlc->cb_fn(mlc->arg, 0);
+        delete mlc;
+        return;
+    }
+
+    auto sm = std::make_shared<osd_stm>();
     sm->set_pg(pg);
     pm->add_osd_stm(mlc->pool_id, mlc->pg_id, mlc->shard_id, sm);
     pm->get_pg_group().create_pg(sm, mlc->shard_id, mlc->pool_id, mlc->pg_id, std::move(mlc->osds),
