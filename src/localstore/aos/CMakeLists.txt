@@ -14,6 +14,7 @@ compile_library(
     spdk_bdev_backend.cc
     mem_device_backend.cc
     pg_store.cc
+    osd_store.cc
   DEPS
     spdk::spdk
   COPTS
