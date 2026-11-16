@@ -60,6 +60,14 @@ public:
    */
   pg_store(device_backend* backend, pg_id id,
            buffer_mode mode = buffer_mode::heap, uint64_t segment_size = 0);
+
+  /**
+   * Share an existing segment_allocator (M2 multi-PG). Caller keeps the
+   * allocator alive; multiple pg_store instances may share one device.
+   */
+  pg_store(device_backend* backend, pg_id id,
+           std::shared_ptr<segment_allocator> alloc,
+           buffer_mode mode = buffer_mode::heap);
   ~pg_store();
 
   pg_store(const pg_store&) = delete;
@@ -70,6 +78,7 @@ public:
   buffer_mode mode() const { return mode_; }
   segment_allocator* allocator() { return alloc_.get(); }
   const segment_allocator* allocator() const { return alloc_.get(); }
+  std::shared_ptr<segment_allocator> shared_allocator() const { return alloc_; }
   uint64_t checkpoint_generation() const { return checkpoint_generation_; }
   // Phys offset of last durable checkpoint record end (0 if none).
   uint64_t last_checkpoint_end() const { return last_checkpoint_end_; }
@@ -187,7 +196,7 @@ private:
   void recover_start_replay(recover_req* req, uint64_t from_offset);
 
   device_backend* backend_{nullptr};
-  std::unique_ptr<segment_allocator> alloc_;
+  std::shared_ptr<segment_allocator> alloc_;
   segment seg_;
   pg_id id_{};
   buffer_mode mode_{buffer_mode::heap};
