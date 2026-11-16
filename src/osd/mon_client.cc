@@ -342,8 +342,25 @@ void monitor_client::check_and_active_pg(monitor::client::pg_map::pool_id_type p
     if(!pg_is_remap){
         _pg_map.set_pool_update(pool_id, info.pgid(), pool_version, 1);
     }
-    
-    _pm->active_partition(pool_id, info.pgid(), std::move(active_pg_done), nullptr);
+
+    std::vector<utils::osd_info_t> osds;
+    for (auto osd_id : info.osdid()) {
+        auto it = _osd_map.data.find(osd_id);
+        if (it == _osd_map.data.end() || !it->second) {
+            SPDK_WARNLOG("repair pg %d.%d: osd %d not in osdmap\n", pool_id,
+                         info.pgid(), osd_id);
+            continue;
+        }
+        osds.push_back(*(it->second));
+    }
+    _pm->repair_pg_membership(
+        pool_id, info.pgid(), std::move(osds),
+        [this, pool_id, pg_id = info.pgid(),
+         active_pg_done = std::move(active_pg_done)](void* /*a*/, int /*err*/) {
+          _pm->active_partition(pool_id, pg_id, std::move(active_pg_done),
+                                nullptr);
+        },
+        nullptr);
 }
 
 /*  
