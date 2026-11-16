@@ -26,41 +26,47 @@ void raft_nodes::update_with_node_configuration(node_configuration& cfg,
     auto &node_infos = cfg.get_nodes();
     auto &new_node_infos = cfg.get_new_nodes();
 
-    auto nodes = std::exchange(_nodes, {});
-    auto new_nodes = std::exchange(_new_nodes, {});
+    nodes_type old_nodes = std::move(_nodes);
+    nodes_type old_new_nodes = std::move(_new_nodes);
+    _nodes.clear();
+    _new_nodes.clear();
 
-    // auto nodes = std::exchange(_nodes, {});
-    auto get_raft_node = [&nodes, &new_add_nodes](const raft_node_info& node_info){
+    auto get_raft_node = [&old_nodes, &new_add_nodes](const raft_node_info& node_info) {
         std::shared_ptr<raft_node> node;
-        if(nodes.contains(node_info.node_id())){
-            node = nodes[node_info.node_id()];
-        }else{
+        auto it = old_nodes.find(node_info.node_id());
+        if (it != old_nodes.end()) {
+            node = it->second;
+        } else {
             bool is_find = false;
-            for(auto new_add_node : new_add_nodes){
-                if(new_add_node->raft_node_get_id() == node_info.node_id()){
+            for (auto& new_add_node : new_add_nodes) {
+                if (new_add_node->raft_node_get_id() == node_info.node_id()) {
                     node = new_add_node;
                     is_find = true;
                     break;
                 }
             }
-            if(!is_find){
-                SPDK_DEBUGLOG(pg_group, "no find node %d in nodes and new_add_nodes\n", node_info.node_id());
+            if (!is_find) {
+                SPDK_DEBUGLOG(pg_group,
+                              "no find node %d in nodes and new_add_nodes\n",
+                              node_info.node_id());
                 node = std::make_shared<raft_node>(node_info);
             }
         }
         return node;
     };
 
-    for(auto& node_info : node_infos){
+    for (auto& node_info : node_infos) {
         auto add_node = get_raft_node(node_info);
-        _nodes.emplace(node_info.node_id(), add_node);
+        _nodes.emplace(node_info.node_id(), std::move(add_node));
         SPDK_DEBUGLOG(pg_group, "_nodes: osd id %d\n", node_info.node_id());
     }
 
-    for(auto& new_node_info : new_node_infos){
-       auto add_new_node = get_raft_node(new_node_info);
-       _new_nodes.emplace(new_node_info.node_id(), add_new_node);
-       SPDK_DEBUGLOG(pg_group, "_new_nodes: osd id %d\n", new_node_info.node_id());
+    for (auto& new_node_info : new_node_infos) {
+        auto add_new_node = get_raft_node(new_node_info);
+        _new_nodes.emplace(new_node_info.node_id(), std::move(add_new_node));
+        SPDK_DEBUGLOG(pg_group, "_new_nodes: osd id %d\n",
+                      new_node_info.node_id());
     }
+    (void)old_new_nodes;
 }
 
