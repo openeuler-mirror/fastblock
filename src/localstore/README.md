@@ -1,14 +1,21 @@
 # 1. 概述
 
-localstore实现了本地存储，基于spdk blobstrore进行存储。
+> **2026-08 生产路径已迁到 AOS（`aos/`）**  
+> OSD 生产：object / raft log / meta KV 全部走 AppendOnlyStore；  
+> **不再** `blobstore_init/load`。  
+> 下文 blobstore / `object_store` / `rolling_blob` 描述保留为 **demo 与历史实现**，  
+> 不是当前生产架构。详见 `docs/append_only_store_design.md` 与 `aos/README.md`。
 
-包含了3个主要功能：
+localstore 历史上基于 SPDK blobstore 提供：
 
-`disk_log`: 存储raft log，每个pg(对应一个raft组)都有一个。下文简称log
+`disk_log`: 存储raft log，每个pg(对应一个raft组)都有一个。下文简称log  
+（生产：`aos/log_store` + `disk_log(AOS)`）
 
-`object_store`: 存储对象。每个pg都有一个，保存这个pg的所有块对象。下文简称object
+`object_store`: 存储对象。每个pg都有一个，保存这个pg的所有块对象。下文简称object  
+（生产：`aos/pg_store` / `osd_store`）
 
-`kv_store`: 每个cpu核拥有一个。保存当前cpu核上的需要保存的所有kv数据，包括raft的元数据、存储系统本身的数据。下文简称kv
+`kv_store`: 每个cpu核拥有一个。保存当前cpu核上的需要保存的所有kv数据，包括raft的元数据、存储系统本身的数据。下文简称kv  
+（生产：`aos/kv_engine` + dual-mode `kvstore`）
 
 # 2. 详细介绍
 
