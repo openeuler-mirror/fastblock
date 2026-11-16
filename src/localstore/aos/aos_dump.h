@@ -53,6 +53,8 @@ struct dump_report {
   uint64_t record_count{0};
   std::map<uint8_t, uint64_t> records_by_type; // record_type as u8
   std::vector<dump_error> errors;
+  /** Soft consistency notes (e.g. stale high_water); do not fail ok(). */
+  std::vector<dump_error> warnings;
 
   /** True when no hard errors and at least one valid superblock. */
   bool ok() const { return has_chosen && errors.empty(); }
