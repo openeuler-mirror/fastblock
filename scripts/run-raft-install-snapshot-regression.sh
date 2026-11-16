@@ -15,14 +15,19 @@ osd_count="${RAFT_SNAPSHOT_OSD_COUNT:-4}"
 pg_count="${RAFT_SNAPSHOT_PG_COUNT:-8}"
 replica="${RAFT_SNAPSHOT_REPLICA:-3}"
 writes="${RAFT_SNAPSHOT_WRITES:-512}"
+snapshot_objects="${RAFT_SNAPSHOT_OBJECT_COUNT:-256}"
+concurrent_writes="${RAFT_SNAPSHOT_CONCURRENT_WRITES:-16}"
+append_writes="${RAFT_SNAPSHOT_APPEND_WRITES:-16}"
 io_size="${RAFT_SNAPSHOT_IO_SIZE:-4096}"
 cpu_mask="${RAFT_SNAPSHOT_CPU_MASK:-0x10}"
 trim_trigger="${FASTBLOCK_RAFT_LOG_TRIM_TRIGGER_ENTRIES:-128}"
 trim_keep="${FASTBLOCK_RAFT_LOG_TRIM_KEEP_ENTRIES:-64}"
 object_name="${RAFT_SNAPSHOT_OBJECT:-raft_install_snapshot_regression}"
+live_object="${object_name}_live"
 
 export FASTBLOCK_RAFT_LOG_TRIM_TRIGGER_ENTRIES="$trim_trigger"
 export FASTBLOCK_RAFT_LOG_TRIM_KEEP_ENTRIES="$trim_keep"
+export FASTBLOCK_RAFT_RECOVERY_TEST_LOGS=1
 
 require_exec() {
     local path="$1"
@@ -201,14 +206,53 @@ wait_for_osd_log() {
     exit 1
 }
 
+wait_for_osd_log_after_line() {
+    local osd_id="$1"
+    local start_line="$2"
+    local label="$3"
+    local pattern="$4"
+    local deadline=$((SECONDS + 120))
+    local hit=""
+    local log_file="$log_dir/osd${osd_id}.log"
+
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        hit="$(tail -n +"$((start_line + 1))" "$log_file" 2>/dev/null | rg -n "$pattern" | tail -n 1 || true)"
+        if [ -n "$hit" ]; then
+            echo "$hit"
+            return 0
+        fi
+        sleep 2
+    done
+
+    echo "timed out waiting for osd${osd_id} log after line ${start_line}: $label" >&2
+    echo "pattern: $pattern" >&2
+    exit 1
+}
+
+log_timestamp() {
+    local file="$1"
+    local pattern="$2"
+    local hit
+    hit="$(rg -n "$pattern" "$file" 2>/dev/null | tail -n 1 || true)"
+    if [[ ! "$hit" =~ \[([^]]+)\] ]]; then
+        echo "failed to find timestamp for pattern: $pattern in $file" >&2
+        exit 1
+    fi
+    printf "%s" "${BASH_REMATCH[1]}"
+}
+
 run_pg_stress() {
     local mode="$1"
     local contact_osd="$2"
+    local object="$3"
+    local write_count="$4"
+    local object_count="$5"
     local port="${osd_port[$contact_osd]}"
     local addr="${osd_addr[$contact_osd]}"
 
-    FB_PG_OBJECT="$object_name" \
-    FB_PG_WRITES="$writes" \
+    FB_PG_OBJECT="$object" \
+    FB_PG_WRITES="$write_count" \
+    FB_PG_OBJECT_COUNT="$object_count" \
     FB_PG_IO_SIZE="$io_size" \
     FB_PG_MODE="$mode" \
     ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0}" \
@@ -278,8 +322,11 @@ if [ "$(pg_member_csv)" != "$original_members" ]; then
     exit 1
 fi
 
-echo "Writing $writes entries while osd$follower is down/in"
-run_pg_stress write "$leader"
+run_pg_stress write "$leader" "$live_object" 1 1
+run_pg_stress read "$leader" "$live_object" 1 1
+
+echo "Writing $snapshot_objects snapshot filler objects while osd$follower is down/in"
+run_pg_stress write "$leader" "${object_name}_snapshot" "$snapshot_objects" "$snapshot_objects"
 
 wait_for_osd_log "$leader" "leader raft log trim" "raft log test trim \\["
 
@@ -290,13 +337,49 @@ echo "$!" > "$run_dir/osd-${follower}.pid"
 
 wait_for_log "snapshot recovery starts" "pg: ${pool_id}\\.${pg_id}, recovery by snapshot to node ${follower}"
 wait_for_log "snapshot check sent" "send snapshot_check_request to node ${follower} pg ${pool_id}\\.${pg_id}"
+wait_for_log "non-final install snapshot sent" "send installsnapshot_request to node ${follower} pg ${pool_id}\\.${pg_id} .* done 0"
+
+concurrent_log="$script_root/.vstart/raft-concurrent-io.log"
+echo "Writing and reading while install snapshot is in progress"
+(
+    run_pg_stress write "$leader" "${object_name}_concurrent" "$concurrent_writes" 1
+    run_pg_stress read "$leader" "${object_name}_concurrent" 1 1
+) > "$concurrent_log" 2>&1 &
+concurrent_pid="$!"
+
 wait_for_log "install snapshot sent" "send installsnapshot_request to node ${follower} pg ${pool_id}\\.${pg_id}"
 wait_for_log "install snapshot received" "recvd installsnapshot_request from node [0-9]+ pg: ${pool_id}\\.${pg_id}"
 wait_for_log "install snapshot response" "recvd installsnapshot_response in pg: ${pool_id}\\.${pg_id} from node ${follower} .* success: 1"
+wait_for_log "install snapshot final chunk sent" "send installsnapshot_request to node ${follower} pg ${pool_id}\\.${pg_id} .* done 1"
+wait_for_log "install snapshot completed" "pg ${pool_id}\\.${pg_id}, snapshot is end\\."
+
+if ! wait "$concurrent_pid"; then
+    cat "$concurrent_log" >&2
+    echo "concurrent IO failed while install snapshot was in progress" >&2
+    exit 1
+fi
+
+concurrent_done_ts="$(log_timestamp "$concurrent_log" "snapshot_pg_stress read verify success, object=${object_name}_concurrent")"
+snapshot_done_ts="$(log_timestamp "$log_dir/osd${leader}.log" "pg ${pool_id}\\.${pg_id}, snapshot is end\\.")"
+if [[ "$concurrent_done_ts" > "$snapshot_done_ts" || "$concurrent_done_ts" == "$snapshot_done_ts" ]]; then
+    echo "concurrent read/write did not finish before install snapshot completed" >&2
+    echo "concurrent read/write done: $concurrent_done_ts" >&2
+    echo "snapshot done             : $snapshot_done_ts" >&2
+    exit 1
+fi
+echo "Concurrent read/write completed during install snapshot at $concurrent_done_ts; snapshot completed at $snapshot_done_ts"
 
 check_full_health "after install snapshot"
 load_osd_map
-run_pg_stress read "$leader"
+append_start_line="$(wc -l < "$log_dir/osd${follower}.log")"
+echo "Writing $append_writes objects after install snapshot to verify append entries"
+run_pg_stress write "$leader" "${object_name}_append" "$append_writes" 1
+wait_for_osd_log_after_line "$follower" "$append_start_line" "post-snapshot append entries" \
+    "raft recovery test appendentries received from node ${leader} pg: ${pool_id}\\.${pg_id} .* entries [1-9]"
+
+run_pg_stress read "$leader" "$live_object" 1 1
+run_pg_stress read "$leader" "${object_name}_concurrent" 1 1
+run_pg_stress read "$leader" "${object_name}_append" 1 1
 check_full_health "after read verify"
 
 scan_fatal_logs
