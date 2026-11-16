@@ -30,19 +30,16 @@ void storage_fini(storage_op_complete cb_fn, void* arg);
 void storage_load(storage_op_complete cb_fn, void* arg);
 
 /**
- * storage_manager保存一个核上的所有存储对象：
- * - kvstore        所有pg共用一个
- * - log_manager    每个pg都有一个disk_log
- * - object_manager 每个pg都有一个object_store
+ * storage_manager (AOS-only):
+ * - kvstore via attach_aos_kv (aos kv_engine)
+ * - log / object live on aos_store, not here
  */
 class storage_manager {
 public:
   storage_manager() { }
 
   void start(uint32_t shard_id, storage_op_complete cb_fn, void* arg) {
-      // design v2 P4: production is AOS-only. Never create blob kv here;
-      // attach_aos_kv() wires the real engine after aos_runtime open/recover.
-      // Blob make_kvstore remains for demos that still call blobstore_init.
+      // design v2 P4: never create blob kv; attach_aos_kv after aos recover.
       (void)shard_id;
       _kvstore = nullptr;
       _started = false;
@@ -76,12 +73,8 @@ public:
     );
   }
 
-  void load(uint32_t shard_id, spdk_blob_id blob_id, spdk_blob_id checkpoint_blob_id, spdk_blob_id new_checkpoint_blob_id, 
-          storage_op_complete cb_fn, void* arg){
-      // design v2 P4: ignore blob ids; AOS recover + attach_aos_kv supply kv.
-      (void)blob_id;
-      (void)checkpoint_blob_id;
-      (void)new_checkpoint_blob_id;
+  void load(uint32_t shard_id, storage_op_complete cb_fn, void* arg) {
+      // design v2 P4: AOS recover + attach_aos_kv supply kv.
       _kvstore = nullptr;
       _started = false;
       SPDK_NOTICELOG(

@@ -3,8 +3,8 @@
 > **2026-08 生产路径已迁到 AOS（`aos/`）**  
 > OSD 生产：object / raft log / meta KV 全部走 AppendOnlyStore；  
 > **不再** `blobstore_init/load`。  
-> 下文 blobstore / `object_store` / `rolling_blob` 描述保留为 **demo 与历史实现**，  
-> 不是当前生产架构。详见 `docs/append_only_store_design.md` 与 `aos/README.md`。
+> blob 实现已归档到 `legacy_blob/`，**不参与生产编译**；下文历史描述仅供对照。  
+> 详见 `docs/append_only_store_design.md` 与 `aos/README.md`。
 
 localstore 历史上基于 SPDK blobstore 提供：
 

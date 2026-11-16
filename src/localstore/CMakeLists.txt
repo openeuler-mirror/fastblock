@@ -1,17 +1,15 @@
 add_subdirectory(aos)
 
+# AOS-only production localstore (design v2 P4).
+# Blob sources archived under legacy_blob/ and are not built.
 compile_library(
   NAME localstore
   SRCS
-    object_store.cc
-    rolling_blob.cc
     buffer_pool.cc
     spdk_buffer.cc
     storage_manager.cc
     blob_manager.cc
     kv_store.cc
-    kv_checkpoint.cc
-    blob_pool.cc
     disk_log.cc
 
   DEPS
@@ -26,4 +24,5 @@ compile_library(
   -Wno-error=write-strings # 把常量字符串当char*使用
 )
 
-add_subdirectory(demo)
+# Blob demos disabled until rewritten for AOS (see legacy_blob/README.md).
+# add_subdirectory(demo)

@@ -458,7 +458,10 @@ struct free_xattr {
 
 using xattr_val_type = std::variant<blob_type, uint32_t, std::string>;
 
-using rblob_xattr_complete = std::function<void (void *, int)>;
+/** Generic object IO completion (formerly object_store.h). */
+using object_rw_complete = std::function<void(void* arg, int objerrno)>;
+
+using rblob_xattr_complete = std::function<void(void*, int)>;
 
 struct set_xattr_ctx {
     rblob_xattr_complete cb_fn;
