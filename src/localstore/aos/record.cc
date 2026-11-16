@@ -140,7 +140,9 @@ decode_status decode_record(const uint8_t* buf, size_t len, data_record* out,
       type != record_type::gc_rewrite && type != record_type::object_name &&
       type != record_type::segment_seal &&
       type != record_type::range_tombstone &&
-      type != record_type::checkpoint_marker) {
+      type != record_type::checkpoint_marker &&
+      type != record_type::raft_snapshot_pin &&
+      type != record_type::raft_snapshot_unpin) {
     return decode_status::bad_type;
   }
 
