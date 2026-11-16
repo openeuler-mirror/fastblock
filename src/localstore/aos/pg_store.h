@@ -166,6 +166,35 @@ public:
   }
 
   /**
+   * Clone pin (design P5 / §11): re-pin image_snap_seq so a new image/clone
+   * reader can hold the parent view. Equivalent to create_image_snapshot.
+   */
+  void clone_image(uint64_t image_snap_seq, op_complete cb, void* arg) {
+    create_image_snapshot(image_snap_seq, std::move(cb), arg);
+  }
+
+  /**
+   * Flatten (design P5): materialize parent image view into new head data
+   * written under new_image_seq (and raft_write_index). After success the
+   * parent pin may be released by the control plane.
+   *
+   * - parent_image_seq: view to copy (must be > 0)
+   * - new_image_seq: image timeline for rewritten extents (must be >
+   *   parent_image_seq)
+   * - raft_write_index: base raft index; each rewritten extent uses
+   *   raft_write_index + n (n = 0..)
+   */
+  void flatten_image(uint64_t parent_image_seq, uint64_t new_image_seq,
+                     uint64_t raft_write_index, op_complete cb, void* arg);
+
+  /**
+   * Flatten a single object from parent image view (used by flatten_image).
+   */
+  void flatten_object(const std::string& object_name,
+                      uint64_t parent_image_seq, uint64_t new_image_seq,
+                      uint64_t raft_write_index, op_complete cb, void* arg);
+
+  /**
    * Durable install-snapshot markers on this PG epoch (M5 follower staging).
    * seal: staging ready; activate: generation promoted to active.
    */
@@ -271,6 +300,8 @@ private:
   struct snap_req;
   struct rewrite_req;
   struct recover_req;
+  struct flatten_obj_req;
+  struct flatten_img_req;
 
   object_state* find_object(const std::string& name);
   object_state* find_or_alloc_object(const std::string& name, bool* is_new);
@@ -306,6 +337,11 @@ private:
   static void write_after_name(void* arg, uint64_t phys, int err);
   static void write_after_data(void* arg, uint64_t phys, int err);
   static void write_after_flush(void* arg, int err);
+
+  static void flatten_obj_step(flatten_obj_req* req);
+  static void flatten_obj_after_read(void* arg, int err);
+  static void flatten_obj_after_write(void* arg, int err);
+  static void flatten_img_step(flatten_img_req* req);
 
   static void remove_after_tomb(void* arg, uint64_t phys, int err);
   static void remove_after_flush(void* arg, int err);
