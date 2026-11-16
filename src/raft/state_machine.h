@@ -78,6 +78,27 @@ public:
     }
   }
 
+  /** idle -> ingesting (AOS staging epoch). Default: no-op success. */
+  virtual void begin_install_snapshot(uint64_t snapshot_index,
+                                      uint64_t snapshot_term,
+                                      object_rw_complete cb_fn, void* arg) {
+    (void)snapshot_index;
+    (void)snapshot_term;
+    if (cb_fn) {
+      cb_fn(arg, 0);
+    }
+  }
+
+  /**
+   * ingesting -> sealed -> catchup -> idle (activate serving epoch).
+   * Default: no-op success.
+   */
+  virtual void finish_install_snapshot(object_rw_complete cb_fn, void* arg) {
+    if (cb_fn) {
+      cb_fn(arg, 0);
+    }
+  }
+
   /** True when object data is AppendOnlyStore. */
   virtual bool uses_aos_objects() const { return false; }
 
