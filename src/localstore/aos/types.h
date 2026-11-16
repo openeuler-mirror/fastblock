@@ -40,7 +40,19 @@ enum class record_type : uint8_t {
   // pin/unpin payload empty
   image_snapshot_pin = 10,
   image_snapshot_unpin = 11,
+  // install snapshot follower markers (design §10.4 / M5)
+  // raft_apply_index = snapshot index; pin payload for seal: u64 LE term
+  install_seal = 12,
+  install_activate = 13,
   // metadata_delta intentionally unused in M1
+};
+
+// Follower install-snapshot state machine (design §10.4).
+enum class ingest_state : uint8_t {
+  idle = 0,       // serving active generation only
+  ingesting = 1,  // staging epoch receiving chunks
+  sealed = 2,     // staging sealed, not yet switched
+  catchup = 3,    // active switched; post-snap appends allowed
 };
 
 struct pg_id {

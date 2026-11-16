@@ -22,9 +22,11 @@
 #include "pg_store.h"
 #include "record.h"
 #include "segment_allocator.h"
+#include "snapshot_ingest.h"
 #include "snapshot_reader.h"
 #include "superblock.h"
 #include "types.h"
+#include "crc32.h"
 
 #include <algorithm>
 #include <cassert>
@@ -889,6 +891,96 @@ void test_osd_store_gc_once() {
   EXPECT_EQ(out[0], 'X');
 }
 
+void test_snapshot_ingest_state_machine() {
+  const uint64_t seg = 256 * 1024;
+  mem_device_backend dev(8 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, seg);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  pg_store* active0 = osd.get_active_pg(1, 0);
+  EXPECT_TRUE(active0 != nullptr);
+  std::vector<char> oldv(4096, 'O');
+  r = {};
+  active0->write("obj", 0, oldv.data(), oldv.size(), 1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  snapshot_ingest ing(&osd, 1, 0);
+  EXPECT_TRUE(ing.state() == ingest_state::idle);
+
+  r = {};
+  ing.begin(/*snap*/ 100, /*term*/ 3, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(ing.state() == ingest_state::ingesting);
+  EXPECT_TRUE(ing.staging_epoch() > ing.active_epoch());
+
+  // Active still serves old data during ingest.
+  std::vector<char> out(4096, 0);
+  r = {};
+  osd.get_active_pg(1, 0)->read("obj", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'O');
+
+  std::vector<char> newv(4096, 'N');
+  const uint32_t crc = crc32(newv.data(), newv.size());
+  r = {};
+  ing.apply_chunk("obj", 0, newv.data(), newv.size(), crc, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  // Bad CRC rejected.
+  r = {};
+  ing.apply_chunk("obj", 0, newv.data(), newv.size(), crc ^ 1u, on_done, &r);
+  EXPECT_EQ(r.err, -EBADMSG);
+
+  r = {};
+  ing.seal(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(ing.state() == ingest_state::sealed);
+  EXPECT_TRUE(ing.staging_pg()->install_sealed());
+
+  r = {};
+  ing.activate(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(ing.state() == ingest_state::catchup);
+
+  // Serving now sees snapshot data.
+  r = {};
+  out.assign(4096, 0);
+  osd.get_active_pg(1, 0)->read("obj", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'N');
+
+  r = {};
+  ing.finish_catchup(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(ing.state() == ingest_state::idle);
+
+  // Abort path: second install then abort restores old serving epoch.
+  const uint64_t active_after = osd.serving_epoch(1, 0);
+  snapshot_ingest ing2(&osd, 1, 0);
+  r = {};
+  ing2.begin(200, 4, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  std::vector<char> bad(4096, 'X');
+  r = {};
+  ing2.apply_chunk("obj", 0, bad.data(), bad.size(), 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  ing2.abort(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(ing2.state() == ingest_state::idle);
+  EXPECT_EQ(osd.serving_epoch(1, 0), active_after);
+  r = {};
+  out.assign(4096, 0);
+  osd.get_active_pg(1, 0)->read("obj", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'N');
+}
+
 void test_pg_snapshot_reader_stream() {
   mem_device_backend dev(16 * 1024 * 1024);
   pg_store store(&dev, pg_id{1, 0, 1});
@@ -1315,6 +1407,7 @@ int main() {
   test_pg_store_image_snapshot_read();
   test_segment_allocator_free_sealed();
   test_osd_store_gc_once();
+  test_snapshot_ingest_state_machine();
   test_pg_snapshot_reader_stream();
   test_pg_store_rewrite_extent();
   test_osd_store_gc_rewrite_once();

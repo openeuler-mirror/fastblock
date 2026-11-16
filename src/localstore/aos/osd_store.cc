@@ -83,6 +83,32 @@ uint64_t osd_store::latest_epoch(uint64_t pool_id, uint64_t pg_id) const {
   return it->second;
 }
 
+uint64_t osd_store::serving_epoch(uint64_t pool_id, uint64_t pg_id) const {
+  auto it = serving_epoch_.find({pool_id, pg_id});
+  if (it != serving_epoch_.end() && it->second != 0) {
+    return it->second;
+  }
+  return latest_epoch(pool_id, pg_id);
+}
+
+void osd_store::set_serving_epoch(uint64_t pool_id, uint64_t pg_id,
+                                  uint64_t epoch) {
+  if (epoch == 0) {
+    serving_epoch_.erase({pool_id, pg_id});
+  } else {
+    serving_epoch_[{pool_id, pg_id}] = epoch;
+  }
+}
+
+void osd_store::set_latest_epoch(uint64_t pool_id, uint64_t pg_id,
+                                 uint64_t epoch) {
+  if (epoch == 0) {
+    latest_epoch_.erase({pool_id, pg_id});
+  } else {
+    latest_epoch_[{pool_id, pg_id}] = epoch;
+  }
+}
+
 pg_store* osd_store::get_pg(uint64_t pool_id, uint64_t pg_id,
                             uint64_t store_epoch) {
   auto it = pgs_.find({pool_id, pg_id, store_epoch});
@@ -98,6 +124,54 @@ pg_store* osd_store::get_latest_pg(uint64_t pool_id, uint64_t pg_id) {
     return nullptr;
   }
   return get_pg(pool_id, pg_id, e);
+}
+
+pg_store* osd_store::get_active_pg(uint64_t pool_id, uint64_t pg_id) {
+  const uint64_t e = serving_epoch(pool_id, pg_id);
+  if (e == 0) {
+    return nullptr;
+  }
+  return get_pg(pool_id, pg_id, e);
+}
+
+void osd_store::drop_pg_epoch(uint64_t pool_id, uint64_t pg_id,
+                              uint64_t epoch) {
+  pgs_.erase({pool_id, pg_id, epoch});
+}
+
+uint32_t osd_store::drop_unsealed_staging() {
+  uint32_t dropped = 0;
+  // Collect keys first — erase invalidates iterators.
+  std::vector<pg_key> doomed;
+  for (const auto& kv : pgs_) {
+    const uint64_t pool = std::get<0>(kv.first);
+    const uint64_t pg = std::get<1>(kv.first);
+    const uint64_t epoch = std::get<2>(kv.first);
+    const uint64_t serve = serving_epoch(pool, pg);
+    if (epoch == serve) {
+      continue; // never drop serving generation
+    }
+    pg_store* s = kv.second.get();
+    if (s == nullptr) {
+      continue;
+    }
+    // Incomplete install: has objects or is newer than serve, but not sealed.
+    if (!s->install_sealed() && !s->install_activated() &&
+        epoch > serve) {
+      doomed.push_back(kv.first);
+    }
+  }
+  for (const auto& key : doomed) {
+    const uint64_t pool = std::get<0>(key);
+    const uint64_t pg = std::get<1>(key);
+    const uint64_t epoch = std::get<2>(key);
+    pgs_.erase(key);
+    if (latest_epoch(pool, pg) == epoch) {
+      set_latest_epoch(pool, pg, serving_epoch(pool, pg));
+    }
+    ++dropped;
+  }
+  return dropped;
 }
 
 pg_store* osd_store::ensure_pg(uint64_t pool_id, uint64_t pgid,
@@ -120,6 +194,7 @@ pg_store* osd_store::ensure_pg(uint64_t pool_id, uint64_t pgid,
 
 void osd_store::clear_all_pgs() {
   pgs_.clear();
+  serving_epoch_.clear();
   // Keep latest_epoch_ if loading from manifest first; recover clears both.
 }
 
@@ -772,6 +847,15 @@ void osd_store::recover_process(recover_req* req) {
     if (alloc_) {
       alloc_->set_open_cursor_abs(req->last_good);
     }
+    // Install recovery: prefer activated staging as serving; drop incomplete.
+    for (const auto& kv : pgs_) {
+      pg_store* s = kv.second.get();
+      if (s != nullptr && s->install_activated()) {
+        set_serving_epoch(std::get<0>(kv.first), std::get<1>(kv.first),
+                          std::get<2>(kv.first));
+      }
+    }
+    drop_unsealed_staging();
     meta_free_buf(req->buf);
     auto cb = std::move(req->cb);
     void* a = req->arg;

@@ -77,6 +77,8 @@ struct pg_store::snap_req {
     raft_unpin = 2,
     image_pin = 3,
     image_unpin = 4,
+    install_seal = 5,
+    install_activate = 6,
   };
   pg_store* self{nullptr};
   op_complete cb;
@@ -248,6 +250,10 @@ void pg_store::clear_maps() {
   total_snapshot_pins_ = 0;
   image_snapshot_pins_.clear();
   total_image_snapshot_pins_ = 0;
+  install_sealed_ = false;
+  install_activated_ = false;
+  install_snapshot_index_ = 0;
+  install_snapshot_term_ = 0;
 }
 
 void pg_store::pin_snapshot_index(std::map<uint64_t, uint32_t>* pins,
@@ -1176,6 +1182,95 @@ void pg_store::release_raft_snapshot(uint64_t raft_apply_index, op_complete cb,
   });
 }
 
+void pg_store::mark_install_seal(uint64_t snapshot_index,
+                                 uint64_t snapshot_term, op_complete cb,
+                                 void* arg) {
+  if (cb == nullptr) {
+    return;
+  }
+  if (backend_ == nullptr || snapshot_index == 0) {
+    cb(arg, -EINVAL);
+    return;
+  }
+  enqueue_or_run([this, snapshot_index, snapshot_term, cb = std::move(cb),
+                  arg]() mutable {
+    auto* req = new (std::nothrow) snap_req();
+    if (req == nullptr) {
+      finish_op(std::move(cb), arg, -ENOMEM);
+      return;
+    }
+    req->self = this;
+    req->cb = std::move(cb);
+    req->arg = arg;
+    req->k = snap_req::kind::install_seal;
+    req->raft_apply_index = snapshot_index;
+    req->raft_term = snapshot_term;
+
+    data_record rec;
+    rec.type = record_type::install_seal;
+    rec.pool_id = id_.pool_id;
+    rec.pg_id = id_.pg_id;
+    rec.store_epoch = id_.store_epoch;
+    rec.raft_apply_index = snapshot_index;
+    rec.payload.resize(8);
+    for (int i = 0; i < 8; ++i) {
+      rec.payload[static_cast<size_t>(i)] =
+          static_cast<char>((snapshot_term >> (8 * i)) & 0xff);
+    }
+    const uint64_t need =
+        seg_.align_up(kRecordHeaderLenV1 + rec.payload.size());
+    ensure_scratch(need);
+    if (scratch_ptr_ == nullptr) {
+      auto c = std::move(req->cb);
+      void* a = req->arg;
+      delete req;
+      finish_op(std::move(c), a, -ENOMEM);
+      return;
+    }
+    seg_.append_record(rec, scratch_ptr_, scratch_cap_, snap_after_append, req);
+  });
+}
+
+void pg_store::mark_install_activate(uint64_t snapshot_index, op_complete cb,
+                                     void* arg) {
+  if (cb == nullptr) {
+    return;
+  }
+  if (backend_ == nullptr || snapshot_index == 0) {
+    cb(arg, -EINVAL);
+    return;
+  }
+  enqueue_or_run([this, snapshot_index, cb = std::move(cb), arg]() mutable {
+    auto* req = new (std::nothrow) snap_req();
+    if (req == nullptr) {
+      finish_op(std::move(cb), arg, -ENOMEM);
+      return;
+    }
+    req->self = this;
+    req->cb = std::move(cb);
+    req->arg = arg;
+    req->raft_apply_index = snapshot_index;
+    req->k = snap_req::kind::install_activate;
+
+    data_record rec;
+    rec.type = record_type::install_activate;
+    rec.pool_id = id_.pool_id;
+    rec.pg_id = id_.pg_id;
+    rec.store_epoch = id_.store_epoch;
+    rec.raft_apply_index = snapshot_index;
+    const uint64_t need = seg_.align_up(kRecordHeaderLenV1);
+    ensure_scratch(need);
+    if (scratch_ptr_ == nullptr) {
+      auto c = std::move(req->cb);
+      void* a = req->arg;
+      delete req;
+      finish_op(std::move(c), a, -ENOMEM);
+      return;
+    }
+    seg_.append_record(rec, scratch_ptr_, scratch_cap_, snap_after_append, req);
+  });
+}
+
 void pg_store::create_image_snapshot(uint64_t image_snap_seq, op_complete cb,
                                      void* arg) {
   if (cb == nullptr) {
@@ -1297,6 +1392,15 @@ void pg_store::snap_after_flush(void* arg, int err) {
       self->unpin_snapshot_index(&self->image_snapshot_pins_,
                                  &self->total_image_snapshot_pins_,
                                  req->image_snap_seq);
+      break;
+    case snap_req::kind::install_seal:
+      self->install_sealed_ = true;
+      self->install_snapshot_index_ = req->raft_apply_index;
+      self->install_snapshot_term_ = req->raft_term;
+      break;
+    case snap_req::kind::install_activate:
+      self->install_activated_ = true;
+      self->install_snapshot_index_ = req->raft_apply_index;
       break;
     }
   }
@@ -1892,6 +1996,24 @@ int pg_store::apply_record(const data_record& rec, uint64_t phys_offset) {
   if (rec.type == record_type::image_snapshot_unpin) {
     unpin_snapshot_index(&image_snapshot_pins_, &total_image_snapshot_pins_,
                          rec.image_snap_seq);
+    return 0;
+  }
+  if (rec.type == record_type::install_seal) {
+    install_sealed_ = true;
+    install_snapshot_index_ = rec.raft_apply_index;
+    uint64_t term = 0;
+    if (rec.payload.size() >= 8) {
+      for (int i = 0; i < 8; ++i) {
+        term |= static_cast<uint64_t>(static_cast<uint8_t>(rec.payload[i]))
+                << (8 * i);
+      }
+    }
+    install_snapshot_term_ = term;
+    return 0;
+  }
+  if (rec.type == record_type::install_activate) {
+    install_activated_ = true;
+    install_snapshot_index_ = rec.raft_apply_index;
     return 0;
   }
 

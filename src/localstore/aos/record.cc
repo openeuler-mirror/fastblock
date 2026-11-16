@@ -144,7 +144,9 @@ decode_status decode_record(const uint8_t* buf, size_t len, data_record* out,
       type != record_type::raft_snapshot_pin &&
       type != record_type::raft_snapshot_unpin &&
       type != record_type::image_snapshot_pin &&
-      type != record_type::image_snapshot_unpin) {
+      type != record_type::image_snapshot_unpin &&
+      type != record_type::install_seal &&
+      type != record_type::install_activate) {
     return decode_status::bad_type;
   }
 

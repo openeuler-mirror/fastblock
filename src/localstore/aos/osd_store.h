@@ -68,8 +68,29 @@ public:
   // Latest store_epoch for (pool, pg), or 0 if none.
   uint64_t latest_epoch(uint64_t pool_id, uint64_t pg_id) const;
 
+  /**
+   * Serving epoch for client reads (active generation). During install
+   * ingest this stays on the pre-staging epoch until activate().
+   * If never set, falls back to latest_epoch.
+   */
+  uint64_t serving_epoch(uint64_t pool_id, uint64_t pg_id) const;
+  void set_serving_epoch(uint64_t pool_id, uint64_t pg_id, uint64_t epoch);
+  void set_latest_epoch(uint64_t pool_id, uint64_t pg_id, uint64_t epoch);
+
   pg_store* get_pg(uint64_t pool_id, uint64_t pg_id, uint64_t store_epoch);
   pg_store* get_latest_pg(uint64_t pool_id, uint64_t pg_id);
+  /** Active serving PG (install-aware). */
+  pg_store* get_active_pg(uint64_t pool_id, uint64_t pg_id);
+
+  /** Drop one epoch instance from memory (install abort / post-activate). */
+  void drop_pg_epoch(uint64_t pool_id, uint64_t pg_id, uint64_t epoch);
+
+  /**
+   * After recover: drop staging epochs that have data but no install_seal
+   * (incomplete install snapshot). Keeps serving_epoch on sealed/active.
+   * Returns number of epochs dropped.
+   */
+  uint32_t drop_unsealed_staging();
 
   /**
    * Write empty superblock A/B + empty manifest. Required once before first use
@@ -143,6 +164,8 @@ private:
   std::map<pg_key, std::unique_ptr<pg_store>> pgs_;
   // (pool, pg) -> max epoch ever created (from manifest + create_pg)
   std::map<std::pair<uint64_t, uint64_t>, uint64_t> latest_epoch_;
+  // (pool, pg) -> serving epoch for reads (0 => use latest_epoch)
+  std::map<std::pair<uint64_t, uint64_t>, uint64_t> serving_epoch_;
 };
 
 } // namespace fastblock::aos

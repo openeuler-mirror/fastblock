@@ -60,6 +60,7 @@ spdk_bdev_backend        # spdk_bdev_write/read/flush_blocks
 | raft snapshot (M3) | `create/release_raft_snapshot` O(1) pin；`read(..., raft_read_index)` 历史视图；version log |
 | image snapshot (M3) | `create/release_image_snapshot` O(1) pin；`read(..., raft=0, image_read_seq)` 按 `image_snap_seq` 过滤 version log |
 | snapshot reader (M5) | `pg_snapshot_reader`：pin + 按 extent 流式读 snapshot 视图（install snapshot 发送端骨架） |
+| snapshot ingest (M5) | `snapshot_ingest`：idle→ingesting→sealed→catchup→idle；staging epoch + CRC chunk + abort |
 
 已删除错误方向：`file_segment`（POSIX pwrite）。
 
@@ -81,9 +82,9 @@ echo 2048 > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
 
 ## 下一步
 
-- follower install snapshot ingest 状态机（M5）
-- 接 osd_stm apply / raft（M4）
+- 接 osd_stm apply / raft + install snapshot RPC（M4）
 - GC 限速、live ratio victim 选择、pin 时间线精细化（M6 完善）
+- ingest 与 manifest active/staging generation 字段对齐
 
 ## vibe 约束
 
