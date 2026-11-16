@@ -16,11 +16,13 @@
 #include "checkpoint.h"
 #include "crc32.h"
 #include "extent_map.h"
+#include "layout.h"
 #include "mem_device_backend.h"
 #include "osd_store.h"
 #include "pg_store.h"
 #include "record.h"
 #include "segment_allocator.h"
+#include "superblock.h"
 #include "types.h"
 
 #include <algorithm>
@@ -643,12 +645,49 @@ void test_segment_allocator_no_double_alloc() {
   EXPECT_EQ(alloc.reserve(4096, &pfail, nullptr), -ENOSPC);
 }
 
+void test_superblock_manifest_codec() {
+  superblock sb;
+  sb.generation = 3;
+  sb.segment_size = 1024 * 1024;
+  sb.data_offset = kMetaSize;
+  sb.data_length = 8 * 1024 * 1024;
+  sb.manifest_generation = 2;
+  auto bytes = encode_superblock(sb);
+  EXPECT_EQ(bytes.size(), static_cast<size_t>(kSuperblockBytes));
+  superblock out;
+  EXPECT_TRUE(decode_superblock(bytes.data(), bytes.size(), &out));
+  EXPECT_EQ(out.generation, 3u);
+  EXPECT_EQ(out.manifest_generation, 2u);
+  bytes[20] ^= 0xff;
+  EXPECT_TRUE(!decode_superblock(bytes.data(), bytes.size(), &out));
+
+  manifest m;
+  m.generation = 5;
+  m.data_high_water = kMetaSize + 4096;
+  m.open_segment_id = 0;
+  m.open_cursor = 4096;
+  m.pgs.push_back({1, 2, 7});
+  auto mb = encode_manifest(m);
+  manifest mo;
+  EXPECT_TRUE(decode_manifest(mb.data(), mb.size(), &mo));
+  EXPECT_EQ(mo.generation, 5u);
+  EXPECT_EQ(mo.pgs.size(), 1u);
+  EXPECT_EQ(mo.pgs[0].active_epoch, 7u);
+}
+
 void test_osd_store_multi_pg_shared_allocator() {
   const uint64_t seg = 256 * 1024;
-  mem_device_backend dev(4 * 1024 * 1024);
+  mem_device_backend dev(8 * 1024 * 1024);
   osd_store osd(&dev, buffer_mode::heap, seg);
 
   sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(osd.superblock_generation(), 1u);
+  EXPECT_TRUE(osd.data_offset() == kMetaSize);
+  EXPECT_TRUE(osd.allocator()->region_base() == kMetaSize);
+
+  r = {};
   osd.create_pg(1, 0, on_done, &r);
   EXPECT_EQ(r.err, 0);
   r = {};
@@ -686,12 +725,19 @@ void test_osd_store_multi_pg_shared_allocator() {
   EXPECT_TRUE(osd.allocator()->open_cursor() > 0 ||
               osd.allocator()->sealed_count() > 0);
 
+  // Persist latest high-water after writes
+  r = {};
+  osd.persist_manifest(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
   // Recover into a fresh osd_store on same device image
   osd_store osd2(&dev, buffer_mode::heap, seg);
   r = {};
   osd2.recover(on_done, &r);
   EXPECT_EQ(r.err, 0);
   EXPECT_EQ(osd2.pg_count(), 2u);
+  EXPECT_TRUE(osd2.superblock_generation() >= 1u);
+  EXPECT_EQ(osd2.latest_epoch(1, 0), 1u);
 
   pg_store* a2 = osd2.get_latest_pg(1, 0);
   pg_store* b2 = osd2.get_latest_pg(1, 1);
@@ -705,7 +751,7 @@ void test_osd_store_multi_pg_shared_allocator() {
   EXPECT_EQ(r.err, 0);
   EXPECT_EQ(out[0], 'B');
 
-  // delete_pg + recreate gets higher epoch; old records ignored for new epoch
+  // delete_pg + recreate gets higher epoch; epoch survives restart via manifest
   r = {};
   osd2.delete_pg(1, 0, on_done, &r);
   EXPECT_EQ(r.err, 0);
@@ -714,10 +760,20 @@ void test_osd_store_multi_pg_shared_allocator() {
   osd2.create_pg(1, 0, on_done, &r);
   EXPECT_EQ(r.err, 0);
   EXPECT_EQ(osd2.latest_epoch(1, 0), 2u);
-  pg_store* a3 = osd2.get_latest_pg(1, 0);
+
+  osd_store osd3(&dev, buffer_mode::heap, seg);
+  r = {};
+  osd3.recover(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  // Manifest should restore active_epoch=2 even without epoch-2 data records
+  EXPECT_EQ(osd3.latest_epoch(1, 0), 2u);
+  r = {};
+  osd3.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(osd3.latest_epoch(1, 0), 3u);
+  pg_store* a3 = osd3.get_latest_pg(1, 0);
   EXPECT_TRUE(a3 != nullptr);
-  EXPECT_EQ(a3->id().store_epoch, 2u);
-  // New empty epoch does not see old object until written
+  EXPECT_EQ(a3->id().store_epoch, 3u);
   r = {};
   a3->read("oa", 0, out.data(), 4096, on_done, &r);
   EXPECT_EQ(r.err, 0);
@@ -816,6 +872,7 @@ int main() {
   test_pg_store_checkpoint_then_discard_recover();
   test_segment_allocator_no_double_alloc();
   test_pg_store_multi_segment_write_recover();
+  test_superblock_manifest_codec();
   test_osd_store_multi_pg_shared_allocator();
 
   if (g_failures != 0) {

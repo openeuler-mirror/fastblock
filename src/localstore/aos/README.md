@@ -52,7 +52,8 @@ spdk_bdev_backend        # spdk_bdev_write/read/flush_blocks
 | checkpoint_marker | 有：ObjectMap 快照 payload（`checkpoint.cc`）；recover 两阶段：找最新完整 ckpt → load → replay tail |
 | `segment_allocator` | 有：固定大小 segment，reserve 不双分配；满则 seal 开下一段；`segment_size=0` 退化为整盘单段 |
 | `segment_seal` | 有：段滚动前若尾部够放 header，先写 seal record |
-| `osd_store` | 有：create/delete_pg、共享 allocator、单次 recover 按 pool/pg/epoch 路由 |
+| `osd_store` | 有：format / create/delete_pg / persist_manifest / recover |
+| superblock A/B + manifest | 有：盘前部 `kMetaSize` 元数据区；epoch 表跨重启 |
 
 已删除错误方向：`file_segment`（POSIX pwrite）。
 
@@ -74,10 +75,10 @@ echo 2048 > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
 
 ## 下一步
 
-- 全局 superblock / manifest 持久化（store_epoch 重启恢复）
 - GC 回收 sealed segment（M6）
 - 接 osd_stm apply / raft（M4）
 - I/O 队列深度 > 1（目前 append 单 inflight）
+- superblock torn 双写故障注入补强
 
 ## vibe 约束
 
