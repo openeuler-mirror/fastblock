@@ -110,14 +110,15 @@ public:
     int create_partition(uint64_t pool_id, uint64_t pg_id, uint32_t core_index, std::vector<utils::osd_info_t>&& osds,
                         int64_t revision_id, pm_complete&& cb_fn, void *arg);
     int delete_partition(uint64_t pool_id, uint64_t pg_id, pm_complete&& cb_fn, void *arg);
-    int load_partition(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob,
-                        object_store::container objects, pm_complete&& func, void *arg);
+    /** Load raft PG from AOS-recovered log/object state (no blob args; P4). */
+    int load_partition(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id,
+                       pm_complete&& func, void* arg);
     int active_partition(uint64_t pool_id, uint64_t pg_id, pm_complete&& cb_fn, void *arg);
 
     bool get_pg_shard(uint64_t pool_id, uint64_t pg_id, uint32_t &shard_id);
 
-    void load_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob,
-                        object_store::container objects, pm_complete cb_fn, void *arg);
+    void load_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, pm_complete cb_fn,
+                 void* arg);
     void create_pg(uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t> osds, uint32_t shard_id,
                         int64_t revision_id, pm_complete cb_fn, void *arg);
     void delete_pg(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id, pm_complete cb_fn, void *arg);
