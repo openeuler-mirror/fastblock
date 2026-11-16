@@ -213,6 +213,24 @@ void pg_store::clear_maps() {
   next_object_id_ = 1;
 }
 
+void pg_store::for_each_live_extent(
+    const std::function<void(uint64_t phys_offset, uint64_t length)>& fn)
+    const {
+  if (!fn) {
+    return;
+  }
+  for (const auto& kv : objects_) {
+    if (kv.second.deleted) {
+      continue;
+    }
+    for (const auto& e : kv.second.head.all()) {
+      if (e.length > 0) {
+        fn(e.phys_offset, e.length);
+      }
+    }
+  }
+}
+
 checkpoint_snapshot pg_store::build_snapshot(uint64_t generation) const {
   checkpoint_snapshot snap;
   snap.generation = generation;
