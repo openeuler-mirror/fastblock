@@ -54,6 +54,8 @@ spdk_bdev_backend        # spdk_bdev_write/read/flush_blocks
 | `segment_seal` | 有：段滚动前若尾部够放 header，先写 seal record |
 | `osd_store` | 有：format / create/delete_pg / persist_manifest / recover |
 | superblock A/B + manifest | 有：盘前部 `kMetaSize` 元数据区；epoch 表跨重启 |
+| write queue depth | `spdk_bdev_backend` 默认最多 32 路并发 `write_at`（可调） |
+| GC skeleton | `osd_store::gc_once`：无 live head 引用的 sealed segment 回 free |
 
 已删除错误方向：`file_segment`（POSIX pwrite）。
 
@@ -75,9 +77,9 @@ echo 2048 > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
 
 ## 下一步
 
-- GC 回收 sealed segment（M6）
+- GC rewrite / cleaner 搬迁仍存活 extent（真正空间回收到可写）
+- pg_store 用户写路径 pipeline（目前单 op 串行 queue）
 - 接 osd_stm apply / raft（M4）
-- I/O 队列深度 > 1（目前 append 单 inflight）
 - superblock torn 双写故障注入补强
 
 ## vibe 约束
