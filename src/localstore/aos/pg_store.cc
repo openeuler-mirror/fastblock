@@ -115,11 +115,18 @@ struct pg_store::recover_req {
 pg_store::pg_store(device_backend* backend, pg_id id, buffer_mode mode,
                    uint64_t segment_size)
     : backend_(backend),
-      alloc_(std::make_unique<segment_allocator>(
+      alloc_(std::make_shared<segment_allocator>(
           backend ? backend->capacity() : 0,
           segment_size == 0 ? (backend ? backend->capacity() : 0)
                             : segment_size,
           backend ? backend->block_size() : 4096)),
+      seg_(backend, alloc_.get()), id_(id), mode_(mode) {
+  ensure_scratch(kMaxObjectSize + 256 * 1024);
+}
+
+pg_store::pg_store(device_backend* backend, pg_id id,
+                   std::shared_ptr<segment_allocator> alloc, buffer_mode mode)
+    : backend_(backend), alloc_(std::move(alloc)),
       seg_(backend, alloc_.get()), id_(id), mode_(mode) {
   ensure_scratch(kMaxObjectSize + 256 * 1024);
 }
@@ -915,7 +922,8 @@ void pg_store::recover(op_complete cb, void* arg) {
     clear_maps();
     checkpoint_generation_ = 0;
     last_checkpoint_end_ = 0;
-    if (alloc_) {
+    // Only reset allocator when exclusively owned (not shared multi-PG).
+    if (alloc_ && alloc_.use_count() == 1) {
       alloc_->reset();
     }
 
@@ -1310,7 +1318,7 @@ uint64_t pg_store::rebuild_from_image(const uint8_t* image, size_t len) {
   clear_maps();
   checkpoint_generation_ = 0;
   last_checkpoint_end_ = 0;
-  if (alloc_) {
+  if (alloc_ && alloc_.use_count() == 1) {
     alloc_->reset();
   }
 
