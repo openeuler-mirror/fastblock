@@ -56,6 +56,11 @@ extern std::vector<std::pair<uint64_t, uint64_t>> g_bs_space;
 
 using bm_complete = std::function<void (void *, int)>;
 
+/**
+ * Blobstore lifecycle — **demo / residual tests only**.
+ * Production OSD never calls init/load (design v2 P3/P4 AOS-only boot).
+ * blobstore_fini is still invoked on OSD stop; it is a no-op if never opened.
+ */
 void
 blobstore_init(std::string &bdev_name, const std::string& uuid, bool force,
         bm_complete cb_fn, void* args);
