@@ -22,6 +22,7 @@ target_link_libraries(fastblock-osd
     raft
     msg
     localstore
+    aos
 )
 
 install(TARGETS fastblock-osd DESTINATION bin PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
