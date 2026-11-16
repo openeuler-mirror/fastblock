@@ -473,6 +473,66 @@ void osd_store::delete_pg(uint64_t pool_id, uint64_t pg_id, op_complete cb,
   persist_manifest(std::move(cb), arg);
 }
 
+uint32_t osd_store::gc_once(bool persist) {
+  if (alloc_ == nullptr) {
+    return 0;
+  }
+  const uint32_t nseg = alloc_->segment_count();
+  const uint64_t seg_size = alloc_->segment_size();
+  if (nseg == 0 || seg_size == 0) {
+    return 0;
+  }
+
+  // Mark segments that have any live extent reference.
+  std::vector<uint8_t> live(nseg, 0);
+  auto mark = [&](uint64_t phys, uint64_t len) {
+    if (len == 0 || phys + len <= alloc_->region_base()) {
+      return;
+    }
+    const uint64_t rel0 =
+        phys > alloc_->region_base() ? phys - alloc_->region_base() : 0;
+    const uint64_t rel1 = phys + len - alloc_->region_base();
+    const uint32_t first = static_cast<uint32_t>(rel0 / seg_size);
+    const uint32_t last =
+        rel1 == 0 ? first : static_cast<uint32_t>((rel1 - 1) / seg_size);
+    for (uint32_t id = first; id <= last && id < nseg; ++id) {
+      live[id] = 1;
+    }
+  };
+
+  for (const auto& kv : pgs_) {
+    kv.second->for_each_live_extent(mark);
+  }
+
+  uint32_t freed = 0;
+  for (uint32_t id = 0; id < nseg; ++id) {
+    if (alloc_->state(id) != segment_state::sealed) {
+      continue;
+    }
+    if (live[id]) {
+      continue;
+    }
+    if (alloc_->free_sealed(id) == 0) {
+      ++freed;
+    }
+  }
+
+  if (freed > 0 && persist) {
+    // Fire-and-forget style: synchronous mem path completes in callback;
+    // for async callers, pass nullptr is invalid — use a no-op stack result.
+    struct {
+      int err{-1};
+    } r;
+    persist_manifest(
+        [](void* a, int err) {
+          static_cast<decltype(r)*>(a)->err = err;
+        },
+        &r);
+    (void)r;
+  }
+  return freed;
+}
+
 void osd_store::recover(op_complete cb, void* arg) {
   if (cb == nullptr) {
     return;
