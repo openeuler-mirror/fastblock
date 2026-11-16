@@ -20,6 +20,8 @@ message write_request
     bytes object_name = 3;
     uint64 offset = 4;
     bytes data = 5;
+    // AOS image timeline (0 = unset / head-only path). Design P5.
+    uint64 image_snap_seq = 6;
 }
 
 message write_reply
@@ -34,6 +36,9 @@ message read_request
     bytes object_name = 3;
     uint64 offset = 4;
     uint64 length = 5;
+    // Optional AOS snapshot view (0 = head). Design P5.
+    uint64 image_read_seq = 6;
+    uint64 raft_read_index = 7;
 }
 
 message read_reply
@@ -59,6 +64,7 @@ message write_cmd
 {
     bytes object_name = 1;
     uint64 offset = 2;
+    uint64 image_snap_seq = 3; // AOS image timeline (0 = unset)
 }
 
 message read_cmd
@@ -71,6 +77,7 @@ message read_cmd
 message delete_cmd
 {
     bytes object_name = 1;
+    uint64 image_snap_seq = 2;
 }
 
 message bench_request
@@ -170,6 +177,32 @@ message commit_ring_write_request {
     uint32 serialized_size = 3;
 }
 
+// --- AOS image snapshot / clone / flatten (design P5) ---
+
+enum image_snap_op {
+    IMAGE_SNAP_CREATE = 0;   // pin image_snap_seq
+    IMAGE_SNAP_CLONE = 1;    // re-pin (clone reader)
+    IMAGE_SNAP_RELEASE = 2;  // unpin
+    IMAGE_SNAP_FLATTEN = 3;  // materialize parent -> new_seq
+}
+
+message image_snap_request {
+    uint64 pool_id = 1;
+    uint64 pg_id = 2;
+    image_snap_op op = 3;
+    // CREATE/CLONE/RELEASE: the snap seq to pin/unpin.
+    // FLATTEN: parent_image_seq.
+    uint64 image_snap_seq = 4;
+    // FLATTEN only: destination image seq (must be > parent).
+    uint64 new_image_seq = 5;
+    // FLATTEN only: base raft index for rewritten extents.
+    uint64 raft_write_index = 6;
+}
+
+message image_snap_reply {
+    int32 state = 1;
+}
+
 service rpc_service_osd{
     rpc process_write(write_request) returns (write_reply);
     rpc process_read(read_request) returns (read_reply);
@@ -182,4 +215,5 @@ service rpc_service_osd{
     rpc process_change_nodes(change_nodes_request) returns (change_nodes_response);
     rpc process_acquire_write_ring(acquire_write_ring_request) returns (acquire_write_ring_response);
     rpc process_commit_ring_write(commit_ring_write_request) returns (write_reply);
+    rpc process_image_snap(image_snap_request) returns (image_snap_reply);
 }
