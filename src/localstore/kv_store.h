@@ -90,7 +90,9 @@ public:
     explicit kvstore(fastblock::aos::kv_engine* eng)
       : rblob(nullptr)
       , checkpoint(0)
-      , _aos(eng) {}
+      , _aos(eng) {
+        // No DMA write/read buffers; AOS engine owns persistence.
+      }
 
     ~kvstore() {
         if (write_buf.get_buf()) {
@@ -132,7 +134,12 @@ public:
         SPDK_INFOLOG(kvlog, "stop kvstore in shard %u, thread %lu \n",
             shard_id, utils::get_spdk_thread_id());
         if (_aos) {
-            _aos->stop(std::move(cb_fn), arg);
+            // Engine lifetime is owned by aos_runtime (stop_aos/close).
+            // Do not call eng->stop here — shutdown may free eng first.
+            _aos = nullptr;
+            if (cb_fn) {
+                cb_fn(arg, 0);
+            }
             return;
         }
         if (_worker_poller) {
