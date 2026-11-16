@@ -162,6 +162,46 @@ public:
    */
   uint32_t gc_rewrite_once(bool persist = true, uint32_t max_extents = 0);
 
+  /** GC policy knobs for a single combined pass (design P5). */
+  struct gc_options {
+    bool free_dead_segments{true};
+    bool rewrite_victim{true};
+    uint32_t max_rewrite_extents{16}; // 0 = no limit when rewrite enabled
+    bool persist_manifest{true};
+  };
+  struct gc_stats {
+    uint32_t segments_freed{0};
+    uint32_t extents_rewritten{0};
+  };
+  /**
+   * One policy-driven GC pass: optional rewrite (rate-limited) then free dead
+   * sealed segments. Safe under image/raft pins (live map is conservative).
+   */
+  gc_stats gc_pass();
+  gc_stats gc_pass(const gc_options& opt);
+
+  /**
+   * Image snapshot pin/release on active PG (design §11 / P5).
+   * clone_image is an alias of create (re-pin for COW readers).
+   */
+  void create_image_snapshot(uint64_t pool_id, uint64_t pg_id,
+                             uint64_t image_snap_seq, op_complete cb,
+                             void* arg);
+  void release_image_snapshot(uint64_t pool_id, uint64_t pg_id,
+                              uint64_t image_snap_seq, op_complete cb,
+                              void* arg);
+  void clone_image(uint64_t pool_id, uint64_t pg_id, uint64_t image_snap_seq,
+                   op_complete cb, void* arg) {
+    create_image_snapshot(pool_id, pg_id, image_snap_seq, std::move(cb), arg);
+  }
+
+  /**
+   * Flatten parent image view into new_image_seq on active PG (design P5).
+   */
+  void flatten_image(uint64_t pool_id, uint64_t pg_id,
+                     uint64_t parent_image_seq, uint64_t new_image_seq,
+                     uint64_t raft_write_index, op_complete cb, void* arg);
+
   /**
    * Raft/OSD STM paths against the serving (active) generation (M4).
    * raft_write_index is the raft log index (idempotency); image_snap_seq is
@@ -174,6 +214,11 @@ public:
 
   void read(uint64_t pool_id, uint64_t pg_id, const std::string& object_name,
             uint64_t offset, void* buf, uint64_t len, op_complete cb, void* arg);
+
+  /** Snapshot-aware read (raft_read_index and/or image_read_seq). */
+  void read(uint64_t pool_id, uint64_t pg_id, const std::string& object_name,
+            uint64_t offset, void* buf, uint64_t len, uint64_t raft_read_index,
+            uint64_t image_read_seq, op_complete cb, void* arg);
 
   void remove(uint64_t pool_id, uint64_t pg_id, const std::string& object_name,
               uint64_t raft_write_index, uint64_t image_snap_seq, op_complete cb,
