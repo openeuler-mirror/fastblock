@@ -1,5 +1,43 @@
 # Tools
 
+## Image verify (data correctness)
+
+`block_bench` is a latency/IOPS tool: every offset is the same `0x55` fill, so
+`memcmp` cannot catch swapped blocks, holes filled with the same pattern, or
+stale replica data. Use `image_verify` to check that the bytes that came back
+are the bytes that were written.
+
+Each `io_size` block is a `VERIFYA1` payload: seed, image offset, header CRC,
+and a deterministic body. Write and verify must use the same `-S` seed.
+
+```bash
+# write unique payloads (reuses block_bench.dev.json mon/rdma keys)
+./build/src/tools/image_verify/image_verify -m 0x8 \
+    -C .vstart/etc/fastblock/block_bench.dev.json \
+    -M write -S 42 -I aos-verify-1
+
+# read every offset back and decode
+./build/src/tools/image_verify/image_verify -m 0x8 \
+    -C .vstart/etc/fastblock/block_bench.dev.json \
+    -M verify -S 42 -I aos-verify-1
+
+# offline last-writer-wins compare of replica AOS files
+./build/src/tools/image_verify/image_verify -M dump-compare \
+    --align 512 --seed 42 \
+    .vstart/var/lib/fastblock/osd-1/aos_file \
+    .vstart/var/lib/fastblock/osd-2/aos_file \
+    .vstart/var/lib/fastblock/osd-3/aos_file
+```
+
+`--seed` on dump-compare keeps only `VERIFYA1` extents of that seed, so leftover
+`0x55` / older images on the same `aos_file` are ignored.
+
+End-to-end (write, dump-compare, restart, verify, kill one OSD):
+
+```bash
+./scripts/run-aos-data-verify.sh
+```
+
 ## Block bench tool
 
 配置采用 *json* 文件指定，示例如下：
