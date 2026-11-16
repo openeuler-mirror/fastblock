@@ -32,6 +32,10 @@ enum class record_type : uint8_t {
   range_tombstone = 6,
   // per-PG ObjectMap snapshot (design §12.1); payload is checkpoint_snapshot
   checkpoint_marker = 7,
+  // raft snapshot pin/unpin (design §3.1 / M3); raft_apply_index = snap index
+  // pin payload: u64 LE term; unpin payload empty
+  raft_snapshot_pin = 8,
+  raft_snapshot_unpin = 9,
   // metadata_delta intentionally unused in M1
 };
 
