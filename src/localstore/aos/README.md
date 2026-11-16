@@ -55,8 +55,11 @@ spdk_bdev_backend        # spdk_bdev_write/read/flush_blocks
 | `osd_store` | 有：format / create/delete_pg / persist_manifest / recover |
 | superblock A/B + manifest | 有：盘前部 `kMetaSize` 元数据区；epoch 表跨重启 |
 | write queue depth | `spdk_bdev_backend` 默认最多 32 路并发 `write_at`（可调） |
-| GC skeleton | `osd_store::gc_once`：无 live head 引用的 sealed segment 回 free |
+| GC skeleton | `osd_store::gc_once`：无 live 引用的 sealed segment 回 free |
+| GC rewrite (M6) | `pg_store::rewrite_extent` + `osd_store::gc_rewrite_once`：gc_rewrite 搬迁 head extent，再 free |
 | raft snapshot (M3) | `create/release_raft_snapshot` O(1) pin；`read(..., raft_read_index)` 历史视图；version log |
+| image snapshot (M3) | `create/release_image_snapshot` O(1) pin；`read(..., raft=0, image_read_seq)` 按 `image_snap_seq` 过滤 version log |
+| snapshot reader (M5) | `pg_snapshot_reader`：pin + 按 extent 流式读 snapshot 视图（install snapshot 发送端骨架） |
 
 已删除错误方向：`file_segment`（POSIX pwrite）。
 
@@ -78,10 +81,9 @@ echo 2048 > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
 
 ## 下一步
 
-- image_snap_seq 读视图 / clone pin（M3 延伸）
-- install snapshot streaming reader（M5）
+- follower install snapshot ingest 状态机（M5）
 - 接 osd_stm apply / raft（M4）
-- GC rewrite 搬迁存活 extent
+- GC 限速、live ratio victim 选择、pin 时间线精细化（M6 完善）
 
 ## vibe 约束
 

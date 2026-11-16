@@ -106,6 +106,16 @@ public:
    */
   uint32_t gc_once(bool persist = true);
 
+  /**
+   * One GC rewrite pass (design §11.4 skeleton): pick the first sealed segment
+   * that still has live head extents, rewrite those extents out via
+   * pg_store::rewrite_extent (gc_rewrite records), then free the segment if
+   * no live refs remain (pins may block free — correct).
+   * Returns number of extents rewritten. Optional persist after free.
+   * Mem backend completes inline; SPDK path should be driven on reactor.
+   */
+  uint32_t gc_rewrite_once(bool persist = true);
+
 private:
   using pg_key = std::tuple<uint64_t, uint64_t, uint64_t>; // pool, pg, epoch
 

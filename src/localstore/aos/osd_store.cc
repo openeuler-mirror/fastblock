@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <new>
+#include <tuple>
 #include <vector>
 
 namespace fastblock::aos {
@@ -531,6 +532,81 @@ uint32_t osd_store::gc_once(bool persist) {
     (void)r;
   }
   return freed;
+}
+
+uint32_t osd_store::gc_rewrite_once(bool persist) {
+  if (alloc_ == nullptr || pgs_.empty()) {
+    return 0;
+  }
+  const uint32_t nseg = alloc_->segment_count();
+  const uint64_t seg_size = alloc_->segment_size();
+  if (nseg == 0 || seg_size == 0) {
+    return 0;
+  }
+
+  // Prefer sealed segments that still have live head extents (need rewrite).
+  std::vector<uint8_t> live(nseg, 0);
+  auto mark = [&](uint64_t phys, uint64_t len) {
+    if (len == 0 || phys + len <= alloc_->region_base()) {
+      return;
+    }
+    const uint64_t rel0 =
+        phys > alloc_->region_base() ? phys - alloc_->region_base() : 0;
+    const uint64_t rel1 = phys + len - alloc_->region_base();
+    const uint32_t first = static_cast<uint32_t>(rel0 / seg_size);
+    const uint32_t last =
+        rel1 == 0 ? first : static_cast<uint32_t>((rel1 - 1) / seg_size);
+    for (uint32_t id = first; id <= last && id < nseg; ++id) {
+      live[id] = 1;
+    }
+  };
+  for (const auto& kv : pgs_) {
+    kv.second->for_each_live_extent(mark);
+  }
+
+  uint32_t victim = segment_allocator::kInvalidSeg;
+  for (uint32_t id = 0; id < nseg; ++id) {
+    if (alloc_->state(id) != segment_state::sealed) {
+      continue;
+    }
+    if (!live[id]) {
+      continue;
+    }
+    victim = id;
+    break;
+  }
+  if (victim == segment_allocator::kInvalidSeg) {
+    // No rewrite work; still free fully dead sealed segments.
+    return gc_once(persist);
+  }
+
+  const uint64_t phys_begin = alloc_->segment_base(victim);
+  const uint64_t phys_end = phys_begin + seg_size;
+
+  uint32_t rewritten = 0;
+  for (const auto& kv : pgs_) {
+    pg_store* pg = kv.second.get();
+    std::vector<std::tuple<std::string, uint64_t, uint64_t>> targets;
+    pg->collect_head_extents_in_range(phys_begin, phys_end, &targets);
+    for (const auto& t : targets) {
+      struct {
+        int err{-1};
+      } r;
+      pg->rewrite_extent(std::get<0>(t), std::get<1>(t), std::get<2>(t),
+                         [](void* a, int err) {
+                           static_cast<decltype(r)*>(a)->err = err;
+                         },
+                         &r);
+      if (r.err == 0) {
+        ++rewritten;
+      }
+    }
+  }
+
+  // After rewrite, free sealed segments with no remaining live refs.
+  const uint32_t freed = gc_once(persist);
+  (void)freed;
+  return rewritten;
 }
 
 void osd_store::recover(op_complete cb, void* arg) {

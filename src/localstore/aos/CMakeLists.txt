@@ -16,6 +16,7 @@ compile_library(
     mem_device_backend.cc
     pg_store.cc
     osd_store.cc
+    snapshot_reader.cc
   DEPS
     spdk::spdk
   COPTS
