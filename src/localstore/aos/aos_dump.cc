@@ -127,11 +127,17 @@ dump_report scan_image(const uint8_t* image, size_t len, uint32_t align) {
     return r;
   }
 
-  // Prefer high-water from manifest when it is within the image.
-  uint64_t scan_limit = len;
-  if (r.manifest_ok && r.man.data_high_water > r.data_scan_start &&
-      r.man.data_high_water <= len) {
-    scan_limit = r.man.data_high_water;
+  // Scan the full data region (capped by image length). Manifest
+  // data_high_water can lag durable appends until the next persist_manifest,
+  // so limiting to high_water would hide tail object/log/kv records — same
+  // policy as osd_store::recover_after_meta.
+  uint64_t data_end = r.data_scan_start;
+  if (r.chosen.data_length > 0) {
+    data_end = r.data_scan_start + r.chosen.data_length;
+  }
+  uint64_t scan_limit = std::min(static_cast<uint64_t>(len), data_end);
+  if (scan_limit < r.data_scan_start) {
+    scan_limit = r.data_scan_start;
   }
 
   size_t off = static_cast<size_t>(r.data_scan_start);
@@ -192,11 +198,13 @@ dump_report scan_image(const uint8_t* image, size_t len, uint32_t align) {
   }
   r.data_scan_end = off;
 
-  // Soft consistency: high-water should not be far past last good record.
+  // Informational: lagging high_water is expected until post-recover snap /
+  // create_pg / GC persist. Not a hard error.
   if (r.manifest_ok && r.man.data_high_water > 0 &&
       r.data_scan_end > r.man.data_high_water + align) {
-    push_err(&r, r.data_scan_end,
-             "scan advanced past manifest data_high_water");
+    r.warnings.push_back(dump_error{
+        r.data_scan_end,
+        "scan advanced past manifest data_high_water (stale high_water)"});
   }
 
   return r;
@@ -244,6 +252,12 @@ std::string format_report(const dump_report& r) {
   if (!r.errors.empty()) {
     os << "  errors (" << r.errors.size() << "):\n";
     for (const auto& e : r.errors) {
+      os << "    @" << e.offset << ": " << e.message << "\n";
+    }
+  }
+  if (!r.warnings.empty()) {
+    os << "  warnings (" << r.warnings.size() << "):\n";
+    for (const auto& e : r.warnings) {
       os << "    @" << e.offset << ": " << e.message << "\n";
     }
   }
