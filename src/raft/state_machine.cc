@@ -14,6 +14,10 @@
 #include "spdk/log.h"
 #include "fastblock/utils/err_num.h"
 
+#include <functional>
+#include <map>
+#include <utility>
+
 constexpr uint32_t default_parallel_apply_num = 32;
 
 static int apply_task(void *arg){
@@ -110,4 +114,137 @@ std::string &state_machine::get_pg_name(){
 
 bool state_machine::raft_is_leader(){
     return _raft->raft_is_leader();
+}
+
+// --- Default blob recovery helpers (demos / non-osd only) ---
+
+void state_machine::pin_recovery_view(uint64_t raft_apply_index,
+                                      uint64_t raft_term,
+                                      object_rw_complete cb_fn, void* arg) {
+  (void)raft_term;
+  _recovery_snap_index = raft_apply_index;
+  _recovery_names = list_live_objects();
+  if (_recovery_names.empty()) {
+    _recovery_pinned = true;
+    if (cb_fn) {
+      cb_fn(arg, 0);
+    }
+    return;
+  }
+
+  struct pctx {
+    state_machine* stm;
+    object_rw_complete cb;
+    void* arg;
+    std::map<std::string, xattr_val_type> xattr;
+    size_t idx;
+  };
+  struct pin_holder {
+    std::function<void(pctx*)> go;
+  };
+  auto* c = new pctx{this, std::move(cb_fn), arg, {}, 0};
+  c->xattr["type"] = blob_type::object;
+  c->xattr["pg"] = get_pg_name();
+  auto* h = new pin_holder;
+  h->go = [h](pctx* c) {
+    if (c->idx >= c->stm->_recovery_names.size()) {
+      c->stm->_recovery_pinned = true;
+      if (c->cb) {
+        c->cb(c->arg, 0);
+      }
+      delete h;
+      delete c;
+      return;
+    }
+    c->stm->get_object_store()->recovery_create(
+        c->xattr, c->stm->_recovery_names[c->idx],
+        [](void* a, int err) {
+          auto* pack = static_cast<std::pair<pin_holder*, pctx*>*>(a);
+          pin_holder* hh = pack->first;
+          pctx* cc = pack->second;
+          delete pack;
+          if (err != 0) {
+            if (cc->cb) {
+              cc->cb(cc->arg, err);
+            }
+            delete hh;
+            delete cc;
+            return;
+          }
+          ++cc->idx;
+          hh->go(cc);
+        },
+        new std::pair<pin_holder*, pctx*>(h, c));
+  };
+  h->go(c);
+}
+
+void state_machine::unpin_recovery_view(object_rw_complete cb_fn, void* arg) {
+  if (!_recovery_pinned || _recovery_names.empty()) {
+    _recovery_pinned = false;
+    _recovery_names.clear();
+    _recovery_snap_index = 0;
+    if (cb_fn) {
+      cb_fn(arg, 0);
+    }
+    return;
+  }
+
+  struct uctx {
+    state_machine* stm;
+    object_rw_complete cb;
+    void* arg;
+    size_t idx;
+  };
+  struct uholder {
+    std::function<void(uctx*)> go;
+  };
+  auto* c = new uctx{this, std::move(cb_fn), arg, 0};
+  auto* h = new uholder;
+  h->go = [h](uctx* c) {
+    if (c->idx >= c->stm->_recovery_names.size()) {
+      c->stm->_recovery_names.clear();
+      c->stm->_recovery_pinned = false;
+      c->stm->_recovery_snap_index = 0;
+      if (c->cb) {
+        c->cb(c->arg, 0);
+      }
+      delete h;
+      delete c;
+      return;
+    }
+    c->stm->get_object_store()->recovery_delete(
+        c->stm->_recovery_names[c->idx],
+        [](void* a, int err) {
+          auto* pack = static_cast<std::pair<uholder*, uctx*>*>(a);
+          uholder* hh = pack->first;
+          uctx* cc = pack->second;
+          delete pack;
+          if (err != 0) {
+            if (cc->cb) {
+              cc->cb(cc->arg, err);
+            }
+            delete hh;
+            delete cc;
+            return;
+          }
+          ++cc->idx;
+          hh->go(cc);
+        },
+        new std::pair<uholder*, uctx*>(h, c));
+  };
+  h->go(c);
+}
+
+void state_machine::read_recovery_object(const std::string& object_name,
+                                         char* buf, uint64_t len,
+                                         object_rw_complete cb_fn, void* arg) {
+  if (_recovery_pinned) {
+    _store.recovery_read(object_name, buf, std::move(cb_fn), arg);
+    return;
+  }
+  std::map<std::string, xattr_val_type> xattr;
+  xattr["type"] = blob_type::object;
+  xattr["pg"] = get_pg_name();
+  _store.read(xattr, object_name, 0, buf, len, std::move(cb_fn), arg);
 }
