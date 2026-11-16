@@ -450,9 +450,18 @@ int raft_server_t::raft_process_appendentries_reply(
         return err::RAFT_ERR_NOT_LEADER;
     }
 
-    if(r->success() == err::RAFT_ERR_NOT_FOUND_PG
-            || r->success() == err::E_ENOSPC
+    if(r->success() == err::RAFT_ERR_NEEDS_SNAPSHOT
             || r->success() == err::RAFT_ERR_SHUTDOWN){
+        SPDK_NOTICELOG(
+            "handle append entry of pg %lu.%lu at node %d: %s — recover by snapshot\n",
+            _pool_id, _pg_id, r->node_id(), err::string_status(r->success()));
+        if (!raft_get_snapshot_in_progress()) {
+            _recovery_by_snapshot(node);
+        }
+        return r->success();
+    }
+    if(r->success() == err::RAFT_ERR_NOT_FOUND_PG
+            || r->success() == err::E_ENOSPC){
         SPDK_ERRLOG("handle append entry request of pg %lu.%lu at node %d failed: %s\n",
                 _pool_id, _pg_id, r->node_id(), err::string_status(r->success()));
         process_response(r->success(), node->raft_get_end_idx());
@@ -592,7 +601,7 @@ void raft_server_t::follow_raft_disk_append_finish(raft_index_t start_idx, raft_
         follow_raft_write_entry_finish(start_idx, end_idx, raft_state_to_errno(raft_get_op_state()));
         return;
     }
-    if (raft_get_commit_idx() < commit_idx){
+    if (result == 0 && raft_get_commit_idx() < commit_idx){
         raft_set_commit_idx(commit_idx);
         SPDK_DEBUGLOG(pg_group, "in pg %lu.%lu, _node_id %d _commit_idx %lu\n", raft_get_pool_id(),
                 raft_get_pg_id(), _node_id, _commit_idx);
@@ -722,10 +731,16 @@ int raft_server_t::raft_recv_appendentries(
                   raft_get_commit_idx(), ae->leader_commit(), ae->prev_log_idx());
             if (ae->prev_log_idx() <= raft_get_commit_idx())
             {
-                /* Should never happen; something is seriously wrong! */
-                SPDK_ERRLOG("pg %lu.%lu AE prev conflicts with committed entry\n", _pool_id, _pg_id);
-                e = err::RAFT_ERR_SHUTDOWN;
+                // Divergent committed history (split-brain / seed-self merge).
+                // Cannot truncate committed entries — ask leader for a snapshot.
+                SPDK_ERRLOG(
+                    "pg %lu.%lu AE prev conflicts with committed entry "
+                    "(local_term=%ld leader_term=%ld idx=%ld commit=%ld); need snapshot\n",
+                    _pool_id, _pg_id, term, ae->prev_log_term(),
+                    ae->prev_log_idx(), raft_get_commit_idx());
+                e = err::RAFT_ERR_NEEDS_SNAPSHOT;
                 r->set_success(e);
+                r->set_current_idx(raft_get_commit_idx());
                 return hand_error(e);
             }
             /* Delete all the following log entries because they don't match */
@@ -818,12 +833,14 @@ int raft_server_t::raft_recv_appendentries(
         {
             if (ety_index <= raft_get_commit_idx())
             {
-                /* Should never happen; something is seriously wrong! */
-                SPDK_WARNLOG("in pg %lu.%lu, AE entry conflicts with committed entry ci:%ld comi:%ld lcomi:%ld pli:%ld \n",
-                      _pool_id, _pg_id, raft_get_current_idx(), raft_get_commit_idx(),
-                      ae->leader_commit(), ae->prev_log_idx());
-                e = err::RAFT_ERR_SHUTDOWN;
+                SPDK_WARNLOG(
+                    "in pg %lu.%lu, AE entry conflicts with committed entry "
+                    "ci:%ld comi:%ld lcomi:%ld pli:%ld; need snapshot\n",
+                    _pool_id, _pg_id, raft_get_current_idx(), raft_get_commit_idx(),
+                    ae->leader_commit(), ae->prev_log_idx());
+                e = err::RAFT_ERR_NEEDS_SNAPSHOT;
                 r->set_success(e);
+                r->set_current_idx(raft_get_commit_idx());
                 return hand_error(e);
             }
             raft_log_truncate(
@@ -1056,16 +1073,15 @@ void raft_server_t::raft_node_process_commit(int result, raft_index_t index, raf
     bool leader_match = false;
 
     auto commit_func = [this, index, node_id](std::shared_ptr<raft_node> node, int result, uint64_t &vote_num, bool &leader_match){
-        if(raft_get_nodeid() == node_id && node->raft_node_get_id() == node_id){
-            //node_id是leader本身
+        // Only a durable success updates match_idx. A failed disk append used
+        // to set match and count as a vote, so commit advanced on ENOSPC.
+        if(result == 0 && raft_get_nodeid() == node_id &&
+           node->raft_node_get_id() == node_id){
             node->raft_node_set_match_idx(index);
         }
 
         if(raft_get_commit_idx() < index){
-            //还没有commit
-
-            if(index <= node->raft_node_get_match_idx()
-              || (result != 0 && node->raft_node_get_id() == node_id)){
+            if(index <= node->raft_node_get_match_idx()){
                 vote_num++;
             }
         }
@@ -1110,7 +1126,14 @@ void raft_server_t::raft_disk_append_finish(raft_index_t start_idx, raft_index_t
         raft_write_entry_finish(start_idx, end_idx, raft_state_to_errno(raft_get_op_state()));
         return;
     }
-    raft_node_process_commit(result, end_idx, _node_id);
+    if (result != 0) {
+        SPDK_ERRLOG("pg %lu.%lu leader disk_append [%ld-%ld] failed: %d, not committing\n",
+                    raft_get_pool_id(), raft_get_pg_id(), start_idx, end_idx,
+                    result);
+        raft_write_entry_finish(start_idx, end_idx, result);
+        return;
+    }
+    raft_node_process_commit(0, end_idx, _node_id);
 }
 
 struct disk_append_complete : public utils::context{
@@ -2011,37 +2034,82 @@ int raft_server_t::raft_recv_installsnapshot(raft_node_id_t node_id,
         response->set_lease(election_timer + _election_timeout);
         if(rerrno != 0){
             response->set_success(rerrno);
-        }else
-            response->set_success(1);
-        if(done){
-            raft_get_log()->set_disk_log_index(
-              index,
-              [this, index, complete](void *arg, int rberrno){
-                set_index_after_snapshot(index);
-                SPDK_NOTICELOG("pg: %lu.%lu, set  _last_applied_idx, _current_idx, _commit_idx to %ld rberrno %d\n",
-                        _pool_id, _pg_id, index, rberrno);
-                complete->complete(rberrno);
-              },
-              nullptr);
+            complete->complete(rerrno);
             return;
         }
-        complete->complete(rerrno);
+        response->set_success(1);
+        if(!done){
+            complete->complete(0);
+            return;
+        }
+        // Last chunk: seal + activate serving epoch, then advance raft indices.
+        get_machine()->finish_install_snapshot(
+            [this, index, term, complete](void*, int ferr) {
+                SPDK_NOTICELOG(
+                    "pg: %lu.%lu, finish_install_snapshot err=%d index=%ld "
+                    "term=%ld\n",
+                    _pool_id, _pg_id, ferr, index, term);
+                if (ferr != 0) {
+                    complete->complete(ferr);
+                    return;
+                }
+                raft_get_log()->set_disk_log_index(
+                    index, term,
+                    [this, index, complete](void*, int rberrno) {
+                        if (rberrno != 0) {
+                            SPDK_ERRLOG(
+                                "pg: %lu.%lu, persist snapshot log base "
+                                "index=%ld failed %d\n",
+                                _pool_id, _pg_id, index, rberrno);
+                            complete->complete(rberrno);
+                            return;
+                        }
+                        set_index_after_snapshot(index);
+                        save_last_apply_index_durable(
+                            index,
+                            [this, index, complete](void*, int kerr) {
+                                SPDK_NOTICELOG(
+                                    "pg: %lu.%lu, set _last_applied_idx, "
+                                    "_current_idx, _commit_idx to %ld "
+                                    "kv_err %d\n",
+                                    _pool_id, _pg_id, index, kerr);
+                                complete->complete(kerr);
+                            },
+                            nullptr);
+                    },
+                    nullptr);
+            },
+            nullptr);
     };
-    auto object_size = request->objects_size();
-    if(object_size == 0){
-        write_fn(0);
-        return 0;
-    }
-    write_ctx *wc = new write_ctx(object_size, this, std::move(write_fn),
-                                  static_cast<uint64_t>(request->last_idx()));
 
-    for(int i = 0; i < object_size; i++){
-        const object_data_info& object = request->objects(i);
-        wc->add_object(object.obj_name(), object.data(), object.data().size());
-    }
+    auto start_writes = [this, request, write_fn]() {
+        const auto object_size = request->objects_size();
+        if (object_size == 0) {
+            write_fn(0);
+            return;
+        }
+        write_ctx* wc = new write_ctx(object_size, this, write_fn,
+                                      static_cast<uint64_t>(request->last_idx()));
+        for (int i = 0; i < object_size; i++) {
+            const object_data_info& object = request->objects(i);
+            wc->add_object(object.obj_name(), object.data(), object.data().size());
+        }
+        write_snapshot(wc);
+    };
 
-    write_snapshot(wc);
-
+    get_machine()->begin_install_snapshot(
+        static_cast<uint64_t>(request->last_idx()),
+        static_cast<uint64_t>(request->last_term()),
+        [this, write_fn, start_writes](void*, int berr) {
+            if (berr != 0) {
+                SPDK_ERRLOG("pg: %lu.%lu, begin_install_snapshot failed: %d\n",
+                            _pool_id, _pg_id, berr);
+                write_fn(berr);
+                return;
+            }
+            start_writes();
+        },
+        nullptr);
     return 0;
 }
 
@@ -2259,32 +2327,45 @@ int raft_server_t::raft_recv_snapshot_check(raft_node_id_t node_id,
 
     SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, _commit_idx: %ld _last_applied_idx: %ld\n",
             request->pool_id(), request->pg_id(), raft_get_commit_idx(), _machine->get_last_applied_idx());
-    if(raft_get_commit_idx() == _machine->get_last_applied_idx()){
+    if(raft_get_commit_idx() != _machine->get_last_applied_idx()){
+        // Applied can sit above a recovered commit_idx after snapshot.
+        // Report exist=false for every name so the leader sends all objects
+        // (an empty object list is treated as "nothing to send").
+        SPDK_NOTICELOG(
+            "pg: %lu.%lu, snapshot_check commit_idx=%ld last_applied_idx=%ld "
+            "diverge; request full snapshot names=%d\n",
+            _pool_id, _pg_id, raft_get_commit_idx(),
+            _machine->get_last_applied_idx(), request->object_names_size());
         response->set_success(1);
-        SPDK_NOTICELOG(
-          "pg: %lu.%lu, snapshot_check ready commit_idx=%ld last_applied_idx=%ld object_num=%d\n",
-          _pool_id, _pg_id, raft_get_commit_idx(), _machine->get_last_applied_idx(),
-          request->object_names_size());
-        auto obr = std::make_shared<objects_read>(request, response, complete, this);
-        obr->first_read(
-          [this, obr, complete, response](int rerrno){
-            SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, read end rerrno: %d\n", _pool_id, _pg_id, rerrno);
-            auto election_timer = utils::get_time();
-            raft_set_election_timer(election_timer);
-            response->set_lease(election_timer + _election_timeout);
-
-            if(rerrno != 0){
-                response->set_success(rerrno);
-            }
-            complete->complete(rerrno);
-          });
-    }else{
-        SPDK_NOTICELOG(
-          "pg: %lu.%lu, snapshot_check wait apply commit_idx=%ld last_applied_idx=%ld\n",
-          _pool_id, _pg_id, raft_get_commit_idx(), _machine->get_last_applied_idx());
-        response->set_success(err::RAFT_ERR_SNAPSHOT_WAIT_APPLY);
-        complete->complete(err::RAFT_ERR_SNAPSHOT_WAIT_APPLY);
+        for (int i = 0; i < request->object_names_size(); ++i) {
+            auto* obj = response->add_objects();
+            obj->set_obj_name(request->object_names(i));
+            obj->set_exist(false);
+        }
+        auto election_timer = utils::get_time();
+        raft_set_election_timer(election_timer);
+        response->set_lease(election_timer + _election_timeout);
+        complete->complete(0);
+        return 0;
     }
+    response->set_success(1);
+    SPDK_NOTICELOG(
+      "pg: %lu.%lu, snapshot_check ready commit_idx=%ld last_applied_idx=%ld object_num=%d\n",
+      _pool_id, _pg_id, raft_get_commit_idx(), _machine->get_last_applied_idx(),
+      request->object_names_size());
+    auto obr = std::make_shared<objects_read>(request, response, complete, this);
+    obr->first_read(
+      [this, obr, complete, response](int rerrno){
+        SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, read end rerrno: %d\n", _pool_id, _pg_id, rerrno);
+        auto election_timer = utils::get_time();
+        raft_set_election_timer(election_timer);
+        response->set_lease(election_timer + _election_timeout);
+
+        if(rerrno != 0){
+            response->set_success(rerrno);
+        }
+        complete->complete(rerrno);
+      });
     return 0;
 }
 
@@ -2644,6 +2725,12 @@ int raft_server_t::_recovery_by_snapshot(std::shared_ptr<raft_node> node){
 }
 
 void raft_server_t::do_recovery(std::shared_ptr<raft_node> node){
+    if (raft_get_snapshot_in_progress()) {
+        SPDK_INFOLOG(pg_group,
+                     "pg: %lu.%lu, skip AE recovery for node %d; snapshot in progress\n",
+                     _pool_id, _pg_id, node->raft_node_get_id());
+        return;
+    }
     raft_index_t next_idx = node->raft_node_get_next_idx();
     SPDK_NOTICELOG("pg: %lu.%lu, do_recovery for node %d, next_idx: %ld log base_index: %ld first_cache_idx: %ld current_idx: %ld\n",
                    _pool_id, _pg_id, node->raft_node_get_id(), next_idx,
@@ -2833,6 +2920,35 @@ void raft_server_t::init(
     _nodes_stat.update_with_node_configuration(_configuration_manager.get_last_node_configuration());
     start_raft_timer(raft_heartbeat_period_time_msec, raft_lease_time_msec, raft_election_timeout_msec);
     raft_set_op_state(raft_op_state::RAFT_ACTIVE);
+}
+
+void raft_server_t::install_membership(
+    const std::vector<utils::osd_info_t>& node_list, uint32_t shard_id) {
+    if (node_list.empty()) {
+        return;
+    }
+    node_configuration configuration;
+    for (const auto& node : node_list) {
+        if (configuration.find_node(node.node_id)) {
+            continue;
+        }
+        int port = 0;
+        const auto port_it = node.sharded_ports.find(shard_id);
+        if (port_it != node.sharded_ports.end()) {
+            port = static_cast<int>(port_it->second.port);
+        }
+        std::string addr = node.address;
+        configuration.add_node(node.node_id, addr, port);
+    }
+    if (configuration.get_nodes_id().empty()) {
+        return;
+    }
+    SPDK_NOTICELOG(
+        "install membership for pg %lu.%lu nodes=%zu (repair after restart)\n",
+        _pool_id, _pg_id, configuration.get_nodes_id().size());
+    _configuration_manager.add_node_configuration(std::move(configuration),
+                                                  /*persist=*/true);
+    update_nodes_stat(_configuration_manager.get_last_node_configuration());
 }
 
 int raft_server_t::raft_set_current_term(const raft_term_t term)
@@ -3032,7 +3148,10 @@ void raft_server_t::load(raft_node_id_t current_node, raft_complete cb_fn, void 
             node_configuration empty_cfg;
             std::string addr;
             empty_cfg.add_node(current_node, addr, 0);
-            _configuration_manager.add_node_configuration(std::move(empty_cfg));
+            // Memory only — persisting seed-self overwrites a real 3-replica
+            // cfg if write_pointer was reset, and keeps followers from AE.
+            _configuration_manager.add_node_configuration(std::move(empty_cfg),
+                                                          /*persist=*/false);
         }
         auto& cfg = _configuration_manager.get_last_node_configuration();
         update_nodes_stat(cfg);
@@ -3048,6 +3167,16 @@ void raft_server_t::load(raft_node_id_t current_node, raft_complete cb_fn, void 
             last_applied_idx = _log->log_get_base_index();
             if(last_applied_idx > 0)
                 last_applied_idx -= 1;
+        }
+        // Snapshot can persist applied ahead of the recovered log tail.
+        // Do not bump current_idx (no entry at that index → election
+        // "missing term"). snapshot_check treats applied != commit as
+        // "send all objects".
+        if (last_applied_idx > raft_get_current_idx()) {
+            SPDK_NOTICELOG(
+                "pg %lu.%lu load: applied %ld ahead of log current %ld "
+                "(snapshot); keep current/commit, will request full snapshot\n",
+                _pool_id, _pg_id, last_applied_idx, raft_get_current_idx());
         }
         set_last_applied_idx_after_load(last_applied_idx);
 
