@@ -645,6 +645,75 @@ void test_segment_allocator_no_double_alloc() {
   EXPECT_EQ(alloc.reserve(4096, &pfail, nullptr), -ENOSPC);
 }
 
+void test_segment_allocator_free_sealed() {
+  segment_allocator alloc(4ull * 1024 * 1024, 1024 * 1024, 4096);
+  uint64_t p = 0;
+  EXPECT_EQ(alloc.reserve(4096, &p, nullptr), 0);
+  // fill and roll to seal seg0
+  const uint64_t almost = 1024ull * 1024 - 4096;
+  EXPECT_EQ(alloc.reserve(almost, &p, nullptr), 0);
+  EXPECT_EQ(alloc.reserve(4096, &p, nullptr), 0); // opens seg1
+  EXPECT_EQ(alloc.state(0), segment_state::sealed);
+  EXPECT_EQ(alloc.free_sealed(0), 0);
+  EXPECT_EQ(alloc.state(0), segment_state::free);
+  // 4 segs: 0 free, 1 open, 2 free, 3 free => free_count=3
+  EXPECT_EQ(alloc.free_count(), 3u);
+  EXPECT_EQ(alloc.free_sealed(1), -EBUSY); // open
+}
+
+void test_osd_store_gc_once() {
+  const uint64_t seg = 64 * 1024;
+  mem_device_backend dev(4 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, seg);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  pg_store* pg = osd.get_latest_pg(1, 0);
+  EXPECT_TRUE(pg != nullptr);
+
+  // Fill first segment with object "old", then write "new" into next segment.
+  std::vector<char> buf(4096, 'X');
+  int idx = 0;
+  while (osd.allocator()->sealed_count() < 1 && idx < 40) {
+    r = {};
+    std::string name = "old" + std::to_string(idx);
+    pg->write(name, 0, buf.data(), buf.size(), static_cast<uint64_t>(idx + 1),
+              0, on_done, &r);
+    EXPECT_EQ(r.err, 0);
+    ++idx;
+  }
+  EXPECT_TRUE(osd.allocator()->sealed_count() >= 1u);
+
+  r = {};
+  pg->write("keep", 0, buf.data(), buf.size(), 100, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  // Remove all old* so sealed early segments lose live refs.
+  for (int i = 0; i < idx; ++i) {
+    r = {};
+    pg->remove("old" + std::to_string(i), 200 + static_cast<uint64_t>(i), 0,
+               on_done, &r);
+    EXPECT_EQ(r.err, 0);
+  }
+
+  const uint32_t free_before = osd.allocator()->free_count();
+  const uint32_t sealed_before = osd.allocator()->sealed_count();
+  const uint32_t freed = osd.gc_once(true);
+  EXPECT_TRUE(freed >= 1u);
+  EXPECT_TRUE(osd.allocator()->free_count() > free_before);
+  EXPECT_TRUE(osd.allocator()->sealed_count() < sealed_before);
+
+  // keep still readable
+  std::vector<char> out(4096, 0);
+  r = {};
+  pg->read("keep", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'X');
+}
+
 void test_superblock_manifest_codec() {
   superblock sb;
   sb.generation = 3;
@@ -872,6 +941,8 @@ int main() {
   test_pg_store_checkpoint_then_discard_recover();
   test_segment_allocator_no_double_alloc();
   test_pg_store_multi_segment_write_recover();
+  test_segment_allocator_free_sealed();
+  test_osd_store_gc_once();
   test_superblock_manifest_codec();
   test_osd_store_multi_pg_shared_allocator();
 
