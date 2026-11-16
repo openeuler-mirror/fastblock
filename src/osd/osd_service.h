@@ -145,6 +145,14 @@ public:
                          osd::write_reply* response,
                          google::protobuf::Closure* done) override;
 
+    void process_image_snap(google::protobuf::RpcController* controller,
+                            const osd::image_snap_request* request,
+                            osd::image_snap_reply* response,
+                            google::protobuf::Closure* done) override {
+        process<osd::image_snap_request, osd::image_snap_reply>(request,
+                                                                response, done);
+    }
+
     template <typename request_type, typename reply_type>
     void process(const request_type *request, reply_type *response, google::protobuf::Closure *done);
 
@@ -180,6 +188,12 @@ public:
         std::shared_ptr<osd_stm> osd_stm_p,
         const osd::change_nodes_request* request,
         osd::change_nodes_response* response,
+        google::protobuf::Closure* done);
+
+    void process(
+        std::shared_ptr<osd_stm> osd_stm_p,
+        const osd::image_snap_request* request,
+        osd::image_snap_reply* response,
         google::protobuf::Closure* done);
 
     void process_ring_write(
