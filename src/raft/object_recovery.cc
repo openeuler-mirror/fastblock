@@ -37,7 +37,7 @@ void object_recovery::recovery_read_iter_first(recovery_op_complete cb_fn,
     return;
   }
   auto next_name = iter_next_name();
-  SPDK_DEBUGLOG(object_store, "object name:%s recovery read.\n",
+  SPDK_DEBUGLOG(pg_group, "object name:%s recovery read.\n",
                 next_name.c_str());
   // 4MiB object unit (matches raft install path).
   constexpr uint64_t kUnit = 4ull * 1024 * 1024;
@@ -51,7 +51,7 @@ void object_recovery::recovery_read_iter_next(recovery_op_complete cb_fn,
     return;
   }
   auto next_name = iter_next_name();
-  SPDK_DEBUGLOG(object_store, "object name:%s recovery read.\n",
+  SPDK_DEBUGLOG(pg_group, "object name:%s recovery read.\n",
                 next_name.c_str());
   constexpr uint64_t kUnit = 4ull * 1024 * 1024;
   _stm->read_recovery_object(next_name, buf, kUnit, std::move(cb_fn), arg);
