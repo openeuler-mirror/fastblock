@@ -203,6 +203,48 @@ void segment_allocator::note_written(uint64_t phys_offset, uint64_t len) {
   }
 }
 
+void segment_allocator::export_states(std::vector<uint8_t>* out) const {
+  if (out == nullptr) {
+    return;
+  }
+  out->assign(states_.size(), 0);
+  for (uint32_t i = 0; i < states_.size(); ++i) {
+    (*out)[i] = static_cast<uint8_t>(states_[i]);
+  }
+}
+
+bool segment_allocator::import_states(const uint8_t* data, uint32_t n,
+                                      uint32_t open_id, uint64_t cursor) {
+  if (data == nullptr || n != states_.size()) {
+    return false;
+  }
+  for (uint32_t i = 0; i < n; ++i) {
+    const auto s = static_cast<segment_state>(data[i]);
+    if (s > segment_state::bad) {
+      return false;
+    }
+    states_[i] = s;
+  }
+  if (open_id == kInvalidSeg || open_id >= n) {
+    open_id_ = kInvalidSeg;
+    open_cursor_ = 0;
+    return true;
+  }
+  open_id_ = open_id;
+  open_cursor_ = cursor > segment_size_ ? segment_size_ : cursor;
+  states_[open_id_] = segment_state::open;
+  return true;
+}
+
+uint32_t segment_allocator::segment_id_of(uint64_t abs_off) const {
+  if (states_.empty() || segment_size_ == 0 || abs_off < region_base_) {
+    return kInvalidSeg;
+  }
+  const uint64_t rel = abs_off - region_base_;
+  const uint32_t id = static_cast<uint32_t>(rel / segment_size_);
+  return id < states_.size() ? id : kInvalidSeg;
+}
+
 void segment_allocator::set_open_cursor_abs(uint64_t abs_end) {
   if (abs_end <= region_base_ || states_.empty() || segment_size_ == 0) {
     return;

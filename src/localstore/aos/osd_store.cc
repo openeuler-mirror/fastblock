@@ -9,7 +9,11 @@
  */
 
 #include "osd_store.h"
+#include "checkpoint.h"
 #include "record.h"
+
+#include <spdk/env.h>
+#include <spdk/log.h>
 
 #include <algorithm>
 #include <cerrno>
@@ -37,6 +41,8 @@ struct osd_store::meta_req {
   uint64_t dma_cap{0};
   superblock sb{};
   manifest mf{};
+  uint64_t zero_off{0};
+  uint64_t zero_end{0};
 };
 
 struct osd_store::recover_req {
@@ -45,7 +51,9 @@ struct osd_store::recover_req {
   void* arg{nullptr};
   int phase{0}; // 0=read sba, 1=sbb, 2=manifest, 3=data scan
   uint64_t pos{0};
-  uint64_t last_good{0};
+  uint64_t last_good{0};       // decode cursor: device offset of pending[0]
+  uint64_t last_valid_end{0};  // end of last successfully applied record
+  uint64_t scan_end{0};        // exclusive upper bound for the data scan
   void* buf{nullptr};
   uint64_t buf_cap{0};
   std::vector<uint8_t> pending;
@@ -56,6 +64,19 @@ struct osd_store::recover_req {
   superblock sb_best{};
   manifest mf{};
   bool mf_ok{false};
+  uint32_t applied{0};
+  uint32_t applied_data{0};
+  uint32_t applied_log{0};
+  uint32_t applied_kv{0};
+  uint32_t skipped{0};
+  int first_decode_st{-1};
+  uint32_t first_magic{0};
+  uint32_t zero_streak{0};
+  char kv_keys[160]{};
+  uint32_t kv_keys_n{0};
+  bool have_seg_table{false};
+  std::vector<uint64_t> ckpt_queue;
+  size_t ckpt_idx{0};
 };
 
 osd_store::osd_store(device_backend* backend, buffer_mode mode,
@@ -144,6 +165,62 @@ pg_store* osd_store::get_active_pg(uint64_t pool_id, uint64_t pg_id) {
     return nullptr;
   }
   return get_pg(pool_id, pg_id, e);
+}
+
+pg_store* osd_store::find_pg(uint64_t pool_id, uint64_t pg_id) {
+  pg_store* best_data = nullptr;
+  pg_store* best_any = nullptr;
+  uint64_t best_data_epoch = 0;
+  uint64_t best_any_epoch = 0;
+  for (const auto& kv : pgs_) {
+    if (std::get<0>(kv.first) != pool_id || std::get<1>(kv.first) != pg_id) {
+      continue;
+    }
+    const uint64_t epoch = std::get<2>(kv.first);
+    if (epoch >= best_any_epoch) {
+      best_any_epoch = epoch;
+      best_any = kv.second.get();
+    }
+    if (kv.second && kv.second->object_count() > 0 && epoch >= best_data_epoch) {
+      best_data_epoch = epoch;
+      best_data = kv.second.get();
+    }
+  }
+  return best_data != nullptr ? best_data : best_any;
+}
+
+void osd_store::retarget_serving_to_recovered() {
+  std::map<std::pair<uint64_t, uint64_t>, uint64_t> seen;
+  for (const auto& kv : pgs_) {
+    seen[{std::get<0>(kv.first), std::get<1>(kv.first)}] = 1;
+  }
+  for (const auto& kv : seen) {
+    pg_store* pg = find_pg(kv.first.first, kv.first.second);
+    if (pg != nullptr) {
+      set_serving_epoch(kv.first.first, kv.first.second, pg->id().store_epoch);
+      SPDK_NOTICELOG(
+          "aos recover retarget pg %lu.%lu serving=%lu objects=%lu latest=%lu\n",
+          kv.first.first, kv.first.second, pg->id().store_epoch,
+          static_cast<unsigned long>(pg->object_count()),
+          latest_epoch(kv.first.first, kv.first.second));
+    }
+  }
+}
+
+pg_store* osd_store::bind_existing_pg(uint64_t pool_id, uint64_t pg_id) {
+  if (auto* existing = find_pg(pool_id, pg_id)) {
+    set_serving_epoch(pool_id, pg_id, existing->id().store_epoch);
+    return existing;
+  }
+  const uint64_t le = latest_epoch(pool_id, pg_id);
+  if (le == 0) {
+    return nullptr;
+  }
+  pg_store* pg = ensure_pg(pool_id, pg_id, le);
+  if (pg != nullptr) {
+    set_serving_epoch(pool_id, pg_id, le);
+  }
+  return pg;
 }
 
 void osd_store::drop_pg_epoch(uint64_t pool_id, uint64_t pg_id,
@@ -248,14 +325,53 @@ log_store* osd_store::get_active_log(uint64_t pool_id, uint64_t pg_id) {
 manifest osd_store::build_manifest() const {
   manifest m;
   m.generation = manifest_generation_ + 1;
-  m.data_high_water =
-      backend_ ? backend_->write_pointer() : data_offset_;
+  uint64_t hw = backend_ ? backend_->write_pointer() : data_offset_;
+  if (alloc_ != nullptr) {
+    const uint32_t open = alloc_->open_segment();
+    if (open != segment_allocator::kInvalidSeg) {
+      const uint64_t cur =
+          alloc_->segment_base(open) + alloc_->open_cursor();
+      if (cur > hw) {
+        hw = cur;
+      }
+    }
+  }
+  m.data_high_water = hw;
   if (m.data_high_water < data_offset_) {
     m.data_high_water = data_offset_;
   }
   if (alloc_) {
     m.open_segment_id = alloc_->open_segment();
     m.open_cursor = alloc_->open_cursor();
+    alloc_->export_states(&m.segment_states);
+  }
+  m.recover_scan_from = recover_scan_from_;
+  if (kv_ != nullptr) {
+    m.kv_checkpoint_phys = kv_->last_checkpoint_phys();
+  }
+  for (const auto& kv : pgs_) {
+    const uint64_t phys = kv.second->last_checkpoint_phys();
+    if (phys == 0) {
+      continue;
+    }
+    manifest_ckpt c;
+    c.pool_id = std::get<0>(kv.first);
+    c.pg_id = std::get<1>(kv.first);
+    c.store_epoch = std::get<2>(kv.first);
+    c.phys = phys;
+    m.object_checkpoints.push_back(c);
+  }
+  for (const auto& kv : logs_) {
+    const uint64_t phys = kv.second->last_checkpoint_phys();
+    if (phys == 0) {
+      continue;
+    }
+    manifest_ckpt c;
+    c.pool_id = std::get<0>(kv.first);
+    c.pg_id = std::get<1>(kv.first);
+    c.store_epoch = std::get<2>(kv.first);
+    c.phys = phys;
+    m.log_checkpoints.push_back(c);
   }
   for (const auto& kv : latest_epoch_) {
     manifest_pg_entry e;
@@ -279,8 +395,11 @@ void osd_store::apply_manifest_epochs(const manifest& m) {
 namespace {
 
 void* meta_alloc_buf(buffer_mode mode, size_t size, size_t align) {
+  if (align < 4096) {
+    align = 4096;
+  }
   if (mode == buffer_mode::spdk_dma) {
-    // SPDK path: tests use heap mode for meta; production can switch.
+    return spdk_dma_zmalloc(size, align, nullptr);
   }
   void* p = nullptr;
   if (posix_memalign(&p, align, size) != 0) {
@@ -290,7 +409,16 @@ void* meta_alloc_buf(buffer_mode mode, size_t size, size_t align) {
   return p;
 }
 
-void meta_free_buf(void* p) { free(p); }
+void meta_free_buf(void* p, buffer_mode mode) {
+  if (p == nullptr) {
+    return;
+  }
+  if (mode == buffer_mode::spdk_dma) {
+    spdk_dma_free(p);
+  } else {
+    free(p);
+  }
+}
 
 } // namespace
 
@@ -326,13 +454,20 @@ void osd_store::format(op_complete cb, void* arg) {
   manifest mf;
   mf.generation = 1;
   mf.data_high_water = data_offset_;
+  recover_scan_from_ = data_offset_;
+  mf.recover_scan_from = data_offset_;
   mf.open_segment_id = segment_allocator::kInvalidSeg;
   mf.open_cursor = 0;
+  if (alloc_) {
+    alloc_->export_states(&mf.segment_states);
+  }
   req->mf = mf;
   req->mf_bytes = encode_manifest(mf);
 
   const uint32_t bs = backend_->block_size();
-  const uint64_t need = std::max(kSuperblockBytes, kManifestSlotBytes);
+  constexpr uint64_t kZeroChunk = 256 * 1024;
+  const uint64_t need =
+      std::max({kSuperblockBytes, kManifestSlotBytes, kZeroChunk});
   req->dma = meta_alloc_buf(mode_, static_cast<size_t>(need), bs);
   req->dma_cap = need;
   if (req->dma == nullptr) {
@@ -358,7 +493,7 @@ void osd_store::format(op_complete cb, void* arg) {
 void osd_store::format_continue(meta_req* req) {
   osd_store* self = req->self;
   auto fail = [&](int err) {
-    meta_free_buf(req->dma);
+    meta_free_buf(req->dma, req->self ? req->self->mode_ : buffer_mode::heap);
     auto cb = std::move(req->cb);
     void* a = req->arg;
     delete req;
@@ -367,7 +502,7 @@ void osd_store::format_continue(meta_req* req) {
     }
   };
 
-  // phase 0: sb A, 1: sb B, 2: manifest slot 0, 3: flush
+  // phase 0: sb A, 1: sb B, 2: manifest, 3: zero data region, 4: flush
   if (req->phase == 0 || req->phase == 1) {
     const uint64_t off =
         (req->phase == 0) ? kSuperblockAOffset : kSuperblockBOffset;
@@ -384,7 +519,7 @@ void osd_store::format_continue(meta_req* req) {
             // simpler:
           }
           if (err != 0) {
-            meta_free_buf(r->dma);
+            meta_free_buf(r->dma, r->self ? r->self->mode_ : buffer_mode::heap);
             auto cb = std::move(r->cb);
             void* user = r->arg;
             delete r;
@@ -412,7 +547,7 @@ void osd_store::format_continue(meta_req* req) {
         [](void* a, uint64_t /*phys*/, int err) {
           auto* r = static_cast<meta_req*>(a);
           if (err != 0) {
-            meta_free_buf(r->dma);
+            meta_free_buf(r->dma, r->self ? r->self->mode_ : buffer_mode::heap);
             auto cb = std::move(r->cb);
             void* user = r->arg;
             delete r;
@@ -427,11 +562,54 @@ void osd_store::format_continue(meta_req* req) {
         req);
     return;
   }
-  // flush
+  if (req->phase == 3) {
+    if (req->zero_end == 0) {
+      req->zero_off = self->data_offset_;
+      req->zero_end = self->data_offset_ + self->data_length_;
+    }
+    if (req->zero_off >= req->zero_end) {
+      req->phase = 4;
+      self->format_continue(req);
+      return;
+    }
+    const uint32_t bs = self->backend_->block_size();
+    uint64_t chunk = std::min<uint64_t>(req->dma_cap, req->zero_end - req->zero_off);
+    chunk = (chunk / bs) * bs;
+    if (chunk == 0) {
+      req->phase = 4;
+      self->format_continue(req);
+      return;
+    }
+    std::memset(req->dma, 0, static_cast<size_t>(chunk));
+    const uint64_t off = req->zero_off;
+    self->backend_->write_at(
+        off, req->dma, chunk,
+        [chunk](void* a, uint64_t /*phys*/, int err) {
+          auto* r = static_cast<meta_req*>(a);
+          if (err != 0) {
+            meta_free_buf(r->dma, r->self ? r->self->mode_ : buffer_mode::heap);
+            auto cb = std::move(r->cb);
+            void* user = r->arg;
+            delete r;
+            if (cb) {
+              cb(user, err);
+            }
+            return;
+          }
+          r->zero_off += chunk;
+          r->self->format_continue(r);
+        },
+        req);
+    return;
+  }
+  // phase 4: flush, then reset append cursor to start of data region.
   self->backend_->flush(
       [](void* a, int err) {
         auto* r = static_cast<meta_req*>(a);
-        meta_free_buf(r->dma);
+        if (err == 0 && r->self && r->self->backend_) {
+          r->self->backend_->set_write_pointer(r->self->data_offset_);
+        }
+        meta_free_buf(r->dma, r->self ? r->self->mode_ : buffer_mode::heap);
         auto cb = std::move(r->cb);
         void* user = r->arg;
         delete r;
@@ -505,7 +683,7 @@ void osd_store::persist_continue(meta_req* req) {
         [](void* a, uint64_t, int err) {
           auto* r = static_cast<meta_req*>(a);
           if (err != 0) {
-            meta_free_buf(r->dma);
+            meta_free_buf(r->dma, r->self ? r->self->mode_ : buffer_mode::heap);
             auto cb = std::move(r->cb);
             void* user = r->arg;
             delete r;
@@ -532,7 +710,7 @@ void osd_store::persist_continue(meta_req* req) {
         [](void* a, uint64_t, int err) {
           auto* r = static_cast<meta_req*>(a);
           if (err != 0) {
-            meta_free_buf(r->dma);
+            meta_free_buf(r->dma, r->self ? r->self->mode_ : buffer_mode::heap);
             auto cb = std::move(r->cb);
             void* user = r->arg;
             delete r;
@@ -554,7 +732,7 @@ void osd_store::persist_continue(meta_req* req) {
           r->self->sb_generation_ = r->sb.generation;
           r->self->manifest_generation_ = r->mf.generation;
         }
-        meta_free_buf(r->dma);
+        meta_free_buf(r->dma, r->self ? r->self->mode_ : buffer_mode::heap);
         auto cb = std::move(r->cb);
         void* user = r->arg;
         delete r;
@@ -728,6 +906,110 @@ void osd_store::delete_pg(uint64_t pool_id, uint64_t pg_id, op_complete cb,
   persist_manifest(std::move(cb), arg);
 }
 
+struct osd_store::ckpt_pass_req {
+  osd_store* self{nullptr};
+  op_complete cb;
+  void* arg{nullptr};
+  std::vector<pg_store*> pgs;
+  std::vector<log_store*> logs;
+  size_t pi{0};
+  size_t li{0};
+  int stage{0};
+};
+
+void osd_store::checkpoint_pass(op_complete cb, void* arg) {
+  if (cb == nullptr) {
+    return;
+  }
+  auto* req = new (std::nothrow) ckpt_pass_req();
+  if (req == nullptr) {
+    cb(arg, -ENOMEM);
+    return;
+  }
+  req->self = this;
+  req->cb = std::move(cb);
+  req->arg = arg;
+  for (auto& kv : pgs_) {
+    if (kv.second) {
+      req->pgs.push_back(kv.second.get());
+    }
+  }
+  for (auto& kv : logs_) {
+    if (kv.second) {
+      req->logs.push_back(kv.second.get());
+    }
+  }
+  checkpoint_pass_continue(req, 0);
+}
+
+void osd_store::checkpoint_pass_continue(void* arg, int err) {
+  auto* req = static_cast<ckpt_pass_req*>(arg);
+  osd_store* self = req->self;
+  if (err != 0) {
+    auto cb = std::move(req->cb);
+    void* a = req->arg;
+    delete req;
+    if (cb) {
+      cb(a, err);
+    }
+    return;
+  }
+  if (req->stage == 0) {
+    if (req->pi < req->pgs.size()) {
+      pg_store* pg = req->pgs[req->pi++];
+      pg->checkpoint(
+          [](void* a, int e) {
+            auto* r = static_cast<ckpt_pass_req*>(a);
+            r->self->checkpoint_pass_continue(a, e);
+          },
+          req);
+      return;
+    }
+    req->stage = 1;
+  }
+  if (req->stage == 1) {
+    if (req->li < req->logs.size()) {
+      log_store* lg = req->logs[req->li++];
+      lg->checkpoint(
+          [](void* a, int e) {
+            auto* r = static_cast<ckpt_pass_req*>(a);
+            r->self->checkpoint_pass_continue(a, e);
+          },
+          req);
+      return;
+    }
+    req->stage = 2;
+  }
+  if (req->stage == 2) {
+    req->stage = 3;
+    if (self->kv_ != nullptr) {
+      self->kv_->checkpoint(
+          [](void* a, int e) {
+            auto* r = static_cast<ckpt_pass_req*>(a);
+            r->self->checkpoint_pass_continue(a, e);
+          },
+          req);
+      return;
+    }
+  }
+  auto cb = std::move(req->cb);
+  void* a = req->arg;
+  delete req;
+  uint64_t hw = self->backend_ ? self->backend_->write_pointer() : 0;
+  if (self->alloc_ != nullptr) {
+    const uint32_t open = self->alloc_->open_segment();
+    if (open != segment_allocator::kInvalidSeg) {
+      const uint64_t cur =
+          self->alloc_->segment_base(open) + self->alloc_->open_cursor();
+      if (cur > hw) {
+        hw = cur;
+      }
+    }
+  }
+  self->recover_scan_from_ = hw;
+  self->persist_manifest(std::move(cb), a);
+}
+
 uint32_t osd_store::gc_once(bool persist) {
   if (alloc_ == nullptr) {
     return 0;
@@ -738,7 +1020,7 @@ uint32_t osd_store::gc_once(bool persist) {
     return 0;
   }
 
-  // Mark segments that have any live extent reference.
+  // Mark segments that have any live extent reference (object + log + kv).
   std::vector<uint8_t> live(nseg, 0);
   auto mark = [&](uint64_t phys, uint64_t len) {
     if (len == 0 || phys + len <= alloc_->region_base()) {
@@ -754,10 +1036,7 @@ uint32_t osd_store::gc_once(bool persist) {
       live[id] = 1;
     }
   };
-
-  for (const auto& kv : pgs_) {
-    kv.second->for_each_live_extent(mark);
-  }
+  visit_live_extents(mark);
 
   uint32_t freed = 0;
   for (uint32_t id = 0; id < nseg; ++id) {
@@ -788,8 +1067,29 @@ uint32_t osd_store::gc_once(bool persist) {
   return freed;
 }
 
+void osd_store::visit_live_extents(
+    const std::function<void(uint64_t phys, uint64_t len)>& fn) const {
+  if (!fn) {
+    return;
+  }
+  for (const auto& kv : pgs_) {
+    kv.second->for_each_live_extent(fn);
+  }
+  for (const auto& kv : logs_) {
+    kv.second->for_each_live_extent(fn);
+  }
+  if (kv_ != nullptr) {
+    kv_->for_each_live_extent(fn);
+  }
+}
+
 uint32_t osd_store::gc_rewrite_once(bool persist, uint32_t max_extents) {
-  if (alloc_ == nullptr || pgs_.empty()) {
+  if (alloc_ == nullptr) {
+    return 0;
+  }
+  if (pgs_.empty()) {
+    // No object rewrite work; still reclaim sealed segments with no log/kv refs.
+    gc_once(persist);
     return 0;
   }
   const uint32_t nseg = alloc_->segment_count();
@@ -884,7 +1184,11 @@ void osd_store::recover(op_complete cb, void* arg) {
   }
 
   pgs_.clear();
+  logs_.clear();
   latest_epoch_.clear();
+  if (kv_ != nullptr) {
+    kv_->reset_for_recover();
+  }
   if (alloc_) {
     alloc_->reset();
   }
@@ -944,6 +1248,7 @@ void osd_store::recover(op_complete cb, void* arg) {
                 self2->sb_generation_ = 0;
                 self2->manifest_generation_ = 0;
                 r2->last_good = self2->data_offset_;
+                r2->last_valid_end = self2->data_offset_;
                 r2->pos = self2->data_offset_;
                 r2->phase = 3;
                 self2->backend_->set_write_pointer(self2->data_offset_);
@@ -1004,25 +1309,165 @@ void osd_store::recover(op_complete cb, void* arg) {
       req);
 }
 
+void osd_store::apply_manifest_allocator(const manifest& m) {
+  if (alloc_ == nullptr || m.segment_states.empty()) {
+    return;
+  }
+  if (alloc_->import_states(m.segment_states.data(),
+                            static_cast<uint32_t>(m.segment_states.size()),
+                            m.open_segment_id, m.open_cursor)) {
+    SPDK_NOTICELOG(
+        "aos recover imported segment table n=%zu open=%u cursor=%lu free=%u "
+        "sealed=%u\n",
+        m.segment_states.size(), m.open_segment_id, m.open_cursor,
+        alloc_->free_count(), alloc_->sealed_count());
+  }
+}
+
 void osd_store::recover_after_meta(recover_req* req) {
   if (req->mf_ok) {
     manifest_generation_ = req->mf.generation;
     apply_manifest_epochs(req->mf);
+    recover_scan_from_ = req->mf.recover_scan_from;
+    if (!req->mf.segment_states.empty()) {
+      apply_manifest_allocator(req->mf);
+      bool any_used = false;
+      for (uint8_t s : req->mf.segment_states) {
+        if (s != static_cast<uint8_t>(segment_state::free)) {
+          any_used = true;
+          break;
+        }
+      }
+      // Skip free segments only when a checkpoint covers the prefix
+      // (recover_scan_from > data_offset). Otherwise object_name records
+      // on a just-freed segment are still required to rebuild the map.
+      req->have_seg_table =
+          any_used && req->mf.recover_scan_from > data_offset_;
+    }
   }
-  // Scan the full data region as upper bound. Manifest data_high_water can lag
-  // the last durable append (object/log/kv writes do not always persist the
-  // manifest), so limiting to high_water drops tail WAL and object records
-  // after restart. Unwritten zeros stop the scan on decode failure.
   const uint64_t data_end = data_offset_ + data_length_;
-  const uint64_t scan_end =
+  uint64_t scan_end =
       std::min(backend_ ? backend_->capacity() : data_end, data_end);
-  backend_->set_write_pointer(std::max(scan_end, data_offset_));
+  uint64_t scan_from = data_offset_;
+  if (req->mf_ok && req->mf.data_high_water > data_offset_) {
+    const uint64_t slack = alloc_ && alloc_->segment_size() > 0
+                               ? std::min(alloc_->segment_size(),
+                                          static_cast<uint64_t>(1024 * 1024))
+                               : 1024ull * 1024;
+    scan_end = std::min(scan_end, req->mf.data_high_water + slack);
+  }
+  if (req->mf_ok && req->mf.recover_scan_from >= data_offset_ &&
+      req->mf.recover_scan_from <= scan_end) {
+    scan_from = req->mf.recover_scan_from;
+  }
+  req->scan_end = std::max(scan_end, data_offset_);
+  backend_->set_write_pointer(req->scan_end);
 
-  req->pos = data_offset_;
-  req->last_good = data_offset_;
+  req->pos = scan_from;
+  req->last_good = scan_from;
+  req->last_valid_end = scan_from;
   req->pending.clear();
   req->phase = 3;
+
+  if (req->mf_ok) {
+    for (const auto& c : req->mf.object_checkpoints) {
+      if (c.phys != 0) {
+        req->ckpt_queue.push_back(c.phys);
+      }
+    }
+    for (const auto& c : req->mf.log_checkpoints) {
+      if (c.phys != 0) {
+        req->ckpt_queue.push_back(c.phys);
+      }
+    }
+    if (req->mf.kv_checkpoint_phys != 0) {
+      req->ckpt_queue.push_back(req->mf.kv_checkpoint_phys);
+    }
+  }
+
+  SPDK_NOTICELOG(
+      "aos recover scan start data_off=%lu data_len=%lu scan_from=%lu "
+      "scan_end=%lu cap=%lu wp=%lu bs=%u mf_hw=%lu ckpts=%zu segs=%d\n",
+      data_offset_, data_length_, scan_from, req->scan_end,
+      backend_ ? backend_->capacity() : 0,
+      backend_ ? backend_->write_pointer() : 0,
+      backend_ ? backend_->block_size() : 0,
+      req->mf_ok ? req->mf.data_high_water : 0, req->ckpt_queue.size(),
+      req->have_seg_table ? 1 : 0);
+  if (!req->ckpt_queue.empty()) {
+    recover_load_checkpoints(req);
+    return;
+  }
   recover_process(req);
+}
+
+void osd_store::recover_load_checkpoints(recover_req* req) {
+  if (req->ckpt_idx >= req->ckpt_queue.size()) {
+    recover_process(req);
+    return;
+  }
+  const uint64_t phys = req->ckpt_queue[req->ckpt_idx];
+  const uint32_t bs = backend_->block_size();
+  uint64_t aligned = phys - (phys % bs);
+  uint64_t to_read = std::min(req->buf_cap, backend_->capacity() - aligned);
+  to_read = (to_read / bs) * bs;
+  if (to_read < kRecordHeaderLenV1) {
+    ++req->ckpt_idx;
+    recover_load_checkpoints(req);
+    return;
+  }
+  backend_->read(
+      aligned, req->buf, to_read,
+      [req, phys, aligned](void* /*a*/, int err) {
+        osd_store* self = req->self;
+        if (err != 0) {
+          SPDK_NOTICELOG("aos recover ckpt read phys=%lu err=%d, skip\n", phys,
+                         err);
+          ++req->ckpt_idx;
+          self->recover_load_checkpoints(req);
+          return;
+        }
+        const auto* p = static_cast<const uint8_t*>(req->buf);
+        const size_t skip = static_cast<size_t>(phys - aligned);
+        data_record rec;
+        size_t consumed = 0;
+        const decode_status st =
+            decode_record(p + skip, static_cast<size_t>(req->buf_cap) - skip,
+                          &rec, &consumed);
+        if (st != decode_status::ok) {
+          SPDK_NOTICELOG("aos recover ckpt decode phys=%lu st=%d, skip\n", phys,
+                         static_cast<int>(st));
+          ++req->ckpt_idx;
+          self->recover_load_checkpoints(req);
+          return;
+        }
+        if (rec.type == record_type::checkpoint_marker) {
+          checkpoint_snapshot snap;
+          if (decode_checkpoint_payload(rec.payload, &snap)) {
+            pg_store* pg =
+                self->ensure_pg(rec.pool_id, rec.pg_id, rec.store_epoch);
+            if (pg) {
+              pg->apply_checkpoint_snapshot(snap, phys + consumed);
+            }
+            ++req->applied_data;
+          }
+        } else if (rec.type == record_type::log_checkpoint) {
+          log_store* lg =
+              self->get_or_create_log(rec.pool_id, rec.pg_id, rec.store_epoch);
+          if (lg) {
+            lg->apply_checkpoint_record(rec);
+          }
+          ++req->applied_log;
+        } else if (rec.type == record_type::kv_checkpoint &&
+                   self->kv_ != nullptr) {
+          self->kv_->apply_record(rec, phys, 0);
+          ++req->applied_kv;
+        }
+        ++req->applied;
+        ++req->ckpt_idx;
+        self->recover_load_checkpoints(req);
+      },
+      req);
 }
 
 void osd_store::recover_process(recover_req* req) {
@@ -1033,9 +1478,15 @@ void osd_store::recover_process(recover_req* req) {
   const uint64_t data_end = data_offset_ + data_length_;
 
   auto finish_ok = [&]() {
-    backend_->set_write_pointer(req->last_good);
-    if (alloc_) {
-      alloc_->set_open_cursor_abs(req->last_good);
+    uint64_t wp = req->last_valid_end;
+    if (req->mf_ok && req->mf.data_high_water > wp) {
+      wp = req->mf.data_high_water;
+    }
+    backend_->set_write_pointer(wp);
+    if (alloc_ && !req->have_seg_table) {
+      alloc_->set_open_cursor_abs(req->last_valid_end);
+    } else if (alloc_ && req->have_seg_table) {
+      alloc_->set_open_cursor_abs(req->last_valid_end);
     }
     // Install recovery: prefer activated staging as serving; drop incomplete.
     for (const auto& kv : pgs_) {
@@ -1046,15 +1497,23 @@ void osd_store::recover_process(recover_req* req) {
       }
     }
     drop_unsealed_staging();
+    retarget_serving_to_recovered();
+
+    SPDK_NOTICELOG(
+        "aos recover scan done last_valid_end=%lu applied=%u data=%u log=%u "
+        "kv=%u skipped=%u pgs=%zu first_decode=%d first_magic=0x%x kv_keys=%s\n",
+        req->last_valid_end, req->applied, req->applied_data, req->applied_log,
+        req->applied_kv, req->skipped, pgs_.size(), req->first_decode_st,
+        req->first_magic, req->kv_keys[0] ? req->kv_keys : "-");
 
     // If data scan advanced past the stale manifest high_water, snapshot a
     // fresh manifest so the next recover can bound the scan sooner.
     const uint64_t mf_hw =
         req->mf_ok ? req->mf.data_high_water : 0;
-    const uint64_t last_good = req->last_good;
+    const uint64_t last_good = req->last_valid_end;
     const bool need_hw_snap = last_good > mf_hw;
 
-    meta_free_buf(req->buf);
+    meta_free_buf(req->buf, mode_);
     auto cb = std::move(req->cb);
     void* a = req->arg;
     osd_store* self = req->self;
@@ -1112,21 +1571,115 @@ void osd_store::recover_process(recover_req* req) {
     if (target >= data_end || target >= backend_->write_pointer()) {
       return false;
     }
+    // Advance decode/read cursors only. last_valid_end stays so empty
+    // prefix/hole segments are not sealed (empty-disk ENOSPC).
     req->last_good = target;
     req->pos = target;
     req->pending.clear();
     return true;
   };
 
+  // Decode failure: resync one block later inside the current segment
+  // (padding / 0x55 DMA junk). A long zero streak is an unwritten tail
+  // or GC hole — jump to the next segment without sealing the unused
+  // range (empty-disk ENOSPC).
+  constexpr uint32_t kZeroSkipBytes = 16 * 1024;
   while (!req->pending.empty()) {
     data_record rec;
     size_t consumed = 0;
     const decode_status st = decode_record(
         req->pending.data(), req->pending.size(), &rec, &consumed);
+    if (req->first_decode_st < 0) {
+      req->first_decode_st = static_cast<int>(st);
+      if (!req->pending.empty()) {
+        req->first_magic = static_cast<uint32_t>(req->pending[0]) |
+                           (static_cast<uint32_t>(req->pending.size() > 1
+                                                      ? req->pending[1]
+                                                      : 0)
+                            << 8) |
+                           (static_cast<uint32_t>(req->pending.size() > 2
+                                                      ? req->pending[2]
+                                                      : 0)
+                            << 16) |
+                           (static_cast<uint32_t>(req->pending.size() > 3
+                                                      ? req->pending[3]
+                                                      : 0)
+                            << 24);
+      }
+    }
     if (st == decode_status::need_more) {
       break;
     }
     if (st != decode_status::ok) {
+      uint64_t seg_end = data_end;
+      if (seg_size > 0 && req->last_good >= region_base) {
+        const uint64_t rel = req->last_good - region_base;
+        seg_end = region_base + ((rel / seg_size) + 1) * seg_size;
+      }
+      // Torn payload: header CRC passed, consumed is the full record.
+      // Skip the whole aligned record so we do not walk through its body.
+      if (st == decode_status::bad_payload_checksum && consumed > 0 &&
+          bs > 0) {
+        const uint64_t skip =
+            ((static_cast<uint64_t>(consumed) + bs - 1) / bs) * bs;
+        if (skip >= bs && req->pending.size() >= skip &&
+            req->last_good + skip <= seg_end) {
+          if (req->skipped < 8) {
+            SPDK_NOTICELOG(
+                "aos recover skip torn rec off=%lu st=%d consumed=%zu skip=%lu\n",
+                req->last_good, static_cast<int>(st), consumed, skip);
+          }
+          req->last_good += skip;
+          req->pending.erase(req->pending.begin(),
+                             req->pending.begin() +
+                                 static_cast<std::ptrdiff_t>(skip));
+          ++req->skipped;
+          req->zero_streak = 0;
+          continue;
+        }
+      }
+      if (bs > 0 && req->pending.size() >= bs &&
+          req->last_good + bs <= seg_end) {
+        bool block_zero = true;
+        for (uint32_t i = 0; i < bs; ++i) {
+          if (req->pending[static_cast<size_t>(i)] != 0) {
+            block_zero = false;
+            break;
+          }
+        }
+        if (block_zero) {
+          req->zero_streak += bs;
+          if (req->zero_streak >= kZeroSkipBytes) {
+            req->zero_streak = 0;
+            if (skip_to_next_segment()) {
+              recover_process(req);
+              return;
+            }
+            finish_ok();
+            return;
+          }
+        } else {
+          req->zero_streak = 0;
+        }
+        if (req->skipped < 8) {
+          SPDK_NOTICELOG(
+              "aos recover skip block off=%lu st=%d magic=0x%x\n",
+              req->last_good, static_cast<int>(st),
+              req->pending.empty()
+                  ? 0
+                  : (static_cast<uint32_t>(req->pending[0]) |
+                     (static_cast<uint32_t>(
+                          req->pending.size() > 3 ? req->pending[3] : 0)
+                      << 24)));
+        }
+        req->last_good += bs;
+        req->pending.erase(req->pending.begin(),
+                           req->pending.begin() +
+                               static_cast<std::ptrdiff_t>(bs));
+        ++req->skipped;
+        continue;
+      }
+      req->zero_streak = 0;
       if (skip_to_next_segment()) {
         recover_process(req);
         return;
@@ -1134,6 +1687,7 @@ void osd_store::recover_process(recover_req* req) {
       finish_ok();
       return;
     }
+    req->zero_streak = 0;
     const uint64_t aligned =
         ((static_cast<uint64_t>(consumed) + bs - 1) / bs) * bs;
     if (req->pending.size() < aligned) {
@@ -1153,18 +1707,60 @@ void osd_store::recover_process(recover_req* req) {
     }
 
     const uint64_t rec_phys = req->last_good;
+    if (req->applied == 0) {
+      SPDK_NOTICELOG(
+          "aos recover first rec off=%lu type=%u pool=%lu pg=%lu epoch=%lu "
+          "payload=%zu\n",
+          rec_phys, static_cast<unsigned>(rec.type), rec.pool_id, rec.pg_id,
+          rec.store_epoch, rec.payload.size());
+    }
     if (rec.type == record_type::raft_log_entry) {
       log_store* lg =
           get_or_create_log(rec.pool_id, rec.pg_id, rec.store_epoch);
       if (lg != nullptr) {
         lg->apply_record(rec, rec_phys);
       }
+      ++req->applied_log;
     } else if (rec.type == record_type::kv_put ||
                rec.type == record_type::kv_delete ||
                rec.type == record_type::kv_checkpoint) {
+      int kv_rc = 0;
       if (kv_ != nullptr) {
-        kv_->apply_record(rec);
+        kv_rc = kv_->apply_record(rec, rec_phys, aligned);
       }
+      if (req->applied_kv < 8) {
+        SPDK_NOTICELOG(
+            "aos recover kv rec off=%lu type=%u rc=%d payload=%zu\n", rec_phys,
+            static_cast<unsigned>(rec.type), kv_rc, rec.payload.size());
+      }
+      ++req->applied_kv;
+      if (rec.type == record_type::kv_put && rec.payload.size() >= 8 &&
+          req->kv_keys_n < 8) {
+        const auto* p =
+            reinterpret_cast<const uint8_t*>(rec.payload.data());
+        const uint32_t klen = static_cast<uint32_t>(p[0]) |
+                              (static_cast<uint32_t>(p[1]) << 8) |
+                              (static_cast<uint32_t>(p[2]) << 16) |
+                              (static_cast<uint32_t>(p[3]) << 24);
+        if (klen > 0 && 4ull + klen <= rec.payload.size()) {
+          const size_t used = std::strlen(req->kv_keys);
+          if (used + 1 + klen < sizeof(req->kv_keys)) {
+            if (used > 0) {
+              req->kv_keys[used] = ',';
+            }
+            std::memcpy(req->kv_keys + (used > 0 ? used + 1 : 0),
+                        rec.payload.data() + 4, klen);
+            req->kv_keys_n++;
+          }
+        }
+      }
+    } else if (rec.type == record_type::log_checkpoint) {
+      log_store* lg =
+          get_or_create_log(rec.pool_id, rec.pg_id, rec.store_epoch);
+      if (lg != nullptr) {
+        lg->apply_checkpoint_record(rec);
+      }
+      ++req->applied_log;
     } else if (rec.type != record_type::segment_seal) {
       pg_store* pg = ensure_pg(rec.pool_id, rec.pg_id, rec.store_epoch);
       if (rec.type == record_type::checkpoint_marker) {
@@ -1175,18 +1771,40 @@ void osd_store::recover_process(recover_req* req) {
       } else {
         pg->apply_record(rec, rec_phys);
       }
+      ++req->applied_data;
     }
+    ++req->applied;
     if (alloc_) {
       alloc_->note_written(rec_phys, aligned);
     }
     req->last_good += aligned;
+    req->last_valid_end = req->last_good;
     req->pending.erase(req->pending.begin(),
                        req->pending.begin() +
                            static_cast<std::ptrdiff_t>(aligned));
   }
 
-  const uint64_t scan_limit =
-      std::min({cap, data_end, backend_->write_pointer()});
+  if (req->have_seg_table && alloc_ != nullptr) {
+    const uint64_t bound = std::min(
+        {cap, data_end,
+         req->scan_end != 0 ? req->scan_end : backend_->write_pointer()});
+    while (req->pos < bound) {
+      const uint32_t id = alloc_->segment_id_of(req->pos);
+      if (id == segment_allocator::kInvalidSeg || !alloc_->is_free(id)) {
+        break;
+      }
+      const uint64_t next =
+          alloc_->segment_base(id) + alloc_->segment_size();
+      req->pos = next;
+      req->last_good = next;
+      req->pending.clear();
+      ++req->skipped;
+    }
+  }
+
+  const uint64_t scan_limit = std::min(
+      {cap, data_end,
+       req->scan_end != 0 ? req->scan_end : backend_->write_pointer()});
   if (req->pos >= scan_limit) {
     finish_ok();
     return;
@@ -1206,11 +1824,11 @@ void osd_store::recover_process(recover_req* req) {
         osd_store* self = req->self;
         if (rerr != 0) {
           if (rerr == -ERANGE) {
-            self->backend_->set_write_pointer(req->last_good);
+            self->backend_->set_write_pointer(req->last_valid_end);
             if (self->alloc_) {
-              self->alloc_->set_open_cursor_abs(req->last_good);
+              self->alloc_->set_open_cursor_abs(req->last_valid_end);
             }
-            meta_free_buf(req->buf);
+            meta_free_buf(req->buf, self->mode_);
             auto cb = std::move(req->cb);
             void* user = req->arg;
             delete req;
@@ -1219,7 +1837,7 @@ void osd_store::recover_process(recover_req* req) {
             }
             return;
           }
-          meta_free_buf(req->buf);
+          meta_free_buf(req->buf, self->mode_);
           auto cb = std::move(req->cb);
           void* user = req->arg;
           delete req;

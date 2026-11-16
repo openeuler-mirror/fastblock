@@ -35,7 +35,7 @@ void usage(const char* argv0) {
   std::fprintf(stderr,
                "Usage: %s [--align N] <aos-image-path>\n"
                "  Offline dump/light-fsck for an AOS device image (file).\n"
-               "  --align N   record alignment in bytes (default 4096)\n"
+               "  --align N   record alignment in bytes (default 512, aio)\n"
                "Exit 0 if report.ok(), 1 on hard errors, 2 on usage/IO error.\n",
                argv0);
 }

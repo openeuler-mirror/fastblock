@@ -74,6 +74,16 @@ public:
             void* arg);
 
   uint64_t get_term(uint64_t index) const;
+  bool contains(uint64_t index) const;
+
+  /**
+   * After install-snapshot: make last_index == index with term on disk.
+   * Empty log: append a snapshot-base entry at index (need not start at 1).
+   * Already at/above index: no-op success (idempotent / catchup already ahead).
+   * Completes after the marker is durable (or immediately if no I/O).
+   */
+  void install_snapshot_base(uint64_t index, uint64_t term, op_complete cb,
+                             void* arg);
 
   /**
    * Drop index map entries with index <= trim_index (inclusive).
@@ -89,6 +99,14 @@ public:
 
   /** Apply one decoded raft_log_entry record (recover path). */
   int apply_record(const data_record& rec, uint64_t phys_offset);
+
+  /**
+   * Append a durable log_checkpoint of the live index_map and flush.
+   * Recover can load this instead of replaying prior raft_log_entry records.
+   */
+  void checkpoint(op_complete cb, void* arg);
+  int apply_checkpoint_record(const data_record& rec);
+  uint64_t last_checkpoint_phys() const { return last_checkpoint_phys_; }
 
   /** Sync rebuild from a contiguous image (mem tests). */
   uint64_t rebuild_from_image(const uint8_t* image, size_t len);
@@ -120,6 +138,13 @@ private:
   std::map<uint64_t, idx_pos> index_map_;
   uint64_t base_index_{0}; // lowest present, or 0 if empty
   uint64_t last_index_{0}; // highest present, or 0 if empty
+  uint64_t last_checkpoint_phys_{0};
+
+  static std::string encode_checkpoint_payload(
+      const std::map<uint64_t, idx_pos>& idx, uint64_t base, uint64_t last);
+  static bool decode_checkpoint_payload(const std::string& p,
+                                        std::map<uint64_t, idx_pos>* idx,
+                                        uint64_t* base, uint64_t* last);
 };
 
 } // namespace fastblock::aos

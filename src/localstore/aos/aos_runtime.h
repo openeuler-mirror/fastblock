@@ -17,6 +17,8 @@
 #include "spdk_bdev_backend.h"
 #include "types.h"
 
+#include <spdk/thread.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -33,6 +35,20 @@ namespace fastblock::aos {
 class aos_runtime {
 public:
   using op_complete = device_backend::op_complete;
+
+  /** Background GC knobs (design P5). Defaults are production-safe. */
+  struct gc_poller_config {
+    bool enabled{true};
+    /** Period between gc_pass runs (microseconds). Default 5s. */
+    uint64_t period_us{5ull * 1000 * 1000};
+    /** Max rewrite extents per pass (rate limit). */
+    uint32_t max_rewrite_extents{16};
+    bool rewrite_victim{true};
+    bool free_dead_segments{true};
+    bool persist_manifest{true};
+    /** Period between coordinated checkpoints (0 = disabled). Default 30s. */
+    uint64_t checkpoint_period_us{30ull * 1000 * 1000};
+  };
 
   aos_runtime() = default;
   ~aos_runtime();
@@ -56,6 +72,23 @@ public:
 
   void close();
 
+  /**
+   * Stop GC, drain kv WAL (term/vote/cfg), then tear down. cb on this
+   * reactor after kv flush. close() is a fire-and-forget wrapper.
+   */
+  void stop(op_complete cb, void* arg);
+
+  /**
+   * Start/stop background GC poller on the current SPDK thread.
+   * Safe to call multiple times; start is idempotent when already running.
+   */
+  void start_gc_poller();
+  void start_gc_poller(const gc_poller_config& cfg);
+  void stop_gc_poller();
+  bool gc_poller_running() const { return gc_poller_ != nullptr; }
+  uint64_t gc_pass_count() const { return gc_pass_count_; }
+  uint64_t checkpoint_pass_count() const { return ckpt_pass_count_; }
+
   bool ready() const { return store_ != nullptr && opened_; }
   osd_store* store() { return store_.get(); }
   const osd_store* store() const { return store_.get(); }
@@ -68,6 +101,9 @@ public:
   uint64_t segment_size() const { return segment_size_; }
 
 private:
+  static int gc_poller_fn(void* arg);
+  static int ckpt_poller_fn(void* arg);
+
   spdk_bdev_backend backend_;
   std::unique_ptr<osd_store> store_;
   std::unique_ptr<kv_engine> kv_;
@@ -76,6 +112,13 @@ private:
   uint64_t region_length_{0};
   uint64_t segment_size_{0};
   bool opened_{false};
+
+  struct spdk_poller* gc_poller_{nullptr};
+  struct spdk_poller* ckpt_poller_{nullptr};
+  gc_poller_config gc_cfg_{};
+  uint64_t gc_pass_count_{0};
+  uint64_t ckpt_pass_count_{0};
+  bool ckpt_in_flight_{false};
 };
 
 /** Parse "blob" | "aos" | "shadow". Unknown => blob. */
@@ -94,5 +137,17 @@ bool compute_shard_region(uint64_t capacity_bytes, uint32_t shard_count,
 
 /** Default production segment size (64 MiB). */
 inline constexpr uint64_t kDefaultSegmentSize = 64ull * 1024 * 1024;
+
+/**
+ * ZNS-oriented segment sizing (design P5+): prefer zone_size when known;
+ * otherwise fall back to kDefaultSegmentSize. Aligns down to 1 MiB.
+ */
+inline uint64_t choose_segment_size_for_device(uint64_t zone_size_bytes = 0) {
+  constexpr uint64_t kAlign = 1024ull * 1024;
+  if (zone_size_bytes >= kAlign) {
+    return (zone_size_bytes / kAlign) * kAlign;
+  }
+  return kDefaultSegmentSize;
+}
 
 } // namespace fastblock::aos

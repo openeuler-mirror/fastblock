@@ -110,6 +110,17 @@ public:
   // After recover: set open segment cursor to end of last good record in it.
   void set_open_cursor_abs(uint64_t abs_end);
 
+  // Persist / restore segment states (one byte per segment).
+  void export_states(std::vector<uint8_t>* out) const;
+  // Returns false if n does not match segment_count.
+  bool import_states(const uint8_t* data, uint32_t n, uint32_t open_id,
+                     uint64_t cursor);
+
+  uint32_t segment_id_of(uint64_t abs_off) const;
+  bool is_free(uint32_t id) const {
+    return id < states_.size() && states_[id] == segment_state::free;
+  }
+
 private:
   int open_free_unlocked();
 

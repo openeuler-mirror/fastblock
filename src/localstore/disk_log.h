@@ -96,6 +96,20 @@ public:
     return 0;
   }
 
+  bool contains(uint64_t index) const {
+    return _aos_log != nullptr && _aos_log->contains(index);
+  }
+
+  /** Point this facade at a different epoch's log_store (snapshot activate). */
+  void retarget(fastblock::aos::log_store* lg) {
+    _aos_log = lg;
+    if (_aos_log) {
+      _lowest_index = get_lowest_index();
+      _highest_index = get_highest_index();
+      _trim_index = _highest_index;
+    }
+  }
+
   bool maybe_trim() { return false; }
 
   void trim_back(uint64_t /*start_index*/, uint64_t end_index,
@@ -152,19 +166,30 @@ public:
     return _highest_index;
   }
 
-  void set_index(uint64_t index, log_op_complete cb_fn, void* arg) {
-    if (_aos_log) {
-      if (_aos_log->entry_count() > 0) {
-        _aos_log->truncate_from(_aos_log->base_index(), [](void*, int) {},
-                                nullptr);
+  void set_index(uint64_t index, uint64_t term, log_op_complete cb_fn,
+                 void* arg) {
+    if (_aos_log == nullptr) {
+      if (cb_fn) {
+        cb_fn(arg, -ENODEV);
       }
-      _trim_index = index;
-      _lowest_index = index + 1;
-      _highest_index = index;
+      return;
     }
-    if (cb_fn) {
-      cb_fn(arg, 0);
-    }
+    _aos_log->install_snapshot_base(
+        index, term,
+        [this, index, cb_fn = std::move(cb_fn), arg](void*, int err) {
+          if (err == 0) {
+            _trim_index = index;
+            _lowest_index = _aos_log && _aos_log->base_index() != 0
+                                ? _aos_log->base_index()
+                                : index;
+            _highest_index =
+                _aos_log ? _aos_log->last_index() : index;
+          }
+          if (cb_fn) {
+            cb_fn(arg, err);
+          }
+        },
+        nullptr);
   }
 
   void set_blob_xattr(std::map<std::string, xattr_val_type>& /*xattr*/,

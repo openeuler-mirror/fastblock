@@ -40,6 +40,7 @@ public:
   uint64_t snapshot_term() const { return snap_term_; }
   uint64_t active_epoch() const { return active_epoch_; }
   uint64_t staging_epoch() const { return staging_epoch_; }
+  uint64_t chunk_count() const { return chunk_seq_; }
 
   pg_store* active_pg() const;
   pg_store* staging_pg() const;

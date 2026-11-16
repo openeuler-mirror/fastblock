@@ -34,7 +34,9 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -132,6 +134,8 @@ void test_record_bad_payload_crc() {
   size_t consumed = 0;
   auto st = decode_record(bytes.data(), bytes.size(), &out, &consumed);
   EXPECT_TRUE(st == decode_status::bad_payload_checksum);
+  // Scanner needs the full record length to skip a torn payload.
+  EXPECT_EQ(consumed, bytes.size());
 }
 
 void test_record_bad_magic() {
@@ -1254,6 +1258,27 @@ void test_superblock_manifest_codec() {
   EXPECT_EQ(mo.generation, 5u);
   EXPECT_EQ(mo.pgs.size(), 1u);
   EXPECT_EQ(mo.pgs[0].active_epoch, 7u);
+
+  manifest v2;
+  v2.generation = 9;
+  v2.data_high_water = kMetaSize + 8192;
+  v2.recover_scan_from = kMetaSize + 4096;
+  v2.kv_checkpoint_phys = kMetaSize + 1024;
+  v2.open_segment_id = 1;
+  v2.open_cursor = 512;
+  v2.pgs.push_back({2, 3, 4});
+  v2.object_checkpoints.push_back({2, 3, 4, kMetaSize + 2048});
+  v2.log_checkpoints.push_back({2, 3, 4, kMetaSize + 3072});
+  v2.segment_states = {0, 1, 2, 0};
+  auto vb = encode_manifest(v2);
+  manifest vo;
+  EXPECT_TRUE(decode_manifest(vb.data(), vb.size(), &vo));
+  EXPECT_EQ(vo.recover_scan_from, kMetaSize + 4096);
+  EXPECT_EQ(vo.kv_checkpoint_phys, kMetaSize + 1024);
+  EXPECT_EQ(vo.object_checkpoints.size(), 1u);
+  EXPECT_EQ(vo.log_checkpoints[0].phys, kMetaSize + 3072);
+  EXPECT_EQ(vo.segment_states.size(), 4u);
+  EXPECT_EQ(vo.segment_states[2], 2);
 }
 
 void test_osd_store_multi_pg_shared_allocator() {
@@ -1595,6 +1620,62 @@ void test_osd_store_list_pg_ids() {
   EXPECT_EQ(ids.size(), 2u);
 }
 
+void test_kv_engine_put_durable_and_stop_flush() {
+  mem_device_backend dev(4 * 1024 * 1024);
+  auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
+                                                   dev.block_size());
+  EXPECT_EQ(alloc->ensure_open(), 0);
+  kv_engine kv(&dev, alloc, buffer_mode::heap);
+  sync_result r;
+  kv.put_durable("1.0.node_cfg", std::string("members"), on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  auto v = kv.get("1.0.node_cfg");
+  EXPECT_TRUE(v.has_value() && *v == "members");
+
+  kv.put("1.0.term", "4");
+  kv.put("1.0.vote_for", "2");
+  r = {};
+  kv.stop(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  kv_engine kv2(&dev, alloc, buffer_mode::heap);
+  std::vector<uint8_t> image(static_cast<size_t>(dev.write_pointer()));
+  r = {};
+  dev.read(0, image.data(), image.size(), on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  kv2.rebuild_from_image(image.data(), image.size());
+  auto cfg = kv2.get("1.0.node_cfg");
+  auto term = kv2.get("1.0.term");
+  auto vote = kv2.get("1.0.vote_for");
+  EXPECT_TRUE(cfg.has_value() && *cfg == "members");
+  EXPECT_TRUE(term.has_value() && *term == "4");
+  EXPECT_TRUE(vote.has_value() && *vote == "2");
+}
+
+void test_kv_engine_put_visible_before_commit() {
+  mem_device_backend dev(4 * 1024 * 1024);
+  auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
+                                                   dev.block_size());
+  EXPECT_EQ(alloc->ensure_open(), 0);
+  kv_engine kv(&dev, alloc, buffer_mode::heap);
+  kv.put("1.0.node_cfg", "abc");
+  auto v = kv.get("1.0.node_cfg");
+  EXPECT_TRUE(v.has_value());
+  EXPECT_TRUE(*v == "abc");
+
+  std::vector<uint8_t> image(static_cast<size_t>(dev.write_pointer()));
+  sync_result r;
+  dev.read(0, image.data(), image.size(), on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  auto alloc2 = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
+                                                    dev.block_size());
+  kv_engine kv2(&dev, alloc2, buffer_mode::heap);
+  kv2.rebuild_from_image(image.data(), image.size());
+  auto v2 = kv2.get("1.0.node_cfg");
+  EXPECT_TRUE(v2.has_value());
+  EXPECT_TRUE(*v2 == "abc");
+}
+
 void test_kv_engine_put_commit_get() {
   mem_device_backend dev(4 * 1024 * 1024);
   auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
@@ -1668,6 +1749,56 @@ void test_kv_engine_delete_and_checkpoint_replay() {
   EXPECT_TRUE(*k2 == "v2");
   auto bulk0 = kv2.get("bulk0");
   EXPECT_TRUE(bulk0.has_value());
+}
+
+void test_log_store_install_snapshot_base() {
+  mem_device_backend dev(4 * 1024 * 1024);
+  auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
+                                                   dev.block_size());
+  EXPECT_EQ(alloc->ensure_open(), 0);
+  log_store log(&dev, pg_id{5, 1, 7}, alloc, buffer_mode::heap);
+
+  // Empty epoch log: first durable entry is the snapshot base at a high index.
+  sync_result r;
+  log.install_snapshot_base(132, 8, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(log.contains(132));
+  EXPECT_EQ(log.base_index(), 132);
+  EXPECT_EQ(log.last_index(), 132);
+  EXPECT_EQ(log.get_term(132), 8);
+
+  // Idempotent.
+  r = {};
+  log.install_snapshot_base(132, 8, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(log.last_index(), 132);
+
+  // Catchup continues at index+1.
+  log_entry e;
+  e.term = 8;
+  e.index = 133;
+  e.type = 0;
+  e.meta = "w";
+  e.data = "x";
+  r = {};
+  log.append(e, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(log.last_index(), 133);
+
+  // Rebuild as on restart: new log_store, same image, same epoch.
+  std::vector<uint8_t> image(static_cast<size_t>(dev.write_pointer()));
+  r = {};
+  dev.read(0, image.data(), image.size(), on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  auto alloc2 = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
+                                                    dev.block_size());
+  log_store log2(&dev, pg_id{5, 1, 7}, alloc2, buffer_mode::heap);
+  log2.rebuild_from_image(image.data(), image.size());
+  EXPECT_TRUE(log2.contains(132));
+  EXPECT_EQ(log2.base_index(), 132);
+  EXPECT_EQ(log2.last_index(), 133);
+  EXPECT_EQ(log2.get_term(132), 8);
+  EXPECT_EQ(log2.get_term(133), 8);
 }
 
 void test_log_store_truncate_from() {
@@ -1819,6 +1950,548 @@ void test_osd_store_image_snap_and_gc_pass() {
   EXPECT_EQ(r.err, 0);
 }
 
+void test_gc_preserves_live_log_and_frees_after_trim() {
+  const uint64_t seg = 64 * 1024;
+  mem_device_backend dev(4 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, seg);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  auto* lg = osd.get_or_create_log(1, 0, osd.serving_epoch(1, 0));
+  EXPECT_TRUE(lg != nullptr);
+
+  int idx = 0;
+  while (osd.allocator()->sealed_count() < 1 && idx < 40) {
+    log_entry e;
+    e.term = 1;
+    e.index = static_cast<uint64_t>(idx + 1);
+    e.type = 0;
+    e.meta = "m";
+    e.data = std::string(64, 'L');
+    r = {};
+    lg->append(e, on_done, &r);
+    EXPECT_EQ(r.err, 0);
+    ++idx;
+  }
+  EXPECT_TRUE(osd.allocator()->sealed_count() >= 1u);
+  EXPECT_TRUE(idx >= 2);
+
+  const uint32_t sealed_before = osd.allocator()->sealed_count();
+  const uint32_t freed_live = osd.gc_once(true);
+  EXPECT_EQ(freed_live, 0u);
+  EXPECT_EQ(osd.allocator()->sealed_count(), sealed_before);
+
+  struct {
+    int err{-1};
+    std::vector<log_entry> entries;
+  } rr;
+  lg->read(1, 1,
+           [](void* a, std::vector<log_entry> entries, int err) {
+             auto* p = static_cast<decltype(rr)*>(a);
+             p->err = err;
+             p->entries = std::move(entries);
+           },
+           &rr);
+  EXPECT_EQ(rr.err, 0);
+  EXPECT_EQ(rr.entries.size(), 1u);
+
+  lg->trim_to(static_cast<uint64_t>(idx - 1));
+  const uint32_t freed = osd.gc_once(true);
+  EXPECT_TRUE(freed >= 1u);
+  EXPECT_TRUE(osd.allocator()->sealed_count() < sealed_before);
+
+  rr = {};
+  lg->read(static_cast<uint64_t>(idx), static_cast<uint64_t>(idx),
+           [](void* a, std::vector<log_entry> entries, int err) {
+             auto* p = static_cast<decltype(rr)*>(a);
+             p->err = err;
+             p->entries = std::move(entries);
+           },
+           &rr);
+  EXPECT_EQ(rr.err, 0);
+  EXPECT_EQ(rr.entries.size(), 1u);
+}
+
+void test_gc_preserves_live_kv_and_frees_after_checkpoint() {
+  const uint64_t seg = 64 * 1024;
+  mem_device_backend dev(4 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, seg);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  kv_engine kv(&dev, osd.shared_allocator(), buffer_mode::heap);
+  osd.set_kv_engine(&kv);
+
+  int n = 0;
+  while (osd.allocator()->sealed_count() < 1 && n < 40) {
+    kv.put("k" + std::to_string(n), "v" + std::to_string(n));
+    r = {};
+    kv.commit(on_done, &r);
+    EXPECT_EQ(r.err, 0);
+    ++n;
+  }
+  EXPECT_TRUE(osd.allocator()->sealed_count() >= 1u);
+
+  const uint32_t sealed_before = osd.allocator()->sealed_count();
+  EXPECT_EQ(osd.gc_once(true), 0u);
+  EXPECT_EQ(osd.allocator()->sealed_count(), sealed_before);
+
+  auto kept = kv.get("k0");
+  EXPECT_TRUE(kept.has_value());
+  EXPECT_TRUE(*kept == "v0");
+
+  r = {};
+  kv.checkpoint(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  const uint32_t freed = osd.gc_once(true);
+  EXPECT_TRUE(freed >= 1u);
+  EXPECT_TRUE(osd.allocator()->sealed_count() < sealed_before);
+
+  auto after = kv.get("k0");
+  EXPECT_TRUE(after.has_value());
+  EXPECT_TRUE(*after == "v0");
+}
+
+void test_log_store_torn_tail() {
+  mem_device_backend dev(4 * 1024 * 1024);
+  auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
+                                                   dev.block_size());
+  EXPECT_EQ(alloc->ensure_open(), 0);
+  log_store log(&dev, pg_id{4, 1, 1}, alloc, buffer_mode::heap);
+  for (uint64_t i = 1; i <= 3; ++i) {
+    log_entry e;
+    e.term = 1;
+    e.index = i;
+    e.type = 0;
+    e.meta = "m";
+    e.data = "p" + std::to_string(i);
+    sync_result r;
+    log.append(e, on_done, &r);
+    EXPECT_EQ(r.err, 0);
+  }
+  const uint64_t good_end = dev.write_pointer();
+  auto& storage = dev.storage();
+  if (good_end + 4096 <= storage.size()) {
+    std::memset(storage.data() + good_end, 0x5a, 4096);
+    dev.set_write_pointer(good_end + 4096);
+  }
+
+  auto alloc2 = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
+                                                    dev.block_size());
+  log_store log2(&dev, pg_id{4, 1, 1}, alloc2, buffer_mode::heap);
+  std::vector<uint8_t> image(static_cast<size_t>(dev.write_pointer()));
+  sync_result r;
+  dev.read(0, image.data(), image.size(), on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  log2.rebuild_from_image(image.data(), image.size());
+  EXPECT_EQ(log2.base_index(), 1);
+  EXPECT_EQ(log2.last_index(), 3);
+  EXPECT_EQ(log2.entry_count(), 3u);
+}
+
+void test_kv_engine_torn_wal_keeps_prior() {
+  mem_device_backend dev(4 * 1024 * 1024);
+  auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
+                                                   dev.block_size());
+  EXPECT_EQ(alloc->ensure_open(), 0);
+  kv_engine kv(&dev, alloc, buffer_mode::heap);
+  kv.put("k1", "v1");
+  sync_result r;
+  kv.commit(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  const uint64_t after_first = dev.write_pointer();
+
+  kv.put("k2", "v2");
+  r = {};
+  kv.commit(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  auto& storage = dev.storage();
+  std::memset(storage.data() + after_first, 0x5a,
+              static_cast<size_t>(dev.write_pointer() - after_first));
+
+  std::vector<uint8_t> image(static_cast<size_t>(dev.write_pointer()));
+  r = {};
+  dev.read(0, image.data(), image.size(), on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  auto alloc2 = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
+                                                    dev.block_size());
+  kv_engine kv2(&dev, alloc2, buffer_mode::heap);
+  kv2.rebuild_from_image(image.data(), image.size());
+  auto v1 = kv2.get("k1");
+  EXPECT_TRUE(v1.has_value());
+  EXPECT_TRUE(*v1 == "v1");
+  EXPECT_TRUE(!kv2.get("k2").has_value());
+}
+
+void test_kv_engine_torn_checkpoint_keeps_prior() {
+  mem_device_backend dev(4 * 1024 * 1024);
+  auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
+                                                   dev.block_size());
+  EXPECT_EQ(alloc->ensure_open(), 0);
+  kv_engine kv(&dev, alloc, buffer_mode::heap);
+  kv.put("keep", "yes");
+  sync_result r;
+  kv.commit(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  kv.checkpoint(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  const uint64_t good_end = dev.write_pointer();
+
+  auto& storage = dev.storage();
+  if (good_end + 4096 <= storage.size()) {
+    std::memset(storage.data() + good_end, 0x5a, 4096);
+    dev.set_write_pointer(good_end + 4096);
+  }
+
+  std::vector<uint8_t> image(static_cast<size_t>(dev.write_pointer()));
+  r = {};
+  dev.read(0, image.data(), image.size(), on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  auto alloc2 = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
+                                                    dev.block_size());
+  kv_engine kv2(&dev, alloc2, buffer_mode::heap);
+  kv2.rebuild_from_image(image.data(), image.size());
+  auto v = kv2.get("keep");
+  EXPECT_TRUE(v.has_value());
+  EXPECT_TRUE(*v == "yes");
+}
+
+void test_osd_store_empty_recover_then_append() {
+  // After mkfs + recover on a zeroed device, sealed_count must stay 0 so
+  // the first raft log append is not ENOSPC (vstart regression).
+  const uint64_t seg = 64 * 1024;
+  mem_device_backend dev(4 * 1024 * 1024);
+  {
+    osd_store osd(&dev, buffer_mode::heap, seg);
+    sync_result r;
+    osd.format(on_done, &r);
+    EXPECT_EQ(r.err, 0);
+  }
+
+  osd_store osd(&dev, buffer_mode::heap, seg);
+  sync_result r;
+  osd.recover(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(osd.allocator()->sealed_count(), 0u);
+  EXPECT_TRUE(osd.allocator()->free_count() >= 1u);
+
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  auto* lg = osd.get_or_create_log(1, 0, osd.serving_epoch(1, 0));
+  EXPECT_TRUE(lg != nullptr);
+  log_entry e;
+  e.term = 1;
+  e.index = 1;
+  e.type = 0;
+  e.meta = "cfg";
+  e.data = "x";
+  r = {};
+  lg->append(e, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(lg->last_index(), 1);
+}
+
+void test_osd_store_recover_keeps_existing_epoch_512() {
+  // Live vstart aio bdev is 512-byte blocks; recover must apply 512-aligned
+  // object + kv + log records into the same serving epoch.
+  mem_device_backend dev(16 * 1024 * 1024, 512);
+  osd_store osd(&dev, buffer_mode::heap, 1024 * 1024);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  const uint64_t epoch = osd.serving_epoch(1, 0);
+  std::vector<char> a(4096, 'Q');
+  r = {};
+  osd.apply(1, 0, "keep512", 0, a.data(), a.size(), 1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  auto alloc = osd.shared_allocator();
+  kv_engine kv(&dev, alloc, buffer_mode::heap);
+  osd.set_kv_engine(&kv);
+  kv.put("1.0.node_cfg", "cfg-512");
+  r = {};
+  kv.commit(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  auto* lg = osd.get_or_create_log(1, 0, epoch);
+  EXPECT_TRUE(lg != nullptr);
+  log_entry e;
+  e.term = 1;
+  e.index = 1;
+  e.type = 0;
+  e.meta = "m";
+  e.data = "log-512";
+  r = {};
+  lg->append(e, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  osd_store osd2(&dev, buffer_mode::heap, 1024 * 1024);
+  kv_engine kv2(&dev, osd2.shared_allocator(), buffer_mode::heap);
+  osd2.set_kv_engine(&kv2);
+  r = {};
+  osd2.recover(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  auto* pg = osd2.find_pg(1, 0);
+  EXPECT_TRUE(pg != nullptr);
+  EXPECT_EQ(pg->id().store_epoch, epoch);
+  EXPECT_EQ(osd2.serving_epoch(1, 0), epoch);
+  EXPECT_TRUE(osd2.bind_existing_pg(1, 0) != nullptr);
+  EXPECT_EQ(osd2.serving_epoch(1, 0), epoch);
+  std::vector<char> out(4096, 0);
+  r = {};
+  osd2.read(1, 0, "keep512", 0, out.data(), 4096, 0, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'Q');
+  auto cfg = kv2.get("1.0.node_cfg");
+  EXPECT_TRUE(cfg.has_value());
+  EXPECT_TRUE(*cfg == "cfg-512");
+  auto* lg2 = osd2.get_log(1, 0, epoch);
+  EXPECT_TRUE(lg2 != nullptr);
+  EXPECT_EQ(lg2->last_index(), 1);
+}
+
+void test_osd_store_recover_keeps_kv_across_pad_hole() {
+  mem_device_backend dev(16 * 1024 * 1024, 512);
+  osd_store osd(&dev, buffer_mode::heap, 1024 * 1024);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  kv_engine kv(&dev, osd.shared_allocator(), buffer_mode::heap);
+  osd.set_kv_engine(&kv);
+  kv.put("1.0.node_cfg", "cfg-a");
+  kv.put("1.0.term", "3");
+  r = {};
+  kv.commit(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  const uint64_t hole = dev.write_pointer();
+  std::vector<uint8_t> pad(2560, 0x55);
+  r = {};
+  dev.write_at(hole, pad.data(), pad.size(),
+               [](void* a, uint64_t, int err) {
+                 static_cast<sync_result*>(a)->err = err;
+               },
+               &r);
+  EXPECT_EQ(r.err, 0);
+  if (osd.allocator() != nullptr) {
+    osd.allocator()->set_open_cursor_abs(dev.write_pointer());
+  }
+
+  kv.put("1.0.lapply_idx", "9");
+  r = {};
+  kv.commit(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  osd_store osd2(&dev, buffer_mode::heap, 1024 * 1024);
+  kv_engine kv2(&dev, osd2.shared_allocator(), buffer_mode::heap);
+  osd2.set_kv_engine(&kv2);
+  r = {};
+  osd2.recover(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  auto cfg = kv2.get("1.0.node_cfg");
+  auto term = kv2.get("1.0.term");
+  auto lapply = kv2.get("1.0.lapply_idx");
+  EXPECT_TRUE(cfg.has_value() && *cfg == "cfg-a");
+  EXPECT_TRUE(term.has_value() && *term == "3");
+  EXPECT_TRUE(lapply.has_value() && *lapply == "9");
+}
+
+void test_osd_store_recover_skips_nonzero_pad_hole() {
+  // Production recover used to jump to the next 64MiB segment on the first
+  // bad_magic. A 0x55 pad hole after early kv records then hid all later
+  // object/log records (vstart restart-verify mismatch).
+  mem_device_backend dev(16 * 1024 * 1024, 512);
+  osd_store osd(&dev, buffer_mode::heap, 1024 * 1024);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  std::vector<char> before(4096, 'B');
+  r = {};
+  osd.apply(1, 0, "before", 0, before.data(), before.size(), 1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  const uint64_t hole = dev.write_pointer();
+  std::vector<uint8_t> pad(2560, 0x55);
+  r = {};
+  dev.write_at(hole, pad.data(), pad.size(),
+               [](void* a, uint64_t, int err) {
+                 static_cast<sync_result*>(a)->err = err;
+               },
+               &r);
+  EXPECT_EQ(r.err, 0);
+  if (osd.allocator() != nullptr) {
+    osd.allocator()->set_open_cursor_abs(dev.write_pointer());
+  }
+
+  std::vector<char> after(4096, 'A');
+  r = {};
+  osd.apply(1, 0, "after", 0, after.data(), after.size(), 2, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  osd_store osd2(&dev, buffer_mode::heap, 1024 * 1024);
+  r = {};
+  osd2.recover(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  std::vector<char> out(4096, 0);
+  r = {};
+  osd2.read(1, 0, "before", 0, out.data(), 4096, 0, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'B');
+  std::fill(out.begin(), out.end(), 0);
+  r = {};
+  osd2.read(1, 0, "after", 0, out.data(), 4096, 0, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'A');
+}
+
+void test_osd_store_recover_vstart_image_if_present() {
+  const char* path = std::getenv("AOS_RECOVER_IMAGE");
+  if (path == nullptr || path[0] == '\0') {
+    return;
+  }
+  std::ifstream in(path, std::ios::binary);
+  if (!in) {
+    std::fprintf(stderr, "AOS_RECOVER_IMAGE open failed: %s\n", path);
+    ++g_failures;
+    return;
+  }
+  const uint64_t cap = 8ull * 1024 * 1024;
+  mem_device_backend dev(cap, 512);
+  in.read(reinterpret_cast<char*>(dev.storage().data()),
+          static_cast<std::streamsize>(cap));
+  const auto got = static_cast<uint64_t>(in.gcount());
+  EXPECT_TRUE(got >= kMetaSize + 4096);
+  dev.set_write_pointer((got / 512) * 512);
+
+  osd_store osd(&dev, buffer_mode::heap, 64ull * 1024 * 1024);
+  kv_engine kv(&dev, osd.shared_allocator(), buffer_mode::heap);
+  osd.set_kv_engine(&kv);
+  sync_result r;
+  osd.recover(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  auto* pg = osd.find_pg(1, 0);
+  EXPECT_TRUE(pg != nullptr);
+  EXPECT_TRUE(osd.bind_existing_pg(1, 0) != nullptr);
+  auto cfg = kv.get("1.0.node_cfg");
+  EXPECT_TRUE(cfg.has_value());
+  std::printf("vstart image recover: pg=%s objects=%lu serving=%lu kv_cfg=%s\n",
+              pg ? "yes" : "no",
+              static_cast<unsigned long>(pg ? pg->object_count() : 0),
+              osd.serving_epoch(1, 0),
+              cfg.has_value() ? "yes" : "no");
+}
+
+void test_osd_store_recover_keeps_existing_epoch() {
+  mem_device_backend dev(16 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, 1024 * 1024);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  const uint64_t epoch = osd.serving_epoch(1, 0);
+  std::vector<char> a(4096, 'Z');
+  r = {};
+  osd.apply(1, 0, "keep", 0, a.data(), a.size(), 1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  osd_store osd2(&dev, buffer_mode::heap, 1024 * 1024);
+  r = {};
+  osd2.recover(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  auto* pg = osd2.find_pg(1, 0);
+  EXPECT_TRUE(pg != nullptr);
+  EXPECT_EQ(pg->id().store_epoch, epoch);
+  EXPECT_EQ(osd2.serving_epoch(1, 0), epoch);
+  std::vector<char> out(4096, 0);
+  r = {};
+  osd2.read(1, 0, "keep", 0, out.data(), 4096, 0, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'Z');
+}
+
+void test_osd_store_recover_skips_zero_hole() {
+  const uint64_t seg = 64 * 1024;
+  mem_device_backend dev(4 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, seg);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  auto* lg = osd.get_or_create_log(1, 0, osd.serving_epoch(1, 0));
+  EXPECT_TRUE(lg != nullptr);
+
+  int n = 0;
+  while (osd.allocator()->sealed_count() < 2 && n < 80) {
+    log_entry e;
+    e.term = 1;
+    e.index = static_cast<uint64_t>(n + 1);
+    e.type = 0;
+    e.meta = "m";
+    e.data = std::string(64, 'H');
+    r = {};
+    lg->append(e, on_done, &r);
+    EXPECT_EQ(r.err, 0);
+    ++n;
+  }
+  EXPECT_TRUE(osd.allocator()->sealed_count() >= 2u);
+  EXPECT_TRUE(n >= 4);
+  const uint64_t last_idx = static_cast<uint64_t>(n);
+
+  // Wipe the first data segment (simulate a GC hole / unused range).
+  const uint64_t hole = osd.data_offset();
+  auto& storage = dev.storage();
+  EXPECT_TRUE(hole + seg <= storage.size());
+  std::memset(storage.data() + hole, 0, static_cast<size_t>(seg));
+
+  osd_store osd2(&dev, buffer_mode::heap, seg);
+  r = {};
+  osd2.recover(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  // Hole must not seal the rest of the device.
+  EXPECT_TRUE(osd2.allocator()->free_count() >= 1u);
+
+  auto* lg2 = osd2.get_log(1, 0, osd2.serving_epoch(1, 0));
+  EXPECT_TRUE(lg2 != nullptr);
+  EXPECT_EQ(lg2->last_index(), last_idx);
+
+  struct {
+    int err{-1};
+    std::vector<log_entry> entries;
+  } rr;
+  lg2->read(last_idx, last_idx,
+            [](void* a, std::vector<log_entry> entries, int err) {
+              auto* p = static_cast<decltype(rr)*>(a);
+              p->err = err;
+              p->entries = std::move(entries);
+            },
+            &rr);
+  EXPECT_EQ(rr.err, 0);
+  EXPECT_EQ(rr.entries.size(), 1u);
+}
+
 void test_aos_dump_counts_kv_and_log_records() {
   mem_device_backend dev(16 * 1024 * 1024);
   osd_store osd(&dev, buffer_mode::heap, 1024 * 1024);
@@ -1858,6 +2531,156 @@ void test_aos_dump_counts_kv_and_log_records() {
                   static_cast<uint8_t>(record_type::raft_log_entry)) > 0);
 }
 
+void test_aos_dump_collect_live_lww() {
+  mem_device_backend dev(16 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, 1024 * 1024);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(3, 1, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  std::vector<char> first(4096, 'A');
+  std::vector<char> second(4096, 'B');
+  r = {};
+  osd.apply(3, 1, "obj", 0, first.data(), first.size(), /*raft*/ 10, 0,
+            on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.apply(3, 1, "obj", 0, second.data(), second.size(), /*raft*/ 11, 0,
+            on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  auto rep = scan_image(dev.storage().data(), dev.storage().size(),
+                        dev.block_size(), /*collect_live=*/true);
+  EXPECT_TRUE(rep.ok());
+  EXPECT_TRUE(rep.live_records.size() >= 2u);
+
+  uint64_t data_recs = 0;
+  uint64_t last_apply = 0;
+  char last_byte = 0;
+  for (const auto& rec : rep.live_records) {
+    if (rec.type != record_type::data) {
+      continue;
+    }
+    ++data_recs;
+    if (rec.raft_apply_index >= last_apply && !rec.payload.empty()) {
+      last_apply = rec.raft_apply_index;
+      last_byte = rec.payload[0];
+    }
+  }
+  EXPECT_TRUE(data_recs >= 2u);
+  EXPECT_EQ(last_apply, 11u);
+  EXPECT_EQ(last_byte, 'B');
+}
+
+void test_log_store_checkpoint_rebuild() {
+  mem_device_backend dev(4 * 1024 * 1024);
+  auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
+                                                   dev.block_size());
+  EXPECT_EQ(alloc->ensure_open(), 0);
+  log_store log(&dev, pg_id{1, 1, 1}, alloc, buffer_mode::heap);
+  for (uint64_t i = 1; i <= 4; ++i) {
+    log_entry e;
+    e.term = 2;
+    e.index = i;
+    e.type = 0;
+    e.meta = "m";
+    e.data = "d";
+    sync_result r;
+    log.append(e, on_done, &r);
+    EXPECT_EQ(r.err, 0);
+  }
+  sync_result r;
+  log.checkpoint(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(log.last_checkpoint_phys() != 0);
+
+  log_entry e;
+  e.term = 2;
+  e.index = 5;
+  e.type = 0;
+  r = {};
+  log.append(e, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  std::vector<uint8_t> image(static_cast<size_t>(dev.write_pointer()));
+  r = {};
+  dev.read(0, image.data(), image.size(), on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  auto alloc2 = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
+                                                    dev.block_size());
+  log_store log2(&dev, pg_id{1, 1, 1}, alloc2, buffer_mode::heap);
+  // Apply only the checkpoint + tail entry 5 via rebuild (full image).
+  log2.rebuild_from_image(image.data(), image.size());
+  EXPECT_EQ(log2.last_index(), 5);
+  EXPECT_EQ(log2.get_term(3), 2);
+  EXPECT_EQ(log2.get_term(5), 2);
+}
+
+void test_osd_checkpoint_pass_then_recover() {
+  const uint64_t seg = 256 * 1024;
+  mem_device_backend dev(4 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, seg);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  const char payload[4096] = {0};
+  r = {};
+  osd.apply(1, 0, "obj-a", 0, payload, 4096, /*raft*/ 1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.checkpoint_pass(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  char second[4096];
+  std::memset(second, 'Z', sizeof(second));
+  r = {};
+  osd.apply(1, 0, "obj-a", 4096, second, 4096, /*raft*/ 2, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  osd_store osd2(&dev, buffer_mode::heap, seg);
+  r = {};
+  osd2.recover(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  char buf[4096];
+  r = {};
+  osd2.read(1, 0, "obj-a", 0, buf, 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd2.read(1, 0, "obj-a", 4096, buf, 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(buf[0], 'Z');
+}
+
+void test_format_zeros_leftover_then_recover_empty() {
+  mem_device_backend dev(2 * 1024 * 1024);
+  // Dirty the data region with 0x55.
+  std::vector<uint8_t> junk(4096, 0x55);
+  sync_result r;
+  dev.write_at(kMetaSize, junk.data(), junk.size(),
+               [](void* a, uint64_t, int err) {
+                 static_cast<sync_result*>(a)->err = err;
+               },
+               &r);
+  EXPECT_EQ(r.err, 0);
+
+  osd_store osd(&dev, buffer_mode::heap, 256 * 1024);
+  r = {};
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  osd_store osd2(&dev, buffer_mode::heap, 256 * 1024);
+  r = {};
+  osd2.recover(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(osd2.pg_count(), 0u);
+}
+
 } // namespace
 
 int main() {
@@ -1894,18 +2717,37 @@ int main() {
   test_pg_store_rewrite_extent();
   test_osd_store_gc_rewrite_once();
   test_superblock_manifest_codec();
+  test_log_store_checkpoint_rebuild();
+  test_osd_checkpoint_pass_then_recover();
+  test_format_zeros_leftover_then_recover_empty();
   test_osd_store_multi_pg_shared_allocator();
   test_parse_object_engine_mode();
   test_compute_shard_region();
   test_gc_rewrite_rate_limit();
   test_log_store_append_read_trim();
   test_log_store_rebuild_from_image();
+  test_log_store_torn_tail();
+  test_kv_engine_put_durable_and_stop_flush();
+  test_kv_engine_put_visible_before_commit();
   test_kv_engine_put_commit_get();
   test_kv_engine_delete_and_checkpoint_replay();
+  test_kv_engine_torn_wal_keeps_prior();
+  test_kv_engine_torn_checkpoint_keeps_prior();
+  test_log_store_install_snapshot_base();
   test_log_store_truncate_from();
+  test_gc_preserves_live_log_and_frees_after_trim();
+  test_gc_preserves_live_kv_and_frees_after_checkpoint();
   test_osd_store_list_pg_ids();
+  test_osd_store_empty_recover_then_append();
+  test_osd_store_recover_keeps_existing_epoch();
+  test_osd_store_recover_keeps_existing_epoch_512();
+  test_osd_store_recover_keeps_kv_across_pad_hole();
+  test_osd_store_recover_skips_nonzero_pad_hole();
+  test_osd_store_recover_vstart_image_if_present();
+  test_osd_store_recover_skips_zero_hole();
   test_aos_dump_empty_and_formatted();
   test_aos_dump_counts_kv_and_log_records();
+  test_aos_dump_collect_live_lww();
   test_pg_store_flatten_image();
   test_osd_store_image_snap_and_gc_pass();
 

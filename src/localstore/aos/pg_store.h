@@ -75,6 +75,8 @@ public:
   uint64_t checkpoint_generation() const { return checkpoint_generation_; }
   // Phys offset of last durable checkpoint record end (0 if none).
   uint64_t last_checkpoint_end() const { return last_checkpoint_end_; }
+  // Absolute start of last durable checkpoint record (0 if none).
+  uint64_t last_checkpoint_phys() const { return last_checkpoint_phys_; }
 
   /**
    * Append a data record, flush, then publish head extent map.
@@ -375,6 +377,7 @@ private:
   uint64_t next_object_id_{1};
   uint64_t checkpoint_generation_{0};
   uint64_t last_checkpoint_end_{0};
+  uint64_t last_checkpoint_phys_{0};
 
   std::unordered_map<std::string, uint64_t> name_to_id_;
   std::unordered_map<uint64_t, object_state> objects_;

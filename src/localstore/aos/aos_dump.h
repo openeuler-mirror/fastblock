@@ -56,6 +56,23 @@ struct dump_report {
   /** Soft consistency notes (e.g. stale high_water); do not fail ok(). */
   std::vector<dump_error> warnings;
 
+  /**
+   * Object-ish records collected when scan_image(..., collect_live=true).
+   * Includes historical versions; caller does last-writer-wins.
+   */
+  struct live_record {
+    uint64_t disk_offset{0};
+    record_type type{record_type::data};
+    uint64_t pool_id{0};
+    uint64_t pg_id{0};
+    uint64_t object_id{0};
+    uint64_t object_offset{0};
+    uint64_t raft_apply_index{0};
+    uint32_t payload_crc{0};
+    std::string payload;
+  };
+  std::vector<live_record> live_records;
+
   /** True when no hard errors and at least one valid superblock. */
   bool ok() const { return has_chosen && errors.empty(); }
 };
@@ -63,9 +80,10 @@ struct dump_report {
 /**
  * Scan a full AOS region image (meta + data).
  * align: on-disk record padding (usually device block size, e.g. 4096).
- * max_data: 0 = scan until end of image or first hard decode failure streak.
+ * collect_live: also keep object data / rewrite / tombstone records (and payloads).
  */
-dump_report scan_image(const uint8_t* image, size_t len, uint32_t align = 4096);
+dump_report scan_image(const uint8_t* image, size_t len, uint32_t align = 4096,
+                       bool collect_live = false);
 
 /** Human-readable multi-line summary (for tests / CLI). */
 std::string format_report(const dump_report& r);

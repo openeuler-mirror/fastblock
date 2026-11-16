@@ -1769,6 +1769,7 @@ void pg_store::checkpoint_after_flush(void* arg, int err) {
   pg_store* self = req->self;
   if (err == 0) {
     self->checkpoint_generation_ = req->generation;
+    self->last_checkpoint_phys_ = req->phys;
     self->last_checkpoint_end_ = req->phys + req->aligned_len;
   }
   auto cb = std::move(req->cb);

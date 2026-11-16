@@ -3,8 +3,25 @@
 > **2026-08 生产路径已迁到 AOS（`aos/`）**  
 > OSD 生产：object / raft log / meta KV 全部走 AppendOnlyStore；  
 > **不再** `blobstore_init/load`。  
-> blob 实现已归档到 `legacy_blob/`，**不参与生产编译**；下文历史描述仅供对照。  
+> blob 实现已归档到 `legacy_blob/`，**不参与生产编译**；下文 §2 起的 blob 图与 rolling_blob 叙述仅为档案。  
 > 详见 `docs/append_only_store_design.md` 与 `aos/README.md`。
+
+## 1.1 生产架构（AOS）
+
+```text
+aos_runtime (per shard)
+  └── osd_store
+        ├── pg_store × N     object_engine
+        ├── log_store × N    log_engine（disk_log 门面）
+        ├── kv_engine × 1    kv_engine（kvstore 门面；K2 record 流）
+        ├── segment_allocator
+        └── device_backend → spdk_bdev
+```
+
+单盘 `aos_disk`：superblock A/B + manifest slots + data segments。  
+GC 必须同时看 object / log / kv 的 live 范围，不能只扫 object。
+
+部署与 mkfs：`src/osd/readme.md`、`vstart.sh`（每 OSD 一块 `aos.img`）。
 
 localstore 历史上基于 SPDK blobstore 提供：
 

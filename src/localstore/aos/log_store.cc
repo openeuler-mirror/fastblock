@@ -337,6 +337,36 @@ uint64_t log_store::get_term(uint64_t index) const {
   return it->second.term;
 }
 
+bool log_store::contains(uint64_t index) const {
+  return index_map_.find(index) != index_map_.end();
+}
+
+void log_store::install_snapshot_base(uint64_t index, uint64_t term,
+                                      op_complete cb, void* arg) {
+  if (!cb) {
+    return;
+  }
+  if (index == 0) {
+    cb(arg, -EINVAL);
+    return;
+  }
+  // Catchup already appended past the snapshot, or marker already present.
+  if (last_index_ >= index) {
+    cb(arg, 0);
+    return;
+  }
+  if (!index_map_.empty()) {
+    // Non-empty log cannot jump to a non-consecutive snapshot index.
+    cb(arg, -EINVAL);
+    return;
+  }
+  log_entry e;
+  e.term = term;
+  e.index = index;
+  e.type = kRaftLogTypeSnapshotBase;
+  append(e, std::move(cb), arg);
+}
+
 void log_store::trim_to(uint64_t trim_index) {
   if (index_map_.empty() || trim_index == 0) {
     return;
@@ -428,6 +458,10 @@ uint64_t log_store::rebuild_from_image(const uint8_t* image, size_t len) {
       if (apply_record(rec, off) != 0) {
         break;
       }
+    } else if (rec.type == record_type::log_checkpoint) {
+      if (apply_checkpoint_record(rec) != 0) {
+        break;
+      }
     }
     // Skip other record types (object/kv on shared device image in tests).
     last_good = off + consumed;
@@ -440,6 +474,148 @@ uint64_t log_store::rebuild_from_image(const uint8_t* image, size_t len) {
     }
   }
   return last_good;
+}
+
+std::string log_store::encode_checkpoint_payload(
+    const std::map<uint64_t, idx_pos>& idx, uint64_t base, uint64_t last) {
+  std::string o;
+  o.reserve(20 + idx.size() * 32);
+  auto put32 = [&](uint32_t v) {
+    for (int i = 0; i < 4; ++i) {
+      o.push_back(static_cast<char>((v >> (8 * i)) & 0xff));
+    }
+  };
+  auto put64 = [&](uint64_t v) {
+    for (int i = 0; i < 8; ++i) {
+      o.push_back(static_cast<char>((v >> (8 * i)) & 0xff));
+    }
+  };
+  put64(base);
+  put64(last);
+  put32(static_cast<uint32_t>(idx.size()));
+  for (const auto& kv : idx) {
+    put64(kv.first);
+    put64(kv.second.term);
+    put64(kv.second.phys_offset);
+    put64(kv.second.length);
+  }
+  return o;
+}
+
+bool log_store::decode_checkpoint_payload(const std::string& p,
+                                          std::map<uint64_t, idx_pos>* idx,
+                                          uint64_t* base, uint64_t* last) {
+  if (idx == nullptr || base == nullptr || last == nullptr || p.size() < 20) {
+    return false;
+  }
+  const auto* s = reinterpret_cast<const uint8_t*>(p.data());
+  auto ru64 = [&](size_t off) {
+    uint64_t v = 0;
+    for (int i = 0; i < 8; ++i) {
+      v |= static_cast<uint64_t>(s[off + static_cast<size_t>(i)]) << (8 * i);
+    }
+    return v;
+  };
+  auto ru32 = [&](size_t off) {
+    return static_cast<uint32_t>(s[off]) |
+           (static_cast<uint32_t>(s[off + 1]) << 8) |
+           (static_cast<uint32_t>(s[off + 2]) << 16) |
+           (static_cast<uint32_t>(s[off + 3]) << 24);
+  };
+  *base = ru64(0);
+  *last = ru64(8);
+  const uint32_t n = ru32(16);
+  if (p.size() < 20ull + static_cast<size_t>(n) * 32ull) {
+    return false;
+  }
+  idx->clear();
+  size_t off = 20;
+  for (uint32_t i = 0; i < n; ++i) {
+    idx_pos pos;
+    const uint64_t index = ru64(off);
+    pos.term = ru64(off + 8);
+    pos.phys_offset = ru64(off + 16);
+    pos.length = ru64(off + 24);
+    (*idx)[index] = pos;
+    off += 32;
+  }
+  return true;
+}
+
+void log_store::checkpoint(op_complete cb, void* arg) {
+  if (!cb) {
+    return;
+  }
+  if (backend_ == nullptr) {
+    cb(arg, -EINVAL);
+    return;
+  }
+  data_record rec;
+  rec.type = record_type::log_checkpoint;
+  rec.pool_id = id_.pool_id;
+  rec.pg_id = id_.pg_id;
+  rec.store_epoch = id_.store_epoch;
+  rec.payload = encode_checkpoint_payload(index_map_, base_index_, last_index_);
+  auto encoded = encode_record(rec);
+  const uint64_t aligned = writer_.align_up(encoded.size());
+  void* dma = alloc_buf(aligned);
+  if (dma == nullptr) {
+    cb(arg, -ENOMEM);
+    return;
+  }
+  std::memcpy(dma, encoded.data(), encoded.size());
+  struct ctx {
+    log_store* self;
+    void* dma;
+    op_complete cb;
+    void* arg;
+    uint64_t phys{0};
+  };
+  auto* c = new ctx{this, dma, std::move(cb), arg, 0};
+  writer_.append_record(
+      rec, dma, aligned,
+      [](void* a, uint64_t phys, int err) {
+        auto* c = static_cast<ctx*>(a);
+        if (err != 0) {
+          c->self->free_buf(c->dma);
+          c->cb(c->arg, err);
+          delete c;
+          return;
+        }
+        c->phys = phys;
+        c->self->writer_.flush(
+            [](void* a2, int ferr) {
+              auto* c2 = static_cast<ctx*>(a2);
+              if (ferr == 0) {
+                c2->self->last_checkpoint_phys_ = c2->phys;
+              }
+              c2->self->free_buf(c2->dma);
+              c2->cb(c2->arg, ferr);
+              delete c2;
+            },
+            c);
+      },
+      c);
+}
+
+int log_store::apply_checkpoint_record(const data_record& rec) {
+  if (rec.type != record_type::log_checkpoint) {
+    return 0;
+  }
+  if (rec.pool_id != id_.pool_id || rec.pg_id != id_.pg_id ||
+      rec.store_epoch != id_.store_epoch) {
+    return 0;
+  }
+  std::map<uint64_t, idx_pos> idx;
+  uint64_t base = 0;
+  uint64_t last = 0;
+  if (!decode_checkpoint_payload(rec.payload, &idx, &base, &last)) {
+    return -EIO;
+  }
+  index_map_ = std::move(idx);
+  base_index_ = base;
+  last_index_ = last;
+  return 0;
 }
 
 void log_store::for_each_live_extent(

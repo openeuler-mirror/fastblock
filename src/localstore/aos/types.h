@@ -29,6 +29,7 @@ inline constexpr uint64_t kMaxObjectSize = 4ull * 1024 * 1024;
 inline constexpr uint32_t kRecordMagic = 0x534f4146u; // 'FAOS' LE
 // v2: platform record types include log/kv (design v2 §8)
 inline constexpr uint16_t kFormatVersion = 2;
+inline constexpr uint16_t kFormatVersionV3 = 3;
 
 enum class record_type : uint8_t {
   data = 1,
@@ -52,7 +53,19 @@ enum class record_type : uint8_t {
   kv_put = 15,        // object_id unused; payload key\0value or len-prefixed
   kv_delete = 16,     // payload key
   kv_checkpoint = 17, // payload full table snapshot
+  // Compact log index_map snapshot (design recover skip-prefix).
+  log_checkpoint = 18,
 };
+
+// raft_log_entry.payload type for a durable snapshot base (matches
+// RAFT_LOGTYPE_SNAPSHOT_BASE). STM apply ignores unknown/non-IO types.
+inline constexpr uint64_t kRaftLogTypeSnapshotBase = 4;
+// Matches RAFT_LOGTYPE_NOOP: current-term fence after become_leader (P6).
+inline constexpr uint64_t kRaftLogTypeNoop = 5;
+
+// Process-wide P6 flag. Default off; tests may set. Env FASTBLOCK_AOS_UNIFIED_LOG.
+bool unified_log_enabled();
+void set_unified_log_enabled(bool on);
 
 // Follower install-snapshot state machine (design §10.4).
 enum class ingest_state : uint8_t {

@@ -45,8 +45,9 @@ Object 子系统细节见设计文档 §5。
 | `release_image_snapshot` | 减 pin；0 后 GC 可回收仅属该 snap 的历史 |
 | `flatten_image` | 把 parent view 物化为 `new_image_seq` 下的 data 记录 |
 | `read(..., raft, image)` | 读 snapshot 视图 |
-| `osd_store::gc_pass` | rewrite 限速 + free 无 live sealed segment |
+| `osd_store::gc_pass` | rewrite 限速 + free 无 live sealed segment（object + log + kv） |
 
+GC live-set 覆盖 object / log / kv（checkpoint 前 WAL 可裁）。  
 控制面 mon/CSI 后续对接；`osd_stm::set_image_snap_seq` 供 apply 写入 image 时间线。
 
 ## 启用
@@ -71,6 +72,7 @@ cmake --build build --target aos_m1_test fastblock-osd -j$(nproc)
 ## dump / light fsck
 
 库：`aos_dump.h` — `scan_image(image, len)` 解析 superblock A/B、manifest、扫 data 区 record，输出 `dump_report` / `format_report`。  
+`scan_image(..., collect_live=true)` 额外收集 object data / rewrite / tombstone（含 payload），供副本对照。  
 不依赖 SPDK reactor。扫描策略与 `osd_store::recover` 一致：扫满 data 区上界（不截断在可能滞后的 `data_high_water`）。
 
 CLI：
@@ -81,6 +83,10 @@ cmake --build build --target fastblock-aos-dump -j$(nproc)
 ```
 
 Exit 0 = `report.ok()`，1 = hard errors，2 = 用法/读盘失败。
+
+数据正确性（每 offset 唯一 payload，不是 block_bench 的 0x55）见
+`src/tools/image_verify/`：`image_verify -M write|verify` 走 libblk；
+`-M dump-compare` 离线对照三副本 `aos_file`。脚本：`scripts/run-aos-data-verify.sh`。
 
 ## vibe 约束
 

@@ -21,6 +21,7 @@
 
 #include <spdk/log.h>
 
+#include <cerrno>
 #include <functional>
 #include <optional>
 #include <string>
@@ -51,7 +52,8 @@ public:
   }
 
   void stop(kvstore_rw_complete cb_fn, void* arg) {
-    // Engine lifetime is owned by aos_runtime (stop_aos/close).
+    // Engine lifetime is owned by aos_runtime::stop (flush then reset).
+    // Detach only — a second flush here UAFs after the engine is destroyed.
     _aos = nullptr;
     if (cb_fn) {
       cb_fn(arg, 0);
@@ -61,6 +63,18 @@ public:
   void put(std::string key, std::optional<std::string> value) {
     if (_aos) {
       _aos->put(std::move(key), std::move(value));
+    }
+  }
+
+  void put_durable(std::string key, std::optional<std::string> value,
+                   kvstore_rw_complete cb_fn, void* arg) {
+    if (_aos) {
+      _aos->put_durable(std::move(key), std::move(value), std::move(cb_fn),
+                        arg);
+      return;
+    }
+    if (cb_fn) {
+      cb_fn(arg, -ENODEV);
     }
   }
 

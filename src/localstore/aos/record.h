@@ -37,13 +37,16 @@ namespace fastblock::aos {
 //  header_checksum  u32  (covers all fields above except itself)
 //  payload_checksum u32  (covers payload; 0 if payload_len==0)
 //
-// header_len == sizeof fixed header for version 1 data records.
+// header_len == sizeof fixed header for version 1/2 data records.
 // 4+2+1+1+2+4 + 7*8 + 4+4 = 78
 inline constexpr uint16_t kRecordHeaderLenV1 = 78;
+// v3 adds raft_term u64 before checksums: 78+8 = 86
+inline constexpr uint16_t kRecordHeaderLenV3 = 86;
 
 struct data_record {
   record_type type{record_type::data};
   uint8_t flags{0};
+  uint16_t header_len{kRecordHeaderLenV1};
   uint64_t pool_id{0};
   uint64_t pg_id{0};
   uint64_t store_epoch{0};
@@ -51,8 +54,14 @@ struct data_record {
   uint64_t object_offset{0};
   uint64_t raft_apply_index{0};
   uint64_t image_snap_seq{0};
+  uint64_t raft_term{0};
   std::string payload;
 };
+
+// Payload starts at record_start + header_len (never a compile-time 78).
+inline uint64_t payload_phys(uint64_t record_start, uint16_t header_len) {
+  return record_start + (header_len != 0 ? header_len : kRecordHeaderLenV1);
+}
 
 enum class decode_status {
   ok = 0,
@@ -65,8 +74,11 @@ enum class decode_status {
   bad_type,
 };
 
-// Encode a data/tombstone-style record. Returns full bytes (header+payload).
+// Encode a data/tombstone-style record. Default encode is v2/78B.
+// format_version==3 writes 86B header with raft_term.
 std::vector<uint8_t> encode_record(const data_record& rec);
+std::vector<uint8_t> encode_record(const data_record& rec,
+                                   uint16_t format_version);
 
 // Try decode one record from buf[0..len). On ok, *consumed is total bytes.
 decode_status decode_record(const uint8_t* buf, size_t len, data_record* out,
