@@ -52,6 +52,11 @@ public:
 
   void close();
 
+  // Max concurrent write_at/append I/Os (default 32). Reactor-thread only.
+  void set_max_write_inflight(uint32_t n);
+  uint32_t max_write_inflight() const { return max_write_inflight_; }
+  uint32_t write_inflight() const { return write_inflight_; }
+
   // After crash recovery, set pointer to end of last good record.
   void set_write_pointer(uint64_t bytes_from_region_start) override;
 
@@ -88,8 +93,9 @@ private:
   uint64_t region_length_{0};  // capacity of this region
   uint64_t write_pointer_{0};  // relative to region start
 
-  // Serialize appends: at most one in-flight append for M1 simplicity.
-  bool append_inflight_{false};
+  // Concurrent write depth (queue depth > 1). Reads are unbounded for now.
+  uint32_t max_write_inflight_{32};
+  uint32_t write_inflight_{0};
 };
 
 } // namespace fastblock::aos
