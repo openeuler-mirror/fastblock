@@ -40,34 +40,18 @@ public:
   storage_manager() { }
 
   void start(uint32_t shard_id, storage_op_complete cb_fn, void* arg) {
-      // design v2 P3: AOS is the production store. Blob kv is not created here;
+      // design v2 P4: production is AOS-only. Never create blob kv here;
       // attach_aos_kv() wires the real engine after aos_runtime open/recover.
-      if (global_blobstore(shard_id) == nullptr) {
-          _kvstore = nullptr;
-          _started = false;
-          SPDK_NOTICELOG(
-              "storage start (AOS-only): defer kv until attach_aos_kv shard %u\n",
-              shard_id);
-          if (cb_fn) {
-              cb_fn(arg, 0);
-          }
-          return;
+      // Blob make_kvstore remains for demos that still call blobstore_init.
+      (void)shard_id;
+      _kvstore = nullptr;
+      _started = false;
+      SPDK_NOTICELOG(
+          "storage start (AOS-only): defer kv until attach_aos_kv shard %u\n",
+          shard_id);
+      if (cb_fn) {
+          cb_fn(arg, 0);
       }
-      make_kvstore(global_blobstore(shard_id), global_io_channel(shard_id),
-        [this, cb_fn = std::move(cb_fn)](void *arg, kvstore* kvs, int error){
-            if (error) {
-                SPDK_ERRLOG("storage start failed. error:%s\n", spdk_strerror(error));
-                cb_fn(arg, error);
-                return;
-            }
-
-            this->_kvstore = kvs;
-            this->_started = true;
-            SPDK_INFOLOG(storage_log, "The storage manager has been started\n");
-            cb_fn(arg, 0);
-            return;
-        }, arg
-      );
   }
 
   void stop(storage_op_complete cb_fn, void* arg) {
@@ -94,37 +78,18 @@ public:
 
   void load(uint32_t shard_id, spdk_blob_id blob_id, spdk_blob_id checkpoint_blob_id, spdk_blob_id new_checkpoint_blob_id, 
           storage_op_complete cb_fn, void* arg){
-      // design v2 P3: no blobstore → skip blob kv load; AOS recover + attach_aos_kv.
-      if (global_blobstore(shard_id) == nullptr) {
-          _kvstore = nullptr;
-          _started = false;
-          SPDK_NOTICELOG(
-              "storage load (AOS-only): defer kv until attach_aos_kv shard %u\n",
-              shard_id);
-          if (cb_fn) {
-              cb_fn(arg, 0);
-          }
-          return;
+      // design v2 P4: ignore blob ids; AOS recover + attach_aos_kv supply kv.
+      (void)blob_id;
+      (void)checkpoint_blob_id;
+      (void)new_checkpoint_blob_id;
+      _kvstore = nullptr;
+      _started = false;
+      SPDK_NOTICELOG(
+          "storage load (AOS-only): defer kv until attach_aos_kv shard %u\n",
+          shard_id);
+      if (cb_fn) {
+          cb_fn(arg, 0);
       }
-      load_kvstore(
-        blob_id, 
-        checkpoint_blob_id, 
-        new_checkpoint_blob_id, 
-        global_blobstore(shard_id), 
-        global_io_channel(shard_id),
-        [this, cb_fn = std::move(cb_fn)](void *arg, kvstore* kvs, int error){
-            if (error) {
-                SPDK_ERRLOG("load storage failed. error:%s\n", spdk_strerror(error));
-                cb_fn(arg, error);
-                return;
-            }
-
-            this->_kvstore = kvs;
-            this->_started = true;
-            cb_fn(arg, 0);
-            return;
-        }, 
-        arg);
   }
 
   kvstore* kvs() {
