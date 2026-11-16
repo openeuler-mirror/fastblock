@@ -20,11 +20,13 @@ AOS 不是普通用户态文件库。它运行在 **fastblock / SPDK reactor** �
 ## 分层
 
 ```text
+osd_store                # 多 PG 生命周期，共享 allocator（M2 骨架）
+    │
 pg_store                 # object 语义、幂等、extent 发布、checkpoint
     │
-segment                  # record 编码 + 对齐 + reserve/write_at
+segment                  # record 编码 + 对齐 + reserve/write_at + segment_seal
     │
-segment_allocator        # 固定大小 free/open/sealed（M1 单写者）
+segment_allocator        # 固定大小 free/open/sealed（可共享）
     │
 device_backend           # 异步 append / write_at / read / flush
     │
@@ -49,6 +51,8 @@ spdk_bdev_backend        # spdk_bdev_write/read/flush_blocks
 | range_tombstone | 有：`object_offset` + payload u64 LE `len`，discard 后读零 |
 | checkpoint_marker | 有：ObjectMap 快照 payload（`checkpoint.cc`）；recover 两阶段：找最新完整 ckpt → load → replay tail |
 | `segment_allocator` | 有：固定大小 segment，reserve 不双分配；满则 seal 开下一段；`segment_size=0` 退化为整盘单段 |
+| `segment_seal` | 有：段滚动前若尾部够放 header，先写 seal record |
+| `osd_store` | 有：create/delete_pg、共享 allocator、单次 recover 按 pool/pg/epoch 路由 |
 
 已删除错误方向：`file_segment`（POSIX pwrite）。
 
@@ -70,8 +74,8 @@ echo 2048 > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
 
 ## 下一步
 
-- 多 PG 共享同一 allocator + 全局 manifest（M2）
-- segment_seal record 落盘 / superblock
+- 全局 superblock / manifest 持久化（store_epoch 重启恢复）
+- GC 回收 sealed segment（M6）
 - 接 osd_stm apply / raft（M4）
 - I/O 队列深度 > 1（目前 append 单 inflight）
 
