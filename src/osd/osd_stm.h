@@ -253,6 +253,26 @@ public:
     uint64_t aos_pool_id() const { return _pool_id; }
     uint64_t aos_pg_id() const { return _pg_id; }
 
+    /**
+     * Image timeline for object apply (design §5.2 / P5). 0 = no image seq.
+     * Control plane (mon/CSI) sets this before image-aware writes.
+     */
+    void set_image_snap_seq(uint64_t seq) { _image_snap_seq = seq; }
+    uint64_t image_snap_seq() const { return _image_snap_seq; }
+
+    /** Pin / re-pin (clone) / release image snapshot on attached AOS PG. */
+    void create_image_snapshot(uint64_t image_snap_seq, object_rw_complete cb,
+                               void* arg);
+    void release_image_snapshot(uint64_t image_snap_seq, object_rw_complete cb,
+                                void* arg);
+    void clone_image(uint64_t image_snap_seq, object_rw_complete cb,
+                     void* arg) {
+      create_image_snapshot(image_snap_seq, std::move(cb), arg);
+    }
+    void flatten_image(uint64_t parent_image_seq, uint64_t new_image_seq,
+                       uint64_t raft_write_index, object_rw_complete cb,
+                       void* arg);
+
     bool uses_aos_objects() const override;
     std::vector<std::string> list_live_objects() override;
     bool object_exists(const std::string& name) override;
@@ -281,6 +301,7 @@ private:
     fastblock::aos::osd_store* _aos{nullptr};
     uint64_t _pool_id{0};
     uint64_t _pg_id{0};
+    uint64_t _image_snap_seq{0};
     // AOS recovery pin bookkeeping (was on state_machine for blob path).
     bool _recovery_pinned{false};
     uint64_t _recovery_snap_index{0};
