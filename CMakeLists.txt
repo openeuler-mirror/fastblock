@@ -49,19 +49,30 @@ set(PKG_CONFIG_PATH_LIST
 list(APPEND BASE_CXX_FLAGS_LIST -fPIC)
 list(APPEND BASE_C_FLAGS_LIST -fPIC)
 
-if ("${CMAKE_BUILD_TYPE}" MATCHES "Debug")
-  set(COMMON_LINKOPTS "-lasan -lubsan")
-  add_compile_definitions(DEBUG)
+# ASan/UBSan are useful for unit tests, but system Abseil (libabsl_raw_hash_set)
+# is usually built *without* sanitizers. Abseil headers enable swisstable
+# "generations" under ASan → layout/ABI mismatch and SEGV on empty maps
+# (seen in vstart create_pg / write lock_manager). Allow opt-out:
+#   cmake -DFASTBLOCK_ENABLE_SANITIZERS=OFF ...
+option(FASTBLOCK_ENABLE_SANITIZERS "Enable ASan/UBSan in Debug builds" ON)
 
-  list(APPEND BASE_CXX_FLAGS_LIST
-    -fsanitize=undefined
-    -fsanitize=address)
-  list(APPEND BASE_C_FLAGS_LIST
-    -fsanitize=undefined
-    -fsanitize=address)
-  list(APPEND BASE_LD_FLAGS_LIST
-    -fsanitize=undefined
-    -fsanitize=address)
+if ("${CMAKE_BUILD_TYPE}" MATCHES "Debug")
+  add_compile_definitions(DEBUG)
+  if (FASTBLOCK_ENABLE_SANITIZERS)
+    set(COMMON_LINKOPTS "-lasan -lubsan")
+    list(APPEND BASE_CXX_FLAGS_LIST
+      -fsanitize=undefined
+      -fsanitize=address)
+    list(APPEND BASE_C_FLAGS_LIST
+      -fsanitize=undefined
+      -fsanitize=address)
+    list(APPEND BASE_LD_FLAGS_LIST
+      -fsanitize=undefined
+      -fsanitize=address)
+  else()
+    set(COMMON_LINKOPTS)
+    message(STATUS "Debug build without sanitizers (system Abseil-safe)")
+  endif()
 else()
   set(COMMON_LINKOPTS)
 endif()
