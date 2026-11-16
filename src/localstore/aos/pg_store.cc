@@ -123,6 +123,34 @@ struct pg_store::rewrite_req {
   uint64_t data_phys{0};
 };
 
+struct pg_store::flatten_obj_req {
+  pg_store* self{nullptr};
+  op_complete cb;
+  void* arg{nullptr};
+  std::string name;
+  uint64_t parent_image_seq{0};
+  uint64_t new_image_seq{0};
+  uint64_t raft_base{0};
+  std::vector<extent> extents;
+  size_t idx{0};
+  bool do_remove{false};
+  void* stage{nullptr};
+  uint64_t stage_pad{0};
+  uint64_t len{0};
+  std::vector<char> payload;
+};
+
+struct pg_store::flatten_img_req {
+  pg_store* self{nullptr};
+  op_complete cb;
+  void* arg{nullptr};
+  uint64_t parent_image_seq{0};
+  uint64_t new_image_seq{0};
+  uint64_t raft_base{0};
+  std::vector<std::string> names;
+  size_t idx{0};
+};
+
 struct pg_store::recover_req {
   enum class phase {
     find_checkpoint = 0,
@@ -1299,6 +1327,237 @@ void pg_store::mark_install_activate(uint64_t snapshot_index, op_complete cb,
     }
     seg_.append_record(rec, scratch_ptr_, scratch_cap_, snap_after_append, req);
   });
+}
+
+void pg_store::flatten_object(const std::string& object_name,
+                              uint64_t parent_image_seq,
+                              uint64_t new_image_seq,
+                              uint64_t raft_write_index, op_complete cb,
+                              void* arg) {
+  if (cb == nullptr) {
+    return;
+  }
+  if (backend_ == nullptr || object_name.empty() || parent_image_seq == 0 ||
+      new_image_seq <= parent_image_seq || raft_write_index == 0) {
+    cb(arg, -EINVAL);
+    return;
+  }
+  enqueue_or_run([this, object_name, parent_image_seq, new_image_seq,
+                  raft_write_index, cb = std::move(cb), arg]() mutable {
+    auto* req = new (std::nothrow) flatten_obj_req();
+    if (req == nullptr) {
+      finish_op(std::move(cb), arg, -ENOMEM);
+      return;
+    }
+    req->self = this;
+    req->cb = std::move(cb);
+    req->arg = arg;
+    req->name = object_name;
+    req->parent_image_seq = parent_image_seq;
+    req->new_image_seq = new_image_seq;
+    req->raft_base = raft_write_index;
+
+    object_state* obj = find_object(object_name);
+    if (obj == nullptr) {
+      // Nothing at any version — treat as success (no work).
+      auto c = std::move(req->cb);
+      void* a = req->arg;
+      delete req;
+      finish_op(std::move(c), a, 0);
+      return;
+    }
+    extent_map view = view_at(*obj, /*raft*/ 0, parent_image_seq);
+    req->extents = view.all();
+    if (req->extents.empty()) {
+      // Parent view is empty/deleted: materialize a delete at new seq.
+      req->do_remove = true;
+    }
+    // Release busy so nested write/remove can take the queue.
+    finish_op(
+        [](void* a, int /*err*/) {
+          auto* r = static_cast<flatten_obj_req*>(a);
+          flatten_obj_step(r);
+        },
+        req, 0);
+  });
+}
+
+void pg_store::flatten_obj_step(flatten_obj_req* req) {
+  if (req == nullptr) {
+    return;
+  }
+  pg_store* self = req->self;
+  if (req->do_remove) {
+    self->remove(
+        req->name, req->raft_base, req->new_image_seq,
+        [](void* a, int err) {
+          auto* r = static_cast<flatten_obj_req*>(a);
+          auto cb = std::move(r->cb);
+          void* u = r->arg;
+          delete r;
+          if (cb) {
+            cb(u, err);
+          }
+        },
+        req);
+    return;
+  }
+  if (req->idx >= req->extents.size()) {
+    auto cb = std::move(req->cb);
+    void* a = req->arg;
+    delete req;
+    if (cb) {
+      cb(a, 0);
+    }
+    return;
+  }
+
+  const extent& e = req->extents[req->idx];
+  if (e.length == 0 || e.phys_offset == 0) {
+    ++req->idx;
+    flatten_obj_step(req);
+    return;
+  }
+
+  const uint32_t bs = self->backend_->block_size();
+  const uint64_t phys = e.phys_offset;
+  const uint64_t aligned_off = phys - (phys % bs);
+  const uint64_t pad = phys - aligned_off;
+  const uint64_t aligned_len = ((e.length + pad + bs - 1) / bs) * bs;
+  req->stage_pad = pad;
+  req->len = e.length;
+  req->stage = self->alloc_buf(static_cast<size_t>(aligned_len), bs);
+  if (req->stage == nullptr) {
+    auto cb = std::move(req->cb);
+    void* a = req->arg;
+    delete req;
+    if (cb) {
+      cb(a, -ENOMEM);
+    }
+    return;
+  }
+  self->backend_->read(aligned_off, req->stage, aligned_len,
+                       flatten_obj_after_read, req);
+}
+
+void pg_store::flatten_obj_after_read(void* arg, int err) {
+  auto* req = static_cast<flatten_obj_req*>(arg);
+  pg_store* self = req->self;
+  if (err != 0) {
+    self->free_buf(req->stage);
+    req->stage = nullptr;
+    auto cb = std::move(req->cb);
+    void* a = req->arg;
+    delete req;
+    if (cb) {
+      cb(a, err);
+    }
+    return;
+  }
+  const auto* payload =
+      static_cast<const uint8_t*>(req->stage) + req->stage_pad;
+  req->payload.assign(reinterpret_cast<const char*>(payload),
+                      reinterpret_cast<const char*>(payload) + req->len);
+  self->free_buf(req->stage);
+  req->stage = nullptr;
+
+  const extent& e = req->extents[req->idx];
+  const uint64_t raft_idx = req->raft_base + req->idx;
+  self->write(
+      req->name, e.logical_offset, req->payload.data(), req->payload.size(),
+      raft_idx, req->new_image_seq, flatten_obj_after_write, req);
+}
+
+void pg_store::flatten_obj_after_write(void* arg, int err) {
+  auto* req = static_cast<flatten_obj_req*>(arg);
+  if (err != 0) {
+    auto cb = std::move(req->cb);
+    void* a = req->arg;
+    delete req;
+    if (cb) {
+      cb(a, err);
+    }
+    return;
+  }
+  req->payload.clear();
+  ++req->idx;
+  flatten_obj_step(req);
+}
+
+void pg_store::flatten_image(uint64_t parent_image_seq, uint64_t new_image_seq,
+                             uint64_t raft_write_index, op_complete cb,
+                             void* arg) {
+  if (cb == nullptr) {
+    return;
+  }
+  if (backend_ == nullptr || parent_image_seq == 0 ||
+      new_image_seq <= parent_image_seq || raft_write_index == 0) {
+    cb(arg, -EINVAL);
+    return;
+  }
+  enqueue_or_run([this, parent_image_seq, new_image_seq, raft_write_index,
+                  cb = std::move(cb), arg]() mutable {
+    auto* req = new (std::nothrow) flatten_img_req();
+    if (req == nullptr) {
+      finish_op(std::move(cb), arg, -ENOMEM);
+      return;
+    }
+    req->self = this;
+    req->cb = std::move(cb);
+    req->arg = arg;
+    req->parent_image_seq = parent_image_seq;
+    req->new_image_seq = new_image_seq;
+    req->raft_base = raft_write_index;
+
+    for_each_snapshot_object(
+        /*raft*/ 0, parent_image_seq,
+        [&](const std::string& name, const extent_map& /*view*/) {
+          req->names.push_back(name);
+        });
+    // Also include live head names that may be empty at parent but still need
+    // no-op — only snapshot objects with data/name at parent view.
+    finish_op(
+        [](void* a, int /*err*/) {
+          flatten_img_step(static_cast<flatten_img_req*>(a));
+        },
+        req, 0);
+  });
+}
+
+void pg_store::flatten_img_step(flatten_img_req* req) {
+  if (req == nullptr) {
+    return;
+  }
+  pg_store* self = req->self;
+  if (req->idx >= req->names.size()) {
+    auto cb = std::move(req->cb);
+    void* a = req->arg;
+    delete req;
+    if (cb) {
+      cb(a, 0);
+    }
+    return;
+  }
+  // Space raft indices per object: base + idx * 1024 (enough extents/obj).
+  const uint64_t raft_for_obj = req->raft_base + req->idx * 1024ull;
+  const std::string name = req->names[req->idx];
+  self->flatten_object(
+      name, req->parent_image_seq, req->new_image_seq, raft_for_obj,
+      [](void* a, int err) {
+        auto* r = static_cast<flatten_img_req*>(a);
+        if (err != 0) {
+          auto cb = std::move(r->cb);
+          void* u = r->arg;
+          delete r;
+          if (cb) {
+            cb(u, err);
+          }
+          return;
+        }
+        ++r->idx;
+        flatten_img_step(r);
+      },
+      req);
 }
 
 void pg_store::create_image_snapshot(uint64_t image_snap_seq, op_complete cb,
