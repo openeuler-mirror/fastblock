@@ -37,6 +37,18 @@ osd_store / aos_runtime
 
 Object 子系统细节见设计文档 §5。
 
+### Image snap / clone / flatten（P5 数据面）
+
+| API | 含义 |
+|-----|------|
+| `create_image_snapshot` / `clone_image` | pin `image_snap_seq`（clone = re-pin） |
+| `release_image_snapshot` | 减 pin；0 后 GC 可回收仅属该 snap 的历史 |
+| `flatten_image` | 把 parent view 物化为 `new_image_seq` 下的 data 记录 |
+| `read(..., raft, image)` | 读 snapshot 视图 |
+| `osd_store::gc_pass` | rewrite 限速 + free 无 live sealed segment |
+
+控制面 mon/CSI 后续对接；`osd_stm::set_image_snap_seq` 供 apply 写入 image 时间线。
+
 ## 启用
 
 ```json
