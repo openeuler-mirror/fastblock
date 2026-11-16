@@ -547,9 +547,13 @@ Checkpoint **不是唯一真相**；record 自描述 + 扫盘可重建。
 
 ### P5+ — image/CSI、ZNS、性能
 
-- mon snap_ctx、clone/flatten  
-- ZNS segment=zone  
-- GC 策略与压测  
+- [x] 数据面 image snap pin/clone/release + flatten（`pg_store` / `osd_store` / `osd_stm`）  
+- [x] GC 策略入口 `osd_store::gc_pass`（rewrite 限速 + free dead）  
+- [ ] mon snap_ctx / CSI 控制面编排  
+- [ ] ZNS segment=zone  
+- [ ] GC 压测与后台 poller 生产默认参数  
+
+状态：数据面 image/clone/flatten/GC 策略已具备；控制面 mon 与 ZNS 后续。
 
 ---
 
