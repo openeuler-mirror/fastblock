@@ -15,8 +15,10 @@
 #include "fastblock/rpc/osd_msg.pb.h"
 #include "fastblock/utils/utils.h"
 #include "fastblock/utils/err_num.h"
+#include "localstore/aos/log_store.h"
 #include "localstore/aos/osd_store.h"
 #include "localstore/aos/pg_store.h"
+#include "localstore/aos/snapshot_ingest.h"
 #include <errno.h>
 #include <concepts>
 #include <cstring>
@@ -31,6 +33,38 @@ osd_stm::osd_stm()
     uint32_t lcore = spdk_env_get_current_core();
     _sockid = spdk_env_get_socket_id(lcore);
 }
+
+osd_stm::~osd_stm() = default;
+
+namespace {
+
+const char* ingest_state_name(fastblock::aos::ingest_state s) {
+    switch (s) {
+    case fastblock::aos::ingest_state::idle:
+        return "idle";
+    case fastblock::aos::ingest_state::ingesting:
+        return "ingesting";
+    case fastblock::aos::ingest_state::sealed:
+        return "sealed";
+    case fastblock::aos::ingest_state::catchup:
+        return "catchup";
+    }
+    return "unknown";
+}
+
+fastblock::aos::pg_store* recovery_pg(fastblock::aos::osd_store* aos,
+                                      uint64_t pool_id, uint64_t pg_id) {
+    if (aos == nullptr) {
+        return nullptr;
+    }
+    auto* serving = aos->get_active_pg(pool_id, pg_id);
+    if (serving != nullptr && serving->object_count() > 0) {
+        return serving;
+    }
+    return aos->find_pg(pool_id, pg_id);
+}
+
+} // namespace
 
 void osd_stm::attach_aos(fastblock::aos::osd_store* store, uint64_t pool_id,
                          uint64_t pg_id) {
@@ -48,11 +82,21 @@ std::vector<std::string> osd_stm::list_live_objects() {
     if (_aos == nullptr) {
         return names;
     }
-    auto* pg = _aos->get_active_pg(_pool_id, _pg_id);
+    auto* pg = recovery_pg(_aos, _pool_id, _pg_id);
     if (pg == nullptr) {
+        SPDK_NOTICELOG("pg %lu.%lu list_live_objects: no pg serving=%lu\n",
+                       _pool_id, _pg_id,
+                       _aos->serving_epoch(_pool_id, _pg_id));
         return names;
     }
     pg->list_live_object_names(&names);
+    SPDK_NOTICELOG(
+        "pg %lu.%lu list_live_objects n=%zu epoch=%lu serving=%lu latest=%lu "
+        "objects=%lu\n",
+        _pool_id, _pg_id, names.size(), pg->id().store_epoch,
+        _aos->serving_epoch(_pool_id, _pg_id),
+        _aos->latest_epoch(_pool_id, _pg_id),
+        static_cast<unsigned long>(pg->object_count()));
     return names;
 }
 
@@ -72,7 +116,7 @@ void osd_stm::pin_recovery_view(uint64_t raft_apply_index, uint64_t raft_term,
         }
         return;
     }
-    auto* pg = _aos->get_active_pg(_pool_id, _pg_id);
+    auto* pg = recovery_pg(_aos, _pool_id, _pg_id);
     if (pg == nullptr) {
         if (cb_fn) {
             cb_fn(arg, -ENOENT);
@@ -100,7 +144,7 @@ void osd_stm::unpin_recovery_view(object_rw_complete cb_fn, void* arg) {
         }
         return;
     }
-    auto* pg = _aos->get_active_pg(_pool_id, _pg_id);
+    auto* pg = recovery_pg(_aos, _pool_id, _pg_id);
     const uint64_t idx = _recovery_snap_index;
     _recovery_pinned = false;
     _recovery_snap_index = 0;
@@ -122,9 +166,9 @@ void osd_stm::read_recovery_object(const std::string& object_name, char* buf,
         }
         return;
     }
-    // Prefer pinned recovery view; else head.
+    // Prefer pinned recovery view; else head. Same PG as list_live_objects.
     const uint64_t raft_idx = _recovery_pinned ? _recovery_snap_index : 0;
-    auto* pg = _aos->get_active_pg(_pool_id, _pg_id);
+    auto* pg = recovery_pg(_aos, _pool_id, _pg_id);
     if (pg == nullptr) {
         if (cb_fn) {
             cb_fn(arg, -ENOENT);
@@ -140,12 +184,18 @@ void osd_stm::apply(std::shared_ptr<raft_entry_t> entry, utils::context *complet
     if(entry->type() == RAFT_LOGTYPE_WRITE){
         osd::write_cmd write;
         write.ParseFromString(entry->meta());
+        // Prefer per-entry image_snap_seq from log meta; fall back to STM field.
+        const uint64_t img =
+            write.image_snap_seq() != 0 ? write.image_snap_seq()
+                                       : _image_snap_seq;
         write_obj(write.object_name(), write.offset(), entry->data(), raft_idx,
-                  complete);
+                  img, complete);
     }else if(entry->type() == RAFT_LOGTYPE_DELETE){
         osd::delete_cmd del;
         del.ParseFromString(entry->meta());
-        delete_obj(del.object_name(), raft_idx, complete);
+        const uint64_t img =
+            del.image_snap_seq() != 0 ? del.image_snap_seq() : _image_snap_seq;
+        delete_obj(del.object_name(), raft_idx, img, complete);
     }else{
         complete->complete(err::E_SUCCESS);
     }
@@ -169,7 +219,7 @@ static void write_obj_done(void *arg, int obj_errno){
 
 void osd_stm::write_obj(const std::string& obj_name, uint64_t offset,
                         const std::string& data, uint64_t raft_write_index,
-                        utils::context *complete){
+                        uint64_t image_snap_seq, utils::context *complete){
     if (_aos == nullptr) {
         SPDK_ERRLOG("write_obj without AOS pg %s\n", get_pg_name().c_str());
         complete->complete(-ENODEV);
@@ -177,16 +227,16 @@ void osd_stm::write_obj(const std::string& obj_name, uint64_t offset,
     }
 
     write_obj_ctx * ctx = new write_obj_ctx{this, obj_name, complete};
-    SPDK_DEBUGLOG(osd, "write obj %s pg: %s raft_idx %lu aos core %u\n",
-        obj_name.c_str(), get_pg_name().c_str(), raft_write_index,
+    SPDK_DEBUGLOG(osd, "write obj %s pg: %s raft_idx %lu image_seq %lu aos core %u\n",
+        obj_name.c_str(), get_pg_name().c_str(), raft_write_index, image_snap_seq,
         core_sharded::get_core_sharded().this_shard_id());
 
     _aos->apply(_pool_id, _pg_id, obj_name, offset, data.data(), data.size(),
-                raft_write_index, _image_snap_seq, write_obj_done, ctx);
+                raft_write_index, image_snap_seq, write_obj_done, ctx);
 }
 
 void osd_stm::delete_obj(const std::string& obj_name, uint64_t raft_write_index,
-                         utils::context *complete){
+                         uint64_t image_snap_seq, utils::context *complete){
     if (_aos == nullptr) {
         _object_rw_lock.unlock(obj_name, utils::operation_type::DELETE);
         complete->complete(-ENODEV);
@@ -199,7 +249,7 @@ void osd_stm::delete_obj(const std::string& obj_name, uint64_t raft_write_index,
     };
     auto* d = new del_ctx{this, obj_name, complete};
     _aos->remove(
-        _pool_id, _pg_id, obj_name, raft_write_index, _image_snap_seq,
+        _pool_id, _pg_id, obj_name, raft_write_index, image_snap_seq,
         [](void* a, int err) {
             auto* c = static_cast<del_ctx*>(a);
             c->stm->unlock(c->name, utils::operation_type::DELETE);
@@ -255,8 +305,161 @@ void osd_stm::write_install_object(const std::string& obj_name, char* buf,
         }
         return;
     }
-    _aos->apply(_pool_id, _pg_id, obj_name, /*offset*/ 0, buf, size,
-                snapshot_index, /*image*/ 0, std::move(cb_fn), arg);
+    if (_ingest == nullptr ||
+        _ingest->state() != fastblock::aos::ingest_state::ingesting) {
+        SPDK_ERRLOG(
+            "pg %lu.%lu write_install_object %s while ingest state=%s\n",
+            _pool_id, _pg_id, obj_name.c_str(),
+            _ingest ? ingest_state_name(_ingest->state()) : "null");
+        if (cb_fn) {
+            cb_fn(arg, -EINVAL);
+        }
+        return;
+    }
+    (void)snapshot_index;
+    _ingest->apply_chunk(obj_name, /*offset*/ 0, buf, size, /*crc*/ 0,
+                         std::move(cb_fn), arg);
+}
+
+void osd_stm::begin_install_snapshot(uint64_t snapshot_index,
+                                     uint64_t snapshot_term,
+                                     object_rw_complete cb_fn, void* arg) {
+    if (cb_fn == nullptr) {
+        return;
+    }
+    if (_aos == nullptr) {
+        cb_fn(arg, 0);
+        return;
+    }
+    if (_ingest == nullptr) {
+        _ingest = std::make_unique<fastblock::aos::snapshot_ingest>(
+            _aos, _pool_id, _pg_id);
+    }
+    const auto st = _ingest->state();
+    if (st == fastblock::aos::ingest_state::ingesting &&
+        _ingest->snapshot_index() == snapshot_index) {
+        cb_fn(arg, 0);
+        return;
+    }
+    if (st != fastblock::aos::ingest_state::idle) {
+        SPDK_NOTICELOG(
+            "pg %lu.%lu snapshot ingest abort state=%s old_snap=%lu new_snap=%lu\n",
+            _pool_id, _pg_id, ingest_state_name(st),
+            _ingest->snapshot_index(), snapshot_index);
+        _ingest->abort(
+            [this, snapshot_index, snapshot_term, cb_fn, arg](void*, int aerr) {
+                if (aerr != 0) {
+                    cb_fn(arg, aerr);
+                    return;
+                }
+                begin_install_snapshot(snapshot_index, snapshot_term, cb_fn,
+                                       arg);
+            },
+            nullptr);
+        return;
+    }
+    _ingest->begin(
+        snapshot_index, snapshot_term,
+        [this, snapshot_index, snapshot_term, cb_fn, arg](void*, int err) {
+            SPDK_NOTICELOG(
+                "pg %lu.%lu snapshot ingest idle -> %s snap=%lu term=%lu "
+                "serving=%lu staging=%lu err=%d\n",
+                _pool_id, _pg_id,
+                _ingest ? ingest_state_name(_ingest->state()) : "null",
+                snapshot_index, snapshot_term,
+                _ingest ? _ingest->active_epoch() : 0,
+                _ingest ? _ingest->staging_epoch() : 0, err);
+            cb_fn(arg, err);
+        },
+        nullptr);
+}
+
+void osd_stm::bind_raft_log_to_serving() {
+    if (_aos == nullptr) {
+        return;
+    }
+    auto* raft = get_raft();
+    if (raft == nullptr || !raft->raft_get_log()) {
+        return;
+    }
+    auto* lg = _aos->get_active_log(_pool_id, _pg_id);
+    if (lg == nullptr) {
+        SPDK_ERRLOG("pg %lu.%lu bind_raft_log_to_serving: no serving log "
+                    "serving=%lu\n",
+                    _pool_id, _pg_id, _aos->serving_epoch(_pool_id, _pg_id));
+        return;
+    }
+    raft->raft_get_log()->retarget_aos_log(lg);
+    SPDK_NOTICELOG(
+        "pg %lu.%lu retarget raft log to serving epoch %lu last_index=%lu\n",
+        _pool_id, _pg_id, lg->id().store_epoch, lg->last_index());
+}
+
+void osd_stm::finish_install_snapshot(object_rw_complete cb_fn, void* arg) {
+    if (cb_fn == nullptr) {
+        return;
+    }
+    if (_ingest == nullptr ||
+        _ingest->state() == fastblock::aos::ingest_state::idle) {
+        cb_fn(arg, 0);
+        return;
+    }
+
+    auto finish_idle = [this, cb_fn, arg](void*, int err) {
+        if (err == 0) {
+            bind_raft_log_to_serving();
+        }
+        if (err == 0 && _ingest) {
+            _ingest->finish_catchup(
+                [this, cb_fn, arg](void*, int ferr) {
+                    SPDK_NOTICELOG(
+                        "pg %lu.%lu snapshot ingest catchup -> %s serving=%lu "
+                        "err=%d\n",
+                        _pool_id, _pg_id,
+                        _ingest ? ingest_state_name(_ingest->state()) : "null",
+                        _aos ? _aos->serving_epoch(_pool_id, _pg_id) : 0,
+                        ferr);
+                    cb_fn(arg, ferr);
+                },
+                nullptr);
+            return;
+        }
+        cb_fn(arg, err);
+    };
+
+    auto do_activate = [this, finish_idle](void*, int err) {
+        if (err != 0) {
+            finish_idle(nullptr, err);
+            return;
+        }
+        SPDK_NOTICELOG("pg %lu.%lu snapshot ingest %s -> activating\n",
+                       _pool_id, _pg_id, ingest_state_name(_ingest->state()));
+        _ingest->activate(finish_idle, nullptr);
+    };
+
+    if (_ingest->state() == fastblock::aos::ingest_state::ingesting &&
+        _ingest->chunk_count() == 0) {
+        // Leader sent done=1 with no objects. Do not promote an empty
+        // staging epoch over the existing serving generation.
+        SPDK_NOTICELOG(
+            "pg %lu.%lu snapshot ingest empty (no chunks); abort, keep serving=%lu\n",
+            _pool_id, _pg_id, _aos->serving_epoch(_pool_id, _pg_id));
+        _ingest->abort(
+            [cb_fn, arg](void*, int aerr) { cb_fn(arg, aerr); }, nullptr);
+        return;
+    }
+    if (_ingest->state() == fastblock::aos::ingest_state::catchup) {
+        finish_idle(nullptr, 0);
+        return;
+    }
+    if (_ingest->state() == fastblock::aos::ingest_state::sealed) {
+        do_activate(nullptr, 0);
+        return;
+    }
+    SPDK_NOTICELOG("pg %lu.%lu snapshot ingest %s -> sealing snap=%lu\n",
+                   _pool_id, _pg_id, ingest_state_name(_ingest->state()),
+                   _ingest->snapshot_index());
+    _ingest->seal(do_activate, nullptr);
 }
 
 
@@ -334,12 +537,17 @@ void osd_stm::write_and_wait(
         osd::write_cmd cmd;
         cmd.set_object_name(request->object_name());
         cmd.set_offset(request->offset());
+        if (request->image_snap_seq() != 0) {
+            cmd.set_image_snap_seq(request->image_snap_seq());
+        } else if (_image_snap_seq != 0) {
+            cmd.set_image_snap_seq(_image_snap_seq);
+        }
         std::string buf;
         cmd.SerializeToString(&buf);
 
-        SPDK_DEBUGLOG(osd, "process write_request , pg %lu.%lu object_name %s offset %lu len %lu\n",
+        SPDK_DEBUGLOG(osd, "process write_request , pg %lu.%lu object_name %s offset %lu len %lu image_seq %lu\n",
                      request->pool_id(), request->pg_id(), request->object_name().c_str(), request->offset(),
-                     request->data().size());
+                     request->data().size(), cmd.image_snap_seq());
 
         auto entry_ptr = std::make_shared<raft_entry_t>();
         entry_ptr->set_type(RAFT_LOGTYPE_WRITE);
@@ -409,6 +617,7 @@ void osd_stm::read_and_wait(
 
         _aos->read(_pool_id, _pg_id, request->object_name(),
                    request->offset(), buf, request->length(),
+                   request->raft_read_index(), request->image_read_seq(),
                    read_obj_done, ctx);
     };
 
@@ -427,6 +636,9 @@ void osd_stm::delete_and_wait(
     auto delete_func = [this, request, delete_complete](){
         osd::delete_cmd cmd;
         cmd.set_object_name(request->object_name());
+        if (_image_snap_seq != 0) {
+            cmd.set_image_snap_seq(_image_snap_seq);
+        }
         std::string buf;
         cmd.SerializeToString(&buf);
 
@@ -442,6 +654,50 @@ void osd_stm::delete_and_wait(
 
     lock_complete *complete = new lock_complete(std::move(delete_func));
     _object_rw_lock.lock(request->object_name(), utils::operation_type::DELETE, complete);
+}
+
+void osd_stm::image_snap_and_wait(const osd::image_snap_request* request,
+                                  osd::image_snap_reply* response,
+                                  google::protobuf::Closure* done) {
+    if (_aos == nullptr) {
+        response->set_state(-ENODEV);
+        done->Run();
+        return;
+    }
+    if (!linearization()) {
+        response->set_state(err::RAFT_ERR_NOT_LEADER);
+        done->Run();
+        return;
+    }
+
+    auto* reply = response;
+    auto* clos = done;
+    auto finish = [reply, clos](void* /*a*/, int err) {
+        reply->set_state(err);
+        clos->Run();
+    };
+
+    switch (request->op()) {
+    case osd::IMAGE_SNAP_CREATE:
+        create_image_snapshot(request->image_snap_seq(), finish, nullptr);
+        break;
+    case osd::IMAGE_SNAP_CLONE:
+        clone_image(request->image_snap_seq(), finish, nullptr);
+        break;
+    case osd::IMAGE_SNAP_RELEASE:
+        release_image_snapshot(request->image_snap_seq(), finish, nullptr);
+        break;
+    case osd::IMAGE_SNAP_FLATTEN:
+        flatten_image(request->image_snap_seq(), request->new_image_seq(),
+                      request->raft_write_index() == 0 ? 1
+                                                       : request->raft_write_index(),
+                      finish, nullptr);
+        break;
+    default:
+        response->set_state(-EINVAL);
+        done->Run();
+        break;
+    }
 }
 
 void osd_stm::destroy_objects(object_complete cb_fn, void *arg){
