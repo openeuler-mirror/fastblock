@@ -91,6 +91,13 @@ public:
   void seal_open();
 
   /**
+   * Return a sealed segment to free for reuse (GC).
+   * Fails with -EBUSY if open/not sealed, -EINVAL if bad id.
+   * Does not wipe device contents; callers must ensure no live refs.
+   */
+  int free_sealed(uint32_t id);
+
+  /**
    * Recover helper: note that [phys, phys+len) contains valid data.
    * Marks covering segments sealed (or open for the highest one) and
    * bumps open_cursor if in the open segment.
