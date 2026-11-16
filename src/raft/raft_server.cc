@@ -303,9 +303,12 @@ bool raft_server_t::raft_has_majority_leases()
 }
 
 void raft_server_t::task_loop(){
-    while(!_tasks.empty()){
+    constexpr size_t max_tasks_per_tick = 16;
+    size_t handled = 0;
+    while(!_tasks.empty() && handled < max_tasks_per_tick){
         auto task = _tasks.front();
         _tasks.pop();
+        handled++;
         switch (task.type){
         case  task_type::SNAP_CHECK_TASK:
             handle_snap_check_task(task);
@@ -318,7 +321,7 @@ void raft_server_t::task_loop(){
 
 int raft_server_t::raft_periodic()
 {
-    if(_op_state == raft_op_state::RAFT_INIT){
+    if(_op_state != raft_op_state::RAFT_ACTIVE){
         return 0;
     }
     auto my_node = raft_get_my_node();
@@ -339,6 +342,10 @@ int raft_server_t::raft_periodic()
          * happen when we get a client request */
         !raft_get_snapshot_in_progress())
     {
+        if (raft_has_disk_append_inflight()) {
+            raft_set_election_timer(now);
+            return 0;
+        }
         if (my_node)
         {
             int e = raft_election_start();
@@ -353,14 +360,24 @@ int raft_server_t::raft_periodic()
 
 bool raft_server_t::raft_get_entry_term(raft_index_t idx, raft_term_t& term)
 {
-    raft_term_t _term;
-    auto entry = raft_get_log()->log_get_at_idx(idx);
+    term = 0;
+    if (idx == 0) {
+        return true;
+    }
+
+    auto log = raft_get_log();
+    if (!log || !log->disk_log_available()) {
+        return false;
+    }
+
+    auto entry = log->log_get_at_idx(idx);
     if(entry){
         term = entry->term();
         return true;
     }
 
-    auto got = raft_get_log()->disk_get_term(idx, _term);
+    raft_term_t _term;
+    auto got = log->disk_get_term(idx, _term);
     if (got){
         term = _term;
     }else{
@@ -558,6 +575,10 @@ int raft_server_t::raft_process_appendentries_reply(
 }
 
 void raft_server_t::follow_raft_disk_append_finish(raft_index_t start_idx, raft_index_t end_idx, raft_index_t commit_idx, int result){
+    if (raft_get_op_state() != raft_op_state::RAFT_ACTIVE) {
+        follow_raft_write_entry_finish(start_idx, end_idx, raft_state_to_errno(raft_get_op_state()));
+        return;
+    }
     if (raft_get_commit_idx() < commit_idx){
         raft_set_commit_idx(commit_idx);
         SPDK_DEBUGLOG(pg_group, "in pg %lu.%lu, _node_id %d _commit_idx %lu\n", raft_get_pool_id(),
@@ -583,6 +604,7 @@ struct follow_disk_append_complete : public utils::context{
             rsp->set_success(r);
         }
         raft->follow_raft_disk_append_finish(start_idx, end_idx, commit_idx, r);
+        raft->raft_finish_disk_append();
     }
     raft_index_t start_idx;
     raft_index_t end_idx;
@@ -822,8 +844,11 @@ int raft_server_t::_should_grant_vote(const msg_requestvote_t* vr)
 
     raft_term_t term = 0;
     auto got = raft_get_entry_term(current_idx_tmp, term);
-    assert(got || (!got && current_idx_tmp == 0));
-    (void)got;
+    if (!got) {
+        SPDK_WARNLOG("reject vote for pg %lu.%lu from %d, missing local term at current_idx %ld\n",
+          _pool_id, _pg_id, vr->candidate_id(), current_idx_tmp);
+        return 0;
+    }
     if (term < vr->last_log_term())
         return 1;
 
@@ -1062,6 +1087,10 @@ void raft_server_t::raft_node_process_commit(int result, raft_index_t index, raf
 }
 
 void raft_server_t::raft_disk_append_finish(raft_index_t start_idx, raft_index_t end_idx, int result){
+    if (raft_get_op_state() != raft_op_state::RAFT_ACTIVE) {
+        raft_write_entry_finish(start_idx, end_idx, raft_state_to_errno(raft_get_op_state()));
+        return;
+    }
     raft_node_process_commit(result, end_idx, _node_id);
 }
 
@@ -1077,6 +1106,7 @@ struct disk_append_complete : public utils::context{
         if(r != 0)
             SPDK_ERRLOG("disk_append_complete, result: %d\n", r);
         raft->raft_disk_append_finish(start_idx, end_idx, r);
+        raft->raft_finish_disk_append();
     }
     raft_index_t start_idx;
     raft_index_t end_idx;
@@ -1184,22 +1214,23 @@ static int raft_task_func(void* arg){
 }
 
 void raft_server_t::raft_flush(){
+    if(raft_get_op_state() == raft_op_state::RAFT_DOWN){
+        SPDK_INFOLOG(pg_group, "pg %lu.%lu: %s\n", raft_get_pool_id(), raft_get_pg_id(),
+                err::string_status(err::RAFT_ERR_PG_SHUTDOWN));
+        return;
+    }else if(raft_get_op_state() == raft_op_state::RAFT_DELETE){
+        SPDK_INFOLOG(pg_group, "pg %lu.%lu: %s\n", raft_get_pool_id(), raft_get_pg_id(),
+                err::string_status(err::RAFT_ERR_PG_DELETED));
+        return;
+    }else if(raft_get_op_state() != raft_op_state::RAFT_ACTIVE){
+        return;
+    }
+
     //上一次的log已经commit了
     auto last_cache_idx = raft_get_last_cache_entry();
     if(!raft_is_leader()){
         SPDK_ERRLOG("not leader\n");
         stop_flush(err::RAFT_ERR_NOT_LEADER);
-        return;
-    }
-    if(raft_get_op_state() == raft_op_state::RAFT_DOWN){
-        SPDK_INFOLOG(pg_group, "pg %lu.%lu: %s\n", raft_get_pool_id(), raft_get_pg_id(),
-                err::string_status(err::RAFT_ERR_PG_SHUTDOWN));
-        stop_flush(err::RAFT_ERR_PG_SHUTDOWN);
-        return;
-    }else if(raft_get_op_state() == raft_op_state::RAFT_DELETE){
-        SPDK_INFOLOG(pg_group, "pg %lu.%lu: %s\n", raft_get_pool_id(), raft_get_pg_id(),
-                err::string_status(err::RAFT_ERR_PG_DELETED));
-        stop_flush(err::RAFT_ERR_PG_DELETED);
         return;
     }
 
@@ -1218,7 +1249,7 @@ void raft_server_t::raft_flush(){
                 return;
             }
         }
-        return raft_flush();
+        return;
     }
     _first_idx = _current_idx + 1;
     auto entry = raft_get_log()->get_entry(_first_idx);
@@ -1321,11 +1352,16 @@ struct disk_configuration_complete : public utils::context{
 
     void finish(int r) override{
         SPDK_INFOLOG(pg_group, "disk append [%ld-%ld] return %d\n", start_idx, end_idx, r);
+        if (raft->raft_get_op_state() != raft_op_state::RAFT_ACTIVE) {
+            raft->raft_finish_disk_append();
+            return;
+        }
         auto node = raft->raft_get_cfg_node(raft->raft_get_nodeid());
         if(node){
             node->raft_node_set_match_idx(end_idx);
             raft->cfg_change_process(r, end_idx, node);
         }
+        raft->raft_finish_disk_append();
     }
 
     raft_index_t start_idx;
@@ -1428,7 +1464,13 @@ void raft_server_t::process_conf_change_add_nonvoting(std::shared_ptr<raft_entry
         }
     }
 
-    _configuration_manager.for_catch_up_node([this, next_idx = entry->idx()](std::shared_ptr<raft_node> node){
+    std::vector<raft_node_info> create_pg_nodes;
+    for (auto& new_node : config.new_nodes()) {
+        create_pg_nodes.emplace_back(new_node);
+    }
+
+    _configuration_manager.for_catch_up_node(
+      [this, next_idx = entry->idx(), create_pg_nodes](std::shared_ptr<raft_node> node){
         node->raft_node_set_next_idx(next_idx);
 
         auto send_appendentries = [this, node, next_idx]() mutable {
@@ -1447,27 +1489,81 @@ void raft_server_t::process_conf_change_add_nonvoting(std::shared_ptr<raft_entry
 
         SPDK_INFOLOG(pg_group, "in pg %lu.%lu , create pg on node %d before catch-up\n",
           _pool_id, _pg_id, node->raft_node_get_id());
-        auto ret = _client.send_create_pg(
-          node->raft_node_get_id(),
-          _pool_id,
-          _pg_id,
-          0,
-          [this, node, next_idx, send_appendentries = std::move(send_appendentries)](int result) mutable {
-            if(result != err::E_SUCCESS){
-                SPDK_ERRLOG("create pg %lu.%lu on node %d failed: %s\n",
-                  _pool_id, _pg_id, node->raft_node_get_id(), err::string_status(result));
-                node->raft_node_set_recovering(false);
-                cfg_change_process(result, next_idx, node);
+        auto finish_failed_start = [this, node, next_idx](int result) {
+            SPDK_ERRLOG("create pg %lu.%lu on node %d failed to start: %s\n",
+              _pool_id, _pg_id, node->raft_node_get_id(), err::string_status(result));
+            node->raft_node_set_recovering(false);
+            cfg_change_process(result, next_idx, node);
+        };
+        auto create_pg_attempts = std::make_shared<int>(0);
+        auto start_create_pg = std::make_shared<std::function<void()>>();
+        auto reconnect_and_retry = std::make_shared<std::function<void(int)>>();
+        constexpr int max_create_pg_attempts = 3;
+
+        *reconnect_and_retry = [this,
+                                node,
+                                finish_failed_start,
+                                start_create_pg,
+                                create_pg_attempts,
+                                max_create_pg_attempts](int result) mutable {
+            if (result != err::RAFT_ERR_NO_CONNECTED
+                || *create_pg_attempts >= max_create_pg_attempts) {
+                finish_failed_start(result);
                 return;
             }
-            send_appendentries();
-          });
-        if(ret != err::E_SUCCESS){
-            SPDK_ERRLOG("create pg %lu.%lu on node %d failed to start: %s\n",
-              _pool_id, _pg_id, node->raft_node_get_id(), err::string_status(ret));
-            node->raft_node_set_recovering(false);
-            cfg_change_process(ret, next_idx, node);
-        }
+
+            const auto& node_info = node->raft_get_node_info();
+            const auto node_id = node->raft_node_get_id();
+            const auto addr = node_info.addr();
+            const auto port = node_info.port();
+
+            _client.create_connect(
+              node_id,
+              _shard_id,
+              addr,
+              port,
+              [finish_failed_start, start_create_pg](void*, int connect_result) mutable {
+                  if (connect_result != err::E_SUCCESS) {
+                      finish_failed_start(connect_result);
+                      return;
+                  }
+
+                  (*start_create_pg)();
+              });
+        };
+
+        *start_create_pg = [this,
+                            node,
+                            next_idx,
+                            send_appendentries,
+                            create_pg_nodes,
+                            create_pg_attempts,
+                            reconnect_and_retry](void) mutable {
+            ++(*create_pg_attempts);
+            const auto ret = _client.send_create_pg(
+              node->raft_node_get_id(),
+              _pool_id,
+              _pg_id,
+              _shard_id,
+              create_pg_nodes,
+              0,
+              [this, node, next_idx, send_appendentries, reconnect_and_retry](int result) mutable {
+                  if (result == err::E_SUCCESS) {
+                      send_appendentries();
+                      return;
+                  }
+
+                  SPDK_ERRLOG("create pg %lu.%lu on node %d failed: %s\n",
+                    _pool_id, _pg_id, node->raft_node_get_id(), err::string_status(result));
+                  (*reconnect_and_retry)(result);
+              });
+
+            if (ret != err::E_SUCCESS) {
+                (*reconnect_and_retry)(ret);
+            }
+        };
+
+        (*start_create_pg)();
     });
 }
 
@@ -1489,8 +1585,12 @@ int raft_server_t::raft_send_requestvote(std::shared_ptr<raft_node> node)
 
     raft_term_t _term = 0;
     auto got = raft_get_entry_term(raft_get_current_idx(),  _term);
-    assert(got || (!got && raft_get_current_idx() == 0));
-    (void)got;
+    if (!got) {
+        SPDK_WARNLOG("skip requestvote%s for pg %lu.%lu, missing term at current_idx %ld\n",
+          raft_get_prevote() ? " (prevote)" : "", _pool_id, _pg_id, raft_get_current_idx());
+        delete rv;
+        return err::RAFT_ERR_LOG_NOT_MATCH;
+    }
     rv->set_last_log_term(_term);
     rv->set_candidate_id(raft_get_nodeid());
     rv->set_prevote(raft_get_prevote());
@@ -1540,7 +1640,10 @@ int raft_server_t::raft_send_heartbeat(std::shared_ptr<raft_node> node)
           ae->prev_log_term());
 
 
-    _client.send_appendentries(this, node->raft_node_get_id(), ae);
+    if (_client.send_appendentries(this, node->raft_node_get_id(), ae) != err::E_SUCCESS) {
+        delete ae;
+        node->raft_set_suppress_heartbeats(false);
+    }
     return 0;
 }
 
@@ -1589,6 +1692,7 @@ int raft_server_t::raft_send_appendentries(std::shared_ptr<raft_node> node, raft
     _raft_get_entries_from_idx(start_index, end_index, ae);
 
     if(_client.send_appendentries(this, node->raft_node_get_id(), ae) != err::E_SUCCESS){
+        delete ae;
         node->raft_set_suppress_heartbeats(false);
     }
     return 0;
@@ -1596,6 +1700,9 @@ int raft_server_t::raft_send_appendentries(std::shared_ptr<raft_node> node, raft
 
 int raft_server_t::raft_send_heartbeat_all()
 {
+    if (raft_get_op_state() != raft_op_state::RAFT_ACTIVE) {
+        return 0;
+    }
     auto election_timer = utils::get_time();
     raft_set_election_timer(election_timer);
 
@@ -1612,20 +1719,58 @@ int raft_server_t::raft_send_heartbeat_all()
     return 0;
 }
 
+void raft_server_t::raft_finish_disk_append(){
+    if (_disk_append_inflight > 0) {
+        _disk_append_inflight--;
+    }
+    finish_stop_when_disk_idle();
+}
+
+void raft_server_t::finish_stop_when_disk_idle(){
+    if (!_stop_cb || _disk_append_inflight != 0) {
+        return;
+    }
+
+    auto cb = std::move(_stop_cb);
+    auto arg = _stop_arg;
+    _stop_arg = nullptr;
+    if (!_log) {
+        cb(arg, err::E_SUCCESS);
+        return;
+    }
+    _log->stop(std::move(cb), arg);
+}
+
 void raft_server_t::stop(raft_complete cb_fn, void* arg){
-    raft_set_op_state(raft_op_state::RAFT_DOWN);
+    if (raft_get_op_state() != raft_op_state::RAFT_DELETE) {
+        raft_set_op_state(raft_op_state::RAFT_DOWN);
+    }
     SPDK_INFOLOG(pg_group, "stop pg %lu.%lu\n", _pool_id, _pg_id);
-    spdk_poller_unregister(&_raft_timer);
-    spdk_poller_unregister(&_task_timer);
-    stop_timed_task();
-    /*
-       上面停了状态机停，正在处理entry的就不能给客户端响应了，因此需要结束正在处理的，给客户端响应。
-       todo:  如果这时，某个entry已经commit，但还没有apply，但是因raft停止给客户端返回的时失败结果。raft重新启动后，会重新apply
-       这个entry，对客户端来说，这个entry对应的对象修改没有成功，但对raft来说却修改成功了，这个如何解决？
-    */
-    stop_processing_entrys(err::RAFT_ERR_PG_SHUTDOWN);
-    stop_flush(err::RAFT_ERR_PG_SHUTDOWN);
-    _log->stop(std::move(cb_fn), arg);
+    if (_raft_timer) {
+        spdk_poller_unregister(&_raft_timer);
+    }
+    if (_task_timer) {
+        spdk_poller_unregister(&_task_timer);
+    }
+    stop_timed_task(
+      [this, cb_fn = std::move(cb_fn)](void *arg, int serrno) mutable {
+        if (serrno != err::E_SUCCESS) {
+            cb_fn(arg, serrno);
+            return;
+        }
+        auto stop_state = raft_state_to_errno(raft_get_op_state());
+        /*
+           上面停了状态机停，正在处理entry的就不能给客户端响应了，因此需要结束正在处理的，给客户端响应。
+           todo:  如果这时，某个entry已经commit，但还没有apply，但是因raft停止给客户端返回的时失败结果。raft重新启动后，会重新apply
+           这个entry，对客户端来说，这个entry对应的对象修改没有成功，但对raft来说却修改成功了，这个如何解决？
+        */
+        stop_processing_entrys(stop_state);
+        stop_flush(stop_state);
+        _stop_cb = std::move(cb_fn);
+        _stop_arg = arg;
+        finish_stop_when_disk_idle();
+      },
+      arg);
 }
 
 //清理raft
@@ -2492,6 +2637,7 @@ void raft_server_t::do_recovery(std::shared_ptr<raft_node> node){
             *entry_ptr = std::move(entry);
         }
         if(_client.send_appendentries(this, node->raft_node_get_id(), ae) != err::E_SUCCESS){
+            delete ae;
             node->raft_set_suppress_heartbeats(false);
         }
     };
@@ -2509,6 +2655,7 @@ void raft_server_t::do_recovery(std::shared_ptr<raft_node> node){
             *entry_ptr = *entry;
         }
         if(_client.send_appendentries(this, node->raft_node_get_id(), ae) != err::E_SUCCESS){
+            delete ae;
             node->raft_set_suppress_heartbeats(false);
         }
         return;
@@ -2591,6 +2738,7 @@ raft_server_t::raft_server_t(raft_client_protocol& client, disk_log* log,
     , _pool_id(pool_id)
     , _pg_id(pg_id)
     , _pg_name(pg_id_to_name(pool_id, pg_id))
+    , _shard_id(0)
     , _first_idx(0)
     , _current_idx(0)
     , _client(client)
@@ -2632,12 +2780,25 @@ void raft_server_t::init(
   uint32_t shard_id) {
     //这里需要加载log 和 kv
 
+    _shard_id = shard_id;
     raft_set_nodeid(current_node);
     node_configuration configuration;
     for(auto& node : node_list){
         if(configuration.find_node(node.node_id))
             continue;
-        configuration.add_node(node.node_id, node.address, 0);
+        int port = 0;
+        const auto port_it = node.sharded_ports.find(shard_id);
+        if (port_it == node.sharded_ports.end()) {
+            SPDK_ERRLOG(
+              "missing shard %u port for node %d while init pg %lu.%lu\n",
+              shard_id,
+              node.node_id,
+              _pool_id,
+              _pg_id);
+        } else {
+            port = static_cast<int>(port_it->second.port);
+        }
+        configuration.add_node(node.node_id, node.address, port);
     }
     _configuration_manager.add_node_configuration(std::move(configuration));
     _nodes_stat.update_with_node_configuration(_configuration_manager.get_last_node_configuration());

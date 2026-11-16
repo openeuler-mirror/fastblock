@@ -171,6 +171,9 @@ std::vector<shard_manager::node_heartbeat> shard_manager::get_heartbeat_requests
     raft_time_t now = utils::get_time();
     for(auto& p : _pgs){
         auto raft = p.second;
+        if (raft->raft_get_op_state() != raft_op_state::RAFT_ACTIVE) {
+            continue;
+        }
         if(raft->raft_get_identity() != RAFT_STATE_LEADER){
             continue;
         }

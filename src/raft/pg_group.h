@@ -196,6 +196,7 @@ private:
             return 0;
         }
 
+        raft->raft_set_op_state(raft_op_state::RAFT_DELETE);
         raft->raft_destroy(
           [this, name, shard_id, cb_fn = std::move(cb_fn)](void* arg, int rberrno){
             if(rberrno == 0){

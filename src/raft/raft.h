@@ -500,7 +500,18 @@ public:
         return raft_get_log()->log_append(entry, complete);
     }
 
+    void raft_begin_disk_append(){
+        _disk_append_inflight++;
+    }
+
+    void raft_finish_disk_append();
+
+    bool raft_has_disk_append_inflight() const {
+        return _disk_append_inflight != 0;
+    }
+
     void raft_disk_append_entries(raft_index_t start_idx, raft_index_t end_idx, utils::context* complete){
+        raft_begin_disk_append();
         raft_get_log()->disk_append(start_idx, end_idx, complete);
     }
 
@@ -542,9 +553,9 @@ public:
         _machine->start();
     }
 
-    void stop_timed_task(){
+    void stop_timed_task(utils::complete_fun fun, void *arg){
         _machine->stop();
-        _append_entries_buffer.stop();
+        _append_entries_buffer.stop(std::move(fun), arg);
     }
 
     void append_entries_to_buffer(const msg_appendentries_t* request,
@@ -743,6 +754,7 @@ public:
     }
 
     void check_and_set_configuration(std::shared_ptr<raft_entry_t> entry);
+    void finish_stop_when_disk_idle();
 
     void update_nodes_stat(node_configuration& cfg,
             std::vector<std::shared_ptr<raft_node>>& new_add_nodes){
@@ -913,6 +925,7 @@ private:
     uint64_t _pool_id;
     uint64_t _pg_id;
     std::string _pg_name;
+    uint32_t _shard_id;
 
     raft_index_t _first_idx;     //当前正在处理的一批log中第一个的idx(只用在leader中)
     raft_index_t _current_idx;   //leader中是当前正在处理的一批log中最后一个的idx，follower中是已经处理的最新的idx
@@ -942,6 +955,9 @@ private:
     struct spdk_poller *_task_timer;
 
     uint64_t  _disk_io_num;
+    uint64_t _disk_append_inflight{0};
+    raft_complete _stop_cb;
+    void *_stop_arg{nullptr};
     uint64_t  _merger_tow_num;
     uint64_t  _merger_five_num;
     uint64_t  _merger_ten_num;

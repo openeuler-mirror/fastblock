@@ -103,7 +103,7 @@ void raft_log::disk_append(raft_index_t start_idx, raft_index_t end_idx, utils::
     std::vector<std::shared_ptr<raft_entry_t>> raft_entries;
     _entries.get_between(start_idx, end_idx, raft_entries);
     if(!_log){
-        complete->complete(0);
+        complete->complete(err::RAFT_ERR_PG_SHUTDOWN);
         return;
     }
     std::vector<log_entry_t> log_entries;
@@ -114,14 +114,10 @@ void raft_log::disk_append(raft_index_t start_idx, raft_index_t end_idx, utils::
             _raft->raft_get_pool_id(), _raft->raft_get_pg_id(), start_idx, end_idx, log_entries.size());
     _log->append(
         log_entries,
-        [log_entries, start_idx, end_idx, pool_id = _raft->raft_get_pool_id(), pg_id = _raft->raft_get_pg_id()](void *arg, int rberrno) mutable
+        [start_idx, end_idx, pool_id = _raft->raft_get_pool_id(), pg_id = _raft->raft_get_pg_id()](void *arg, int rberrno) mutable
         {
             SPDK_INFOLOG(pg_group, "in pg %lu.%lu, after disk_append [%ld, %ld]\n", pool_id, pg_id, start_idx, end_idx);
             utils::context *ctx = (utils::context *)arg;
-            for (auto &entry : log_entries)
-            {
-                free_buffer_list(entry.data);
-            }
             ctx->complete(rberrno);
         },
         complete);
