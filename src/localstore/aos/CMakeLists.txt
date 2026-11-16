@@ -69,3 +69,19 @@ configure_file(
   ${CMAKE_CURRENT_BINARY_DIR}/aos_malloc.json
   COPYONLY
 )
+
+# Offline dump / light fsck CLI (no SPDK reactor).
+add_executable(fastblock-aos-dump
+  aos_dump_main.cc
+)
+
+target_include_directories(fastblock-aos-dump
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_link_libraries(fastblock-aos-dump
+  PRIVATE
+    aos
+    spdk::spdk
+)
