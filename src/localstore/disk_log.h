@@ -18,6 +18,7 @@
 #include "utils/units.h"
 #include "utils/varint.h"
 #include "fastblock/utils/utils.h"
+#include "localstore/aos/log_store.h"
 
 #include <spdk/blob.h>
 #include <spdk/blob_bdev.h>
@@ -26,6 +27,7 @@
 #include <spdk/string.h>
 
 #include <absl/container/flat_hash_map.h>
+#include <memory>
 #include <vector>
 #include <utility>
 #include <errno.h>
@@ -77,18 +79,34 @@ class disk_log {
 public:
     disk_log(rolling_blob* rblob) : _rblob(rblob) {}
 
+    /** AOS platform path (design v2): does not own log_store (osd_store owns it). */
+    explicit disk_log(fastblock::aos::log_store* aos_log)
+        : _rblob(nullptr), _aos_log(aos_log) {}
+
     ~disk_log() {
       if (_trim_poller) {
           spdk_poller_unregister(&_trim_poller);
       }
       delete _rblob;
+      _rblob = nullptr;
+      // _aos_log not owned
     }
 
+    bool is_aos() const { return _aos_log != nullptr; }
+
     void start(){
+      if (_aos_log) {
+        // AOS log has no rolling-blob trim poller; trim via advance_trim_index.
+        return;
+      }
       _trim_poller = SPDK_POLLER_REGISTER(trim_poller, this, 5000);
     }
 
     void append(std::vector<log_entry_t>& entries, log_op_complete cb_fn, void* arg) {
+        if (_aos_log) {
+            append_aos(entries, std::move(cb_fn), arg);
+            return;
+        }
         struct log_append_ctx* ctx = new log_append_ctx{ .cb_fn = cb_fn, .arg = arg, .log = this};
 
         uint64_t pos = _rblob->front_pos();
@@ -108,6 +126,12 @@ public:
     }
 
     void append(log_entry_t& entry, log_op_complete cb_fn, void* arg) {
+        if (_aos_log) {
+            std::vector<log_entry_t> v;
+            v.push_back(std::move(entry));
+            append_aos(v, std::move(cb_fn), arg);
+            return;
+        }
         struct log_append_ctx* ctx = new log_append_ctx{ .cb_fn = cb_fn, .arg = arg, .log = this};
 
         uint64_t pos = _rblob->front_pos();
@@ -128,6 +152,10 @@ public:
 
     // 读取范围 [start_index, end_index]，包括 end_index 在内也会读到
     void read(uint64_t start_index, uint64_t end_index, log_op_with_entry_complete cb_fn, void* arg) {
+        if (_aos_log) {
+            read_aos(start_index, end_index, std::move(cb_fn), arg);
+            return;
+        }
         struct log_read_ctx* ctx;
 
         if (end_index < start_index) {
@@ -166,6 +194,12 @@ public:
         if (_trim_poller) {
             spdk_poller_unregister(&_trim_poller);
         }
+        if (_aos_log) {
+            if (cb_fn) {
+                cb_fn(arg, 0);
+            }
+            return;
+        }
         // 始终记住cb_fn是上面一层传入的函数，我们传入的lambda会在close之后调用
         // 调用时，里面会把arg传进lambda的第一个参数
         _rblob->close(
@@ -180,10 +214,20 @@ public:
 
     //删除blob
     void remove_blob(struct spdk_blob_store *bs, log_op_complete cb_fn, void* arg) {
+        if (_aos_log) {
+            // AOS: log lives in shared segments; nothing to delete per-blob.
+            if (cb_fn) {
+                cb_fn(arg, 0);
+            }
+            return;
+        }
         _rblob->remove_blob(bs, std::move(cb_fn), arg);
     }
 
     uint64_t get_term_id(uint64_t index) {
+        if (_aos_log) {
+            return _aos_log->get_term(index);
+        }
         if (auto it = _index_map.find(index); it != _index_map.end()) {
             return it->second.term_id;
         }
@@ -258,6 +302,9 @@ public:
 
     // 只保留apply_index前面的1000条，超过1500条就trim一次
     bool maybe_trim() {
+      if (_aos_log) {
+        return false;
+      }
       _polls_count++;
       auto trim_keep_entries = get_env_u64(
         "FASTBLOCK_RAFT_LOG_TRIM_KEEP_ENTRIES", default_trim_keep_entries);
@@ -300,6 +347,15 @@ public:
      * trim范围 [start_index, end_index]，包括 end_index 在内也会读到
      */
     void trim_back(uint64_t start_index, uint64_t end_index, log_op_complete cb_fn, void* arg) {
+        if (_aos_log) {
+            _aos_log->trim_to(end_index);
+            _lowest_index = _aos_log->base_index() == 0 ? end_index + 1
+                                                        : _aos_log->base_index();
+            if (cb_fn) {
+                cb_fn(arg, 0);
+            }
+            return;
+        }
         if (end_index < start_index) {
             SPDK_ERRLOG("end_index little than start_index. start:%lu end:%lu\n", start_index, end_index);
             cb_fn(arg, -EINVAL);
@@ -328,6 +384,10 @@ public:
 
     /* 截断start_index（包括start_index）之后的log */
     void truncate(uint64_t start_index, log_op_complete cb_fn, void* arg){
+        if (_aos_log) {
+            _aos_log->truncate_from(start_index, std::move(cb_fn), arg);
+            return;
+        }
         auto start_it = _index_map.find(start_index);
         auto end_it = _index_map.end();
 
@@ -351,10 +411,23 @@ public:
 
     void advance_trim_index(uint64_t index) {
         _trim_index = std::max(_trim_index, index);
+        if (_aos_log) {
+            // Keep last ~1000 like blob path maybe_trim intent.
+            if (index > 1000) {
+                _aos_log->trim_to(index - 1000);
+            }
+        }
     }
 
     std::string dump_state() {
       std::stringstream sstream;
+      if (_aos_log) {
+        sstream << "\naos_log base:" << _aos_log->base_index()
+                << " last:" << _aos_log->last_index()
+                << " count:" << _aos_log->entry_count()
+                << " trim_index:" << _trim_index << std::endl;
+        return sstream.str();
+      }
       sstream << "\nlowest_index:" << _lowest_index
               << " apply_index:" << _trim_index
               << " highest_index:" << _highest_index
@@ -370,10 +443,16 @@ public:
     }
 
     uint64_t get_lowest_index(){
+        if (_aos_log) {
+            return _aos_log->base_index() == 0 ? 1 : _aos_log->base_index();
+        }
         return _lowest_index;
     }
 
     uint64_t get_highest_index(){
+        if (_aos_log) {
+            return _aos_log->last_index();
+        }
         return _highest_index;
     }
     /*
@@ -383,6 +462,20 @@ public:
      * 中index（包括index）之后的数据（正常情况下不应该有数据）也需要删除了
      */
     void set_index(uint64_t index, log_op_complete cb_fn, void* arg){
+        if (_aos_log) {
+            // Drop all log entries; raft continues after snapshot index.
+            if (_aos_log->entry_count() > 0) {
+                _aos_log->truncate_from(_aos_log->base_index(),
+                                       [](void*, int) {}, nullptr);
+            }
+            _trim_index = index;
+            _lowest_index = index + 1;
+            _highest_index = index;
+            if (cb_fn) {
+                cb_fn(arg, 0);
+            }
+            return;
+        }
         auto trim_done = [this, cb_fn = std::move(cb_fn), index](void *arg, int rberrno){
             _lowest_index = std::max(_lowest_index, index + 1);
             _trim_index = std::max(_trim_index, index);
@@ -398,10 +491,25 @@ public:
     }
 
     void set_blob_xattr(std::map<std::string, xattr_val_type>& xattr, log_op_complete&& cb_fn, void* arg){
+        if (_aos_log) {
+            if (cb_fn) {
+                cb_fn(arg, 0);
+            }
+            return;
+        }
         _rblob->set_blob_xattr(xattr, std::move(cb_fn), arg);
     }
 
     void load(log_op_complete cb_fn, void* arg){
+        if (_aos_log) {
+            // Already recovered with osd_store::recover (raft_log_entry replay).
+            _lowest_index = get_lowest_index();
+            _highest_index = get_highest_index();
+            if (cb_fn) {
+                cb_fn(arg, 0);
+            }
+            return;
+        }
         auto check_data = [this](buffer_list &bl, uint64_t pos) -> std::tuple<bool, uint64_t, uint64_t> {
             auto bytes = bl.bytes();
             size_t i = 0;
@@ -458,7 +566,8 @@ public:
         _rblob->load(std::move(load_done), arg, std::move(check_data));
     }
 private:
-    rolling_blob* _rblob;
+    rolling_blob* _rblob{nullptr};
+    fastblock::aos::log_store* _aos_log{nullptr}; // not owned; osd_store owns
     struct spdk_poller *_trim_poller{nullptr};
     uint64_t _polls_count = 0;
     uint64_t _trims_count = 0;
@@ -472,6 +581,11 @@ private:
         uint64_t term_id;
     };
     std::map<uint64_t, log_position> _index_map;
+
+    void append_aos(std::vector<log_entry_t>& entries, log_op_complete cb_fn,
+                    void* arg);
+    void read_aos(uint64_t start_index, uint64_t end_index,
+                  log_op_with_entry_complete cb_fn, void* arg);
 
 private:
     static uint64_t get_env_u64(const char* name, uint64_t fallback) {
@@ -520,3 +634,10 @@ void make_disk_log(struct spdk_blob_store *bs, struct spdk_io_channel *channel,
 
 disk_log* make_disk_log(struct spdk_blob_store *bs, struct spdk_io_channel *channel,
                     struct spdk_blob* blob);
+
+/**
+ * Create disk_log backed by AOS log_store (design v2 P1).
+ * log_store lifetime must outlive the returned disk_log (owned by osd_store).
+ */
+void make_aos_disk_log(fastblock::aos::log_store* log, make_disklog_complete cb_fn,
+                       void* arg);

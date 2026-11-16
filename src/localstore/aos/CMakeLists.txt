@@ -18,6 +18,9 @@ compile_library(
     osd_store.cc
     snapshot_reader.cc
     snapshot_ingest.cc
+    aos_runtime.cc
+    log_store.cc
+    kv_engine.cc
   DEPS
     spdk::spdk
   COPTS

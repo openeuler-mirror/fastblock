@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <climits>
 #include <cstdlib>
 #include <cstring>
 #include <new>
@@ -81,6 +82,17 @@ uint64_t osd_store::latest_epoch(uint64_t pool_id, uint64_t pg_id) const {
     return 0;
   }
   return it->second;
+}
+
+std::vector<std::pair<uint64_t, uint64_t>> osd_store::list_pg_ids() const {
+  std::vector<std::pair<uint64_t, uint64_t>> out;
+  out.reserve(latest_epoch_.size());
+  for (const auto& kv : latest_epoch_) {
+    if (kv.second != 0) {
+      out.push_back(kv.first);
+    }
+  }
+  return out;
 }
 
 uint64_t osd_store::serving_epoch(uint64_t pool_id, uint64_t pg_id) const {
@@ -194,8 +206,43 @@ pg_store* osd_store::ensure_pg(uint64_t pool_id, uint64_t pgid,
 
 void osd_store::clear_all_pgs() {
   pgs_.clear();
+  logs_.clear();
   serving_epoch_.clear();
   // Keep latest_epoch_ if loading from manifest first; recover clears both.
+}
+
+log_store* osd_store::get_or_create_log(uint64_t pool_id, uint64_t pg_id,
+                                        uint64_t store_epoch) {
+  auto key = pg_key{pool_id, pg_id, store_epoch};
+  auto it = logs_.find(key);
+  if (it != logs_.end()) {
+    return it->second.get();
+  }
+  if (backend_ == nullptr || alloc_ == nullptr) {
+    return nullptr;
+  }
+  const fastblock::aos::pg_id pid{pool_id, pg_id, store_epoch};
+  auto log = std::make_unique<log_store>(backend_, pid, alloc_, mode_);
+  log_store* raw = log.get();
+  logs_.emplace(key, std::move(log));
+  return raw;
+}
+
+log_store* osd_store::get_log(uint64_t pool_id, uint64_t pg_id,
+                              uint64_t store_epoch) {
+  auto it = logs_.find(pg_key{pool_id, pg_id, store_epoch});
+  if (it == logs_.end()) {
+    return nullptr;
+  }
+  return it->second.get();
+}
+
+log_store* osd_store::get_active_log(uint64_t pool_id, uint64_t pg_id) {
+  const uint64_t epoch = serving_epoch(pool_id, pg_id);
+  if (epoch == 0) {
+    return nullptr;
+  }
+  return get_or_create_log(pool_id, pg_id, epoch);
 }
 
 manifest osd_store::build_manifest() const {
@@ -671,7 +718,7 @@ uint32_t osd_store::gc_once(bool persist) {
   return freed;
 }
 
-uint32_t osd_store::gc_rewrite_once(bool persist) {
+uint32_t osd_store::gc_rewrite_once(bool persist, uint32_t max_extents) {
   if (alloc_ == nullptr || pgs_.empty()) {
     return 0;
   }
@@ -681,8 +728,8 @@ uint32_t osd_store::gc_rewrite_once(bool persist) {
     return 0;
   }
 
-  // Prefer sealed segments that still have live head extents (need rewrite).
-  std::vector<uint8_t> live(nseg, 0);
+  // Accumulate live bytes per segment for victim selection (lowest live ratio).
+  std::vector<uint64_t> live_bytes(nseg, 0);
   auto mark = [&](uint64_t phys, uint64_t len) {
     if (len == 0 || phys + len <= alloc_->region_base()) {
       return;
@@ -694,23 +741,28 @@ uint32_t osd_store::gc_rewrite_once(bool persist) {
     const uint32_t last =
         rel1 == 0 ? first : static_cast<uint32_t>((rel1 - 1) / seg_size);
     for (uint32_t id = first; id <= last && id < nseg; ++id) {
-      live[id] = 1;
+      // Attribute full extent length to each overlapping segment (upper bound).
+      live_bytes[id] += len;
     }
   };
   for (const auto& kv : pgs_) {
     kv.second->for_each_live_extent(mark);
   }
 
+  // Victim = sealed segment with live data and minimal live_bytes (most garbage).
   uint32_t victim = segment_allocator::kInvalidSeg;
+  uint64_t best_live = UINT64_MAX;
   for (uint32_t id = 0; id < nseg; ++id) {
     if (alloc_->state(id) != segment_state::sealed) {
       continue;
     }
-    if (!live[id]) {
+    if (live_bytes[id] == 0) {
       continue;
     }
-    victim = id;
-    break;
+    if (live_bytes[id] < best_live) {
+      best_live = live_bytes[id];
+      victim = id;
+    }
   }
   if (victim == segment_allocator::kInvalidSeg) {
     // No rewrite work; still free fully dead sealed segments.
@@ -722,10 +774,16 @@ uint32_t osd_store::gc_rewrite_once(bool persist) {
 
   uint32_t rewritten = 0;
   for (const auto& kv : pgs_) {
+    if (max_extents != 0 && rewritten >= max_extents) {
+      break;
+    }
     pg_store* pg = kv.second.get();
     std::vector<std::tuple<std::string, uint64_t, uint64_t>> targets;
     pg->collect_head_extents_in_range(phys_begin, phys_end, &targets);
     for (const auto& t : targets) {
+      if (max_extents != 0 && rewritten >= max_extents) {
+        break;
+      }
       struct {
         int err{-1};
       } r;
@@ -986,7 +1044,19 @@ void osd_store::recover_process(recover_req* req) {
     }
 
     const uint64_t rec_phys = req->last_good;
-    if (rec.type != record_type::segment_seal) {
+    if (rec.type == record_type::raft_log_entry) {
+      log_store* lg =
+          get_or_create_log(rec.pool_id, rec.pg_id, rec.store_epoch);
+      if (lg != nullptr) {
+        lg->apply_record(rec, rec_phys);
+      }
+    } else if (rec.type == record_type::kv_put ||
+               rec.type == record_type::kv_delete ||
+               rec.type == record_type::kv_checkpoint) {
+      if (kv_ != nullptr) {
+        kv_->apply_record(rec);
+      }
+    } else if (rec.type != record_type::segment_seal) {
       pg_store* pg = ensure_pg(rec.pool_id, rec.pg_id, rec.store_epoch);
       if (rec.type == record_type::checkpoint_marker) {
         checkpoint_snapshot snap;

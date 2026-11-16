@@ -15,12 +15,20 @@
 
 namespace fastblock::aos {
 
-// M1 IO policy (design §7.4)
+// Deprecated dual-engine modes (knife-1: object is AOS-only). Kept for parse helpers.
+enum class object_engine_mode : uint8_t {
+  blob = 0,
+  aos = 1,
+  shadow = 2,
+};
+
+// Object IO policy
 inline constexpr uint64_t kAlign = 4096;
 inline constexpr uint64_t kMaxObjectSize = 4ull * 1024 * 1024;
 
 inline constexpr uint32_t kRecordMagic = 0x534f4146u; // 'FAOS' LE
-inline constexpr uint16_t kFormatVersion = 1;
+// v2: platform record types include log/kv (design v2 §8)
+inline constexpr uint16_t kFormatVersion = 2;
 
 enum class record_type : uint8_t {
   data = 1,
@@ -28,23 +36,22 @@ enum class record_type : uint8_t {
   gc_rewrite = 3,
   object_name = 4,
   segment_seal = 5,
-  // range tombstone: object_offset + payload u64 LE length (design §7.3)
   range_tombstone = 6,
-  // per-PG ObjectMap snapshot (design §12.1); payload is checkpoint_snapshot
   checkpoint_marker = 7,
-  // raft snapshot pin/unpin (design §3.1 / M3); raft_apply_index = snap index
-  // pin payload: u64 LE term; unpin payload empty
   raft_snapshot_pin = 8,
   raft_snapshot_unpin = 9,
-  // image snapshot pin/unpin (design §10.2 / M3); image_snap_seq = snap seq
-  // pin/unpin payload empty
   image_snapshot_pin = 10,
   image_snapshot_unpin = 11,
-  // install snapshot follower markers (design §10.4 / M5)
-  // raft_apply_index = snapshot index; pin payload for seal: u64 LE term
   install_seal = 12,
   install_activate = 13,
-  // metadata_delta intentionally unused in M1
+  // design v2 §6 log_engine
+  // payload: term,u64 index,u64 type,u64 meta_len,u32 meta, data
+  // object_id unused; raft_apply_index = log index; image_snap_seq = term (dup)
+  raft_log_entry = 14,
+  // design v2 §7 kv_engine
+  kv_put = 15,        // object_id unused; payload key\0value or len-prefixed
+  kv_delete = 16,     // payload key
+  kv_checkpoint = 17, // payload full table snapshot
 };
 
 // Follower install-snapshot state machine (design §10.4).
@@ -59,6 +66,11 @@ struct pg_id {
   uint64_t pool_id{0};
   uint64_t pg_id{0};
   uint64_t store_epoch{0};
+};
+
+enum class buffer_mode {
+  heap = 0,     // unit tests / mem backend
+  spdk_dma = 1, // production SPDK reactor
 };
 
 inline bool is_aligned(uint64_t offset, uint64_t len) {

@@ -98,7 +98,9 @@ decode_status decode_record(const uint8_t* buf, size_t len, data_record* out,
   if (get_u32(buf) != kRecordMagic) {
     return decode_status::bad_magic;
   }
-  if (get_u16(buf + 4) != kFormatVersion) {
+  const uint16_t ver = get_u16(buf + 4);
+  // Accept v1 (object-only era) and v2 (platform log/kv types).
+  if (ver != 1 && ver != 2) {
     return decode_status::bad_version;
   }
 
@@ -146,7 +148,9 @@ decode_status decode_record(const uint8_t* buf, size_t len, data_record* out,
       type != record_type::image_snapshot_pin &&
       type != record_type::image_snapshot_unpin &&
       type != record_type::install_seal &&
-      type != record_type::install_activate) {
+      type != record_type::install_activate &&
+      type != record_type::raft_log_entry && type != record_type::kv_put &&
+      type != record_type::kv_delete && type != record_type::kv_checkpoint) {
     return decode_status::bad_type;
   }
 

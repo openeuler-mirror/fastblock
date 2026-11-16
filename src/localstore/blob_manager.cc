@@ -104,25 +104,37 @@ static std::shared_ptr<blobstore_managers> g_bs_mgr;
 //记录blobstore在bdev中的范围，blobstore_load时需要用到
 std::vector<std::pair<uint64_t, uint64_t>> g_bs_space;
 
-/// TODO(sunyifang): 现在都是单核的
+/// Safe when blobstore was never initialized (design v2 P3 AOS-only path).
 struct spdk_blob_store* global_blobstore(uint32_t shard_id) {
-    assert(shard_id < g_bs_mgr->size());
+    if (!g_bs_mgr || shard_id >= g_bs_mgr->size()) {
+        return nullptr;
+    }
     return g_bs_mgr->get_blobstore(shard_id);
 }
 
 struct spdk_io_channel* global_io_channel(uint32_t shard_id) {
-    assert(shard_id < g_bs_mgr->size());
+    if (!g_bs_mgr || shard_id >= g_bs_mgr->size()) {
+        return nullptr;
+    }
     return g_bs_mgr->get_channel(shard_id);
 }
 
 blob_tree& global_blob_tree(uint32_t shard_id){
-    assert(shard_id < g_bs_mgr->size());
+    static blob_tree empty_tree;
+    if (!g_bs_mgr || shard_id >= g_bs_mgr->size()) {
+        return empty_tree;
+    }
     return g_bs_mgr->get_blob_tree(shard_id);
 }
 
 blob_pool& global_blob_pool(uint32_t shard_id) {
-    assert(shard_id < g_bs_mgr->size());
+    // Callers must only use the pool when blobstore is active.
+    assert(g_bs_mgr && shard_id < g_bs_mgr->size());
     return g_bs_mgr->get_blob_pool(shard_id);
+}
+
+bool blobstore_is_initialized() {
+    return g_bs_mgr != nullptr;
 }
 
 static void
@@ -964,6 +976,14 @@ _blobstore_fini(utils::context *ctx, uint32_t shard_id){
 
 void
 blobstore_fini(bm_complete cb_fn, void* args){
+  // AOS-only path never called blobstore_init/load.
+  if (!g_bs_mgr) {
+    if (cb_fn) {
+      cb_fn(args, 0);
+    }
+    return;
+  }
+
   auto &shard = core_sharded::get_core_sharded();
 
   auto cur_thread = spdk_get_thread();

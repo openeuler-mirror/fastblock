@@ -17,6 +17,7 @@
 #include "rolling_blob.h"
 #include "kv_checkpoint.h"
 #include "fastblock/utils/utils.h"
+#include "localstore/aos/kv_engine.h"
 
 #include <spdk/env.h>
 #include <spdk/util.h>
@@ -85,15 +86,33 @@ public:
         read_buf = spdk_buffer(rbuf, 32_MB);
     }
 
+    /** AOS platform path (design v2 P2). eng not owned. */
+    explicit kvstore(fastblock::aos::kv_engine* eng)
+      : rblob(nullptr)
+      , checkpoint(0)
+      , _aos(eng) {}
+
     ~kvstore() {
-        spdk_free(write_buf.get_buf());
-        spdk_free(read_buf.get_buf());
+        if (write_buf.get_buf()) {
+            spdk_free(write_buf.get_buf());
+        }
+        if (read_buf.get_buf()) {
+            spdk_free(read_buf.get_buf());
+        }
         if (_worker_poller) {
             spdk_poller_unregister(&_worker_poller);
         }
     }
 
+    bool is_aos() const { return _aos != nullptr; }
+
     void start() {
+        if (_aos) {
+            _aos->start();
+            SPDK_INFOLOG(kvlog, "start aos kvstore in shard %u\n",
+                core_sharded::get_core_sharded().this_shard_id());
+            return;
+        }
         _worker_poller = SPDK_POLLER_REGISTER(worker_poll, this, 100000); // 10ms写一次
         SPDK_INFOLOG(kvlog, "start kvstore in shard %u, thread  %lu\n",
             core_sharded::get_core_sharded().this_shard_id(), utils::get_spdk_thread_id());
@@ -112,6 +131,10 @@ public:
         uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
         SPDK_INFOLOG(kvlog, "stop kvstore in shard %u, thread %lu \n",
             shard_id, utils::get_spdk_thread_id());
+        if (_aos) {
+            _aos->stop(std::move(cb_fn), arg);
+            return;
+        }
         if (_worker_poller) {
             /* 注意：注册、注销poller要在一个thread里，一个cpu core有一个thread，因此注册、注销poller要在一个cpu core里
              */
@@ -134,17 +157,28 @@ public:
     }
 
     void put(std::string key, std::optional<std::string> value) {
+        if (_aos) {
+            _aos->put(std::move(key), std::move(value));
+            return;
+        }
         op_length += LengthString(key)  + LengthOptString(value);
         op_log.emplace_back(std::move(key), std::move(value));
     }
 
     // remove只是放在op_log数组中，可以直接move进来
     void remove(std::string key) {
+        if (_aos) {
+            _aos->remove(std::move(key));
+            return;
+        }
         op_length += LengthString(key)  + LengthOptString(std::nullopt);
         op_log.emplace_back(std::move(key), std::nullopt);
     }
 
     std::optional<std::string> get(std::string key) {
+        if (_aos) {
+            return _aos->get(key);
+        }
         if (auto it = table.find(key); it != table.end()) {
             return it->second;
         }
@@ -169,7 +203,12 @@ public:
         }
     }
 
-    bool need_commit() { return op_log.size() > 0; }
+    bool need_commit() {
+        if (_aos) {
+            return _aos->pending_ops() > 0;
+        }
+        return op_log.size() > 0;
+    }
 
     /**
      * commit: 把当前的op_log追加到磁盘。
@@ -177,6 +216,10 @@ public:
      * 现在用户不应该主动调用了，因为poller中会执行。
      */
     void commit(kvstore_rw_complete cb_fn, void* arg) {
+        if (_aos) {
+            _aos->commit(std::move(cb_fn), arg);
+            return;
+        }
         if (working) {
             cb_fn(arg, -EBUSY);
             return;
@@ -475,7 +518,12 @@ public:
         delete ctx;
     }
 
-    size_t size() { return table.size(); }
+    size_t size() {
+        if (_aos) {
+            return _aos->table_size();
+        }
+        return table.size();
+    }
 
     void replay(kvstore_rw_complete cb_fn, void* arg);
 
@@ -489,8 +537,9 @@ public:
     rolling_blob* rblob;
     kv_checkpoint checkpoint;
     // checkpoint和commit都由poller触发执行
-    struct spdk_poller *_worker_poller;
+    struct spdk_poller *_worker_poller{nullptr};
     bool working = false;
+    fastblock::aos::kv_engine* _aos{nullptr}; // not owned; AOS path
 
     friend class kvstore_loader;
 };
@@ -635,3 +684,7 @@ void load_kvstore(spdk_blob_id blob_id, spdk_blob_id checkpoint_blob_id,
                   spdk_blob_id new_checkpoint_blob_id, struct spdk_blob_store *bs,
                   struct spdk_io_channel *channel,
                   make_kvs_complete cb_fn, void* arg);
+
+/** AOS-backed kvstore (design v2 P2). eng not owned. */
+void make_aos_kvstore(fastblock::aos::kv_engine* eng, make_kvs_complete cb_fn,
+                      void* arg);

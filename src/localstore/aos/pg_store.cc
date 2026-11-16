@@ -445,6 +445,33 @@ void pg_store::for_each_snapshot_object(
   }
 }
 
+void pg_store::list_live_object_names(std::vector<std::string>* out) const {
+  if (out == nullptr) {
+    return;
+  }
+  out->clear();
+  out->reserve(objects_.size());
+  for (const auto& kv : objects_) {
+    const object_state& obj = kv.second;
+    if (obj.deleted || obj.name.empty()) {
+      continue;
+    }
+    out->push_back(obj.name);
+  }
+}
+
+bool pg_store::object_exists(const std::string& name) const {
+  auto it = name_to_id_.find(name);
+  if (it == name_to_id_.end()) {
+    return false;
+  }
+  auto oit = objects_.find(it->second);
+  if (oit == objects_.end()) {
+    return false;
+  }
+  return !oit->second.deleted;
+}
+
 void pg_store::apply_rewrite_phys(uint64_t object_id, uint64_t logical_offset,
                                   uint64_t len, uint64_t new_data_phys) {
   auto oit = objects_.find(object_id);

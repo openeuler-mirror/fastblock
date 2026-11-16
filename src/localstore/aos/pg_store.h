@@ -29,13 +29,6 @@
 
 namespace fastblock::aos {
 
-enum class buffer_mode {
-  // posix/aligned heap — unit tests with mem_device_backend
-  heap = 0,
-  // spdk_dma_zmalloc — production / spdk_app (env must be initialized)
-  spdk_dma = 1,
-};
-
 /**
  * Single-PG append-only object store (M1).
  *
@@ -239,6 +232,13 @@ public:
       uint64_t raft_read_index, uint64_t image_read_seq,
       const std::function<void(const std::string& name,
                                const extent_map& view)>& fn) const;
+
+  /**
+   * Live (non-deleted) object names in this PG (for install-snapshot leader).
+   */
+  void list_live_object_names(std::vector<std::string>* out) const;
+
+  bool object_exists(const std::string& name) const;
 
 private:
   // In-memory version log for snapshot reads (M3).

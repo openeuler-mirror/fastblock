@@ -22,6 +22,9 @@
 #include "pg_store.h"
 #include "record.h"
 #include "segment_allocator.h"
+#include "aos_runtime.h"
+#include "kv_engine.h"
+#include "log_store.h"
 #include "snapshot_ingest.h"
 #include "snapshot_reader.h"
 #include "superblock.h"
@@ -1424,6 +1427,207 @@ void test_pg_store_checkpoint_then_discard_recover() {
                           [](char ch) { return ch == 'Z'; }));
 }
 
+void test_parse_object_engine_mode() {
+  EXPECT_TRUE(parse_object_engine_mode("blob") == object_engine_mode::blob);
+  EXPECT_TRUE(parse_object_engine_mode("AOS") == object_engine_mode::aos);
+  EXPECT_TRUE(parse_object_engine_mode("shadow") == object_engine_mode::shadow);
+  EXPECT_TRUE(parse_object_engine_mode("append-only") ==
+              object_engine_mode::aos);
+  EXPECT_TRUE(parse_object_engine_mode("unknown") == object_engine_mode::blob);
+  EXPECT_TRUE(std::string(object_engine_mode_name(object_engine_mode::shadow)) ==
+              "shadow");
+}
+
+void test_compute_shard_region() {
+  uint64_t off = 0;
+  uint64_t len = 0;
+  EXPECT_TRUE(compute_shard_region(256ull * 1024 * 1024, 2, 0, &off, &len));
+  EXPECT_EQ(off, 0);
+  EXPECT_EQ(len, 128ull * 1024 * 1024);
+  EXPECT_TRUE(compute_shard_region(256ull * 1024 * 1024, 2, 1, &off, &len));
+  EXPECT_EQ(off, 128ull * 1024 * 1024);
+  EXPECT_EQ(len, 128ull * 1024 * 1024);
+  EXPECT_TRUE(!compute_shard_region(1024, 2, 0, &off, &len));
+}
+
+void test_gc_rewrite_rate_limit() {
+  const uint64_t seg = 256 * 1024;
+  mem_device_backend dev(16 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, seg);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  // Fill enough to seal a segment and leave garbage after overwrite.
+  for (int i = 0; i < 8; ++i) {
+    std::vector<char> data(4096, static_cast<char>('A' + (i % 26)));
+    r = {};
+    osd.apply(1, 0, "obj", 0, data.data(), data.size(),
+              static_cast<uint64_t>(i + 1), 0, on_done, &r);
+    EXPECT_EQ(r.err, 0);
+  }
+  // Rate-limited rewrite should return at most max_extents (or free dead segs).
+  const uint32_t n = osd.gc_rewrite_once(true, /*max_extents*/ 1);
+  EXPECT_TRUE(n <= 1);
+}
+
+void test_log_store_append_read_trim() {
+  mem_device_backend dev(8 * 1024 * 1024);
+  auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(),
+                                                   /*seg*/ 0, dev.block_size());
+  EXPECT_EQ(alloc->ensure_open(), 0);
+  log_store log(&dev, pg_id{1, 2, 1}, alloc, buffer_mode::heap);
+
+  for (uint64_t i = 1; i <= 5; ++i) {
+    log_entry e;
+    e.term = 3;
+    e.index = i;
+    e.type = 1;
+    e.meta = "m" + std::to_string(i);
+    e.data = std::string(128, static_cast<char>('a' + static_cast<int>(i)));
+    sync_result r;
+    log.append(e, on_done, &r);
+    EXPECT_EQ(r.err, 0);
+  }
+  EXPECT_EQ(log.base_index(), 1);
+  EXPECT_EQ(log.last_index(), 5);
+  EXPECT_EQ(log.entry_count(), 5);
+
+  struct {
+    int err{-1};
+    std::vector<log_entry> entries;
+  } rr;
+  log.read(2, 4,
+           [](void* a, std::vector<log_entry> entries, int err) {
+             auto* p = static_cast<decltype(rr)*>(a);
+             p->err = err;
+             p->entries = std::move(entries);
+           },
+           &rr);
+  EXPECT_EQ(rr.err, 0);
+  EXPECT_EQ(rr.entries.size(), 3);
+  EXPECT_EQ(rr.entries[0].index, 2);
+  EXPECT_EQ(rr.entries[2].index, 4);
+  EXPECT_TRUE(rr.entries[0].meta == "m2");
+
+  log.trim_to(3);
+  EXPECT_EQ(log.base_index(), 4);
+  EXPECT_EQ(log.last_index(), 5);
+  EXPECT_EQ(log.entry_count(), 2);
+
+  rr = {};
+  log.read(1, 2,
+           [](void* a, std::vector<log_entry> entries, int err) {
+             auto* p = static_cast<decltype(rr)*>(a);
+             p->err = err;
+             p->entries = std::move(entries);
+           },
+           &rr);
+  EXPECT_EQ(rr.err, -ENOENT);
+}
+
+void test_log_store_rebuild_from_image() {
+  mem_device_backend dev(4 * 1024 * 1024);
+  auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
+                                                   dev.block_size());
+  EXPECT_EQ(alloc->ensure_open(), 0);
+  log_store log(&dev, pg_id{9, 1, 1}, alloc, buffer_mode::heap);
+  for (uint64_t i = 1; i <= 3; ++i) {
+    log_entry e;
+    e.term = 1;
+    e.index = i;
+    e.type = 0;
+    e.meta = "x";
+    e.data = "payload" + std::to_string(i);
+    sync_result r;
+    log.append(e, on_done, &r);
+    EXPECT_EQ(r.err, 0);
+  }
+
+  // Capture written region via rebuild on a fresh log_store sharing image.
+  std::vector<uint8_t> image(static_cast<size_t>(dev.write_pointer()));
+  // mem backend: read from start
+  sync_result r;
+  dev.read(0, image.data(), image.size(), on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  auto alloc2 = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
+                                                    dev.block_size());
+  log_store log2(&dev, pg_id{9, 1, 1}, alloc2, buffer_mode::heap);
+  log2.rebuild_from_image(image.data(), image.size());
+  EXPECT_EQ(log2.base_index(), 1);
+  EXPECT_EQ(log2.last_index(), 3);
+
+  struct {
+    int err{-1};
+    std::vector<log_entry> entries;
+  } rr;
+  log2.read(1, 3,
+            [](void* a, std::vector<log_entry> entries, int err) {
+              auto* p = static_cast<decltype(rr)*>(a);
+              p->err = err;
+              p->entries = std::move(entries);
+            },
+            &rr);
+  EXPECT_EQ(rr.err, 0);
+  EXPECT_EQ(rr.entries.size(), 3);
+  EXPECT_TRUE(rr.entries[2].data == "payload3");
+}
+
+void test_osd_store_list_pg_ids() {
+  mem_device_backend dev(16 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, 1024 * 1024);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  auto ids0 = osd.list_pg_ids();
+  EXPECT_EQ(ids0.size(), 0u);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 1, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  auto ids = osd.list_pg_ids();
+  EXPECT_EQ(ids.size(), 2u);
+}
+
+void test_kv_engine_put_commit_get() {
+  mem_device_backend dev(4 * 1024 * 1024);
+  auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
+                                                   dev.block_size());
+  EXPECT_EQ(alloc->ensure_open(), 0);
+  kv_engine kv(&dev, alloc, buffer_mode::heap);
+  // No poller in test — commit explicitly.
+  kv.put("1.0.term", "7");
+  kv.put("1.0.vote_for", "3");
+  sync_result r;
+  kv.commit(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  auto t = kv.get("1.0.term");
+  EXPECT_TRUE(t.has_value());
+  EXPECT_TRUE(*t == "7");
+  auto v = kv.get("1.0.vote_for");
+  EXPECT_TRUE(v.has_value());
+  EXPECT_TRUE(*v == "3");
+
+  // Rebuild from image
+  std::vector<uint8_t> image(static_cast<size_t>(dev.write_pointer()));
+  r = {};
+  dev.read(0, image.data(), image.size(), on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  auto alloc2 = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
+                                                    dev.block_size());
+  kv_engine kv2(&dev, alloc2, buffer_mode::heap);
+  kv2.rebuild_from_image(image.data(), image.size());
+  auto t2 = kv2.get("1.0.term");
+  EXPECT_TRUE(t2.has_value());
+  EXPECT_TRUE(*t2 == "7");
+}
+
 } // namespace
 
 int main() {
@@ -1461,6 +1665,13 @@ int main() {
   test_osd_store_gc_rewrite_once();
   test_superblock_manifest_codec();
   test_osd_store_multi_pg_shared_allocator();
+  test_parse_object_engine_mode();
+  test_compute_shard_region();
+  test_gc_rewrite_rate_limit();
+  test_log_store_append_read_trim();
+  test_log_store_rebuild_from_image();
+  test_kv_engine_put_commit_get();
+  test_osd_store_list_pg_ids();
 
   if (g_failures != 0) {
     std::fprintf(stderr, "aos_m1_test: %d failure(s)\n", g_failures);
