@@ -938,15 +938,15 @@ void osd_store::recover_after_meta(recover_req* req) {
   if (req->mf_ok) {
     manifest_generation_ = req->mf.generation;
     apply_manifest_epochs(req->mf);
-    if (req->mf.data_high_water > data_offset_) {
-      backend_->set_write_pointer(req->mf.data_high_water);
-    } else {
-      backend_->set_write_pointer(data_offset_);
-    }
-  } else {
-    backend_->set_write_pointer(
-        std::max(backend_->write_pointer(), data_offset_));
   }
+  // Scan the full data region as upper bound. Manifest data_high_water can lag
+  // the last durable append (object/log/kv writes do not always persist the
+  // manifest), so limiting to high_water drops tail WAL and object records
+  // after restart. Unwritten zeros stop the scan on decode failure.
+  const uint64_t data_end = data_offset_ + data_length_;
+  const uint64_t scan_end =
+      std::min(backend_ ? backend_->capacity() : data_end, data_end);
+  backend_->set_write_pointer(std::max(scan_end, data_offset_));
 
   req->pos = data_offset_;
   req->last_good = data_offset_;
@@ -976,10 +976,49 @@ void osd_store::recover_process(recover_req* req) {
       }
     }
     drop_unsealed_staging();
+
+    // If data scan advanced past the stale manifest high_water, snapshot a
+    // fresh manifest so the next recover can bound the scan sooner.
+    const uint64_t mf_hw =
+        req->mf_ok ? req->mf.data_high_water : 0;
+    const uint64_t last_good = req->last_good;
+    const bool need_hw_snap = last_good > mf_hw;
+
     meta_free_buf(req->buf);
     auto cb = std::move(req->cb);
     void* a = req->arg;
+    osd_store* self = req->self;
     delete req;
+
+    if (need_hw_snap && self != nullptr) {
+      struct hw_snap {
+        op_complete cb;
+        void* arg{nullptr};
+      };
+      auto* snap = new (std::nothrow) hw_snap();
+      if (snap == nullptr) {
+        if (cb) {
+          cb(a, 0);
+        }
+        return;
+      }
+      snap->cb = std::move(cb);
+      snap->arg = a;
+      self->persist_manifest(
+          [](void* arg, int /*err*/) {
+            auto* s = static_cast<hw_snap*>(arg);
+            auto c = std::move(s->cb);
+            void* u = s->arg;
+            delete s;
+            // Recover already rebuilt memory state; high_water snap failure
+            // is non-fatal (next boot still full-scans).
+            if (c) {
+              c(u, 0);
+            }
+          },
+          snap);
+      return;
+    }
     if (cb) {
       cb(a, 0);
     }
