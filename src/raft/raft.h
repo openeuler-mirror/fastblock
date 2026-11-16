@@ -31,7 +31,7 @@
 #include "raft/append_entry_buffer.h"
 #include "localstore/kv_store.h"
 #include "raft/configuration_manager.h"
-#include "localstore/object_recovery.h"
+#include "raft/object_recovery.h"
 
 constexpr int32_t TIMER_PERIOD_MSEC = 500;    //毫秒
 constexpr int32_t HEARTBEAT_TIMER_INTERVAL_MSEC = 500;   //毫秒
