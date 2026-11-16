@@ -141,6 +141,15 @@ public:
   uint64_t object_count() const { return objects_.size(); }
   bool busy() const { return busy_; }
 
+  /**
+   * Visit every live head extent (not deleted objects). Used by GC to decide
+   * whether a physical segment still has references.
+   * fn(phys_offset, length) — absolute device offsets.
+   */
+  void for_each_live_extent(
+      const std::function<void(uint64_t phys_offset, uint64_t length)>& fn)
+      const;
+
 private:
   struct object_state {
     std::string name;
