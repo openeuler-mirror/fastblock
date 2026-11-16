@@ -629,6 +629,10 @@ private:
 
 using make_disklog_complete = std::function<void (void *arg, struct disk_log* dlog, int rberrno)>;
 
+/**
+ * Blob-backed constructors — **demo / residual tests only**.
+ * Production OSD uses make_aos_disk_log exclusively (design v2 P4).
+ */
 void make_disk_log(struct spdk_blob_store *bs, struct spdk_io_channel *channel,
     std::string pg, make_disklog_complete cb_fn, void* arg, uint32_t shard_id);
 
@@ -636,7 +640,7 @@ disk_log* make_disk_log(struct spdk_blob_store *bs, struct spdk_io_channel *chan
                     struct spdk_blob* blob);
 
 /**
- * Create disk_log backed by AOS log_store (design v2 P1).
+ * Production: disk_log backed by AOS log_store (design v2 P1/P4).
  * log_store lifetime must outlive the returned disk_log (owned by osd_store).
  */
 void make_aos_disk_log(fastblock::aos::log_store* log, make_disklog_complete cb_fn,
