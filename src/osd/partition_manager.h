@@ -14,12 +14,22 @@
 #include "fastblock/base/core_sharded.h"
 #include "raft/pg_group.h"
 
+#include <atomic>
+#include <functional>
+#include <map>
 #include <memory>
+#include <mutex>
+#include <string>
+
+#include <spdk/thread.h>
 
 struct shard_revision {
     uint32_t _shard;
     int64_t _revision;
 };
+
+/** Immutable COW snapshot of pg → home shard (RTC PR-4). */
+using pg_shard_table = std::map<std::string, shard_revision>;
 
 enum class osd_state {
     OSD_STARTING,
@@ -43,7 +53,8 @@ public:
         raft_election_timeout_msec == 0 ? DEFAULT_ELECTION_TIMER_PERIOD_MSEC : raft_election_timeout_msec)
       , _shard(core_sharded::get_core_sharded())
       , _shard_cores(core_sharded::get_shard_cores())
-      , _state(osd_state::OSD_STARTING) {
+      , _state(osd_state::OSD_STARTING)
+      , _shard_table_ro(std::make_shared<const pg_shard_table>()) {
           uint32_t i = 0;
           auto shard_num = _shard_cores.size();
           for(i = 0; i < shard_num; i++){
@@ -125,19 +136,8 @@ public:
         _pgs.load_pgs_map(pools);
     }
 
-    int add_pg_shard(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id, int64_t revision_id){
-        std::string name = pg_id_to_name(pool_id, pg_id);
-        _shard_table[std::move(name)] = shard_revision{shard_id, revision_id};
-        return 0;
-    }
-
-    int remove_pg_shard(uint64_t pool_id, uint64_t pg_id){
-        std::string name = pg_id_to_name(pool_id, pg_id);
-        auto ret = _shard_table.erase(std::move(name));
-        if(ret == 0)
-            return -EEXIST;
-        return 0;
-    }
+    int add_pg_shard(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id, int64_t revision_id);
+    int remove_pg_shard(uint64_t pool_id, uint64_t pg_id);
 
     std::shared_ptr<monitor_client> get_mon_client(){
         return _mon_client;
@@ -148,10 +148,13 @@ public:
     }
 private:
     int osd_state_is_not_active();
+    void publish_shard_table(std::shared_ptr<const pg_shard_table> next);
+    void mutate_shard_table(std::function<void(pg_shard_table&)> mutator);
 
     pg_group_t _pgs;
-    // Record the mapping from PG to CPU core
-    std::map<std::string, shard_revision> _shard_table;
+    // COW pg→home shard index (RTC PR-4 / K3 / K11)
+    std::atomic<std::shared_ptr<const pg_shard_table>> _shard_table_ro;
+    std::mutex _shard_table_mu;
     core_sharded&  _shard;
     std::vector<uint32_t> _shard_cores;
     std::vector<std::map<std::string, std::shared_ptr<osd_stm>>> _sm_table;
