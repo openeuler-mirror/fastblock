@@ -62,6 +62,9 @@ public:
     return static_cast<uint64_t>(id) * segment_size_;
   }
 
+  // Bytes left in the open segment (0 if none open).
+  uint64_t remaining_in_open() const;
+
   // Open first free segment if none open. Returns 0 or -ENOSPC.
   int ensure_open();
 
@@ -71,7 +74,10 @@ public:
    * Advances open_cursor immediately (M1 single inflight writer).
    * Returns 0, -EINVAL, or -ENOSPC.
    */
-  int reserve(uint64_t nbytes, uint64_t* phys_offset, uint32_t* seg_id);
+  int reserve(uint64_t nbytes, uint64_t* phys_offset, uint32_t* seg_id = nullptr);
+
+  // True if reserving nbytes would seal the current open segment first.
+  bool would_roll(uint64_t nbytes) const;
 
   // Seal current open segment (if any). Idempotent.
   void seal_open();
