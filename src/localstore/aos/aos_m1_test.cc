@@ -19,6 +19,7 @@
 #include "mem_device_backend.h"
 #include "pg_store.h"
 #include "record.h"
+#include "segment_allocator.h"
 #include "types.h"
 
 #include <algorithm>
@@ -585,6 +586,96 @@ void test_pg_store_torn_checkpoint_fallback() {
   EXPECT_EQ(dev.write_pointer(), good_end);
 }
 
+void test_segment_allocator_no_double_alloc() {
+  // 4 x 1MiB segments
+  segment_allocator alloc(4ull * 1024 * 1024, 1024 * 1024, 4096);
+  EXPECT_EQ(alloc.segment_count(), 4u);
+  EXPECT_EQ(alloc.free_count(), 4u);
+
+  uint64_t p0 = 0, p1 = 0;
+  uint32_t s0 = 0, s1 = 0;
+  EXPECT_EQ(alloc.reserve(4096, &p0, &s0), 0);
+  EXPECT_EQ(s0, 0u);
+  EXPECT_EQ(p0, 0u);
+  EXPECT_EQ(alloc.reserve(4096, &p1, &s1), 0);
+  EXPECT_EQ(s1, 0u);
+  EXPECT_EQ(p1, 4096u);
+  EXPECT_TRUE(p1 != p0);
+
+  // Fill almost entire segment then force seal + open next
+  const uint64_t almost = 1024ull * 1024 - 8192;
+  uint64_t px = 0;
+  EXPECT_EQ(alloc.reserve(almost, &px, nullptr), 0);
+
+  uint64_t p2 = 0;
+  uint32_t s2 = 0;
+  EXPECT_EQ(alloc.reserve(4096, &p2, &s2), 0);
+  EXPECT_EQ(s2, 1u); // new segment
+  EXPECT_EQ(p2, 1024ull * 1024);
+  EXPECT_EQ(alloc.sealed_count(), 1u);
+  EXPECT_EQ(alloc.state(0), segment_state::sealed);
+  EXPECT_EQ(alloc.state(1), segment_state::open);
+
+  // Exhaust all segments
+  for (uint32_t i = 1; i < 4; ++i) {
+    // fill remaining of current open then next
+    while (alloc.open_segment() == i) {
+      uint64_t p = 0;
+      const int rc = alloc.reserve(4096, &p, nullptr);
+      if (rc == -ENOSPC) {
+        break;
+      }
+      EXPECT_EQ(rc, 0);
+    }
+  }
+  // After filling, further reserve must ENOSPC (no free segment)
+  // Fill segment 3 completely if open
+  while (alloc.free_count() > 0 || alloc.open_segment() != segment_allocator::kInvalidSeg) {
+    uint64_t p = 0;
+    const int rc = alloc.reserve(4096, &p, nullptr);
+    if (rc != 0) {
+      EXPECT_EQ(rc, -ENOSPC);
+      break;
+    }
+  }
+  uint64_t pfail = 0;
+  EXPECT_EQ(alloc.reserve(4096, &pfail, nullptr), -ENOSPC);
+}
+
+void test_pg_store_multi_segment_write_recover() {
+  // Small segments force seal across writes.
+  const uint64_t seg = 256 * 1024; // 256KiB
+  mem_device_backend dev(2 * 1024 * 1024); // 2MiB => 8 segments
+  pg_id id{11, 0, 1};
+  {
+    pg_store store(&dev, id, buffer_mode::heap, seg);
+    EXPECT_EQ(store.allocator()->segment_count(), 8u);
+
+    // Several 4K objects / overwrites to cross segment boundary
+    for (int i = 0; i < 40; ++i) {
+      std::vector<char> buf(4096, static_cast<char>('A' + (i % 26)));
+      sync_result r;
+      store.write("ms", static_cast<uint64_t>(i % 8) * 4096, buf.data(),
+                  buf.size(), static_cast<uint64_t>(i + 1), 0, on_done, &r);
+      EXPECT_EQ(r.err, 0);
+    }
+    EXPECT_TRUE(store.allocator()->sealed_count() >= 1u);
+  }
+
+  pg_store store2(&dev, id, buffer_mode::heap, seg);
+  sync_result rr;
+  store2.recover(on_done, &rr);
+  EXPECT_EQ(rr.err, 0);
+
+  std::vector<char> out(4096, 0);
+  rr = {};
+  store2.read("ms", 0, out.data(), 4096, on_done, &rr);
+  EXPECT_EQ(rr.err, 0);
+  // Last write that touched offset 0 was i=0,8,16,24,32 → 'A'+0 = 'A' for i=0
+  // i=32 → 'A'+6 = 'G' (32%26=6)
+  EXPECT_EQ(out[0], static_cast<char>('A' + (32 % 26)));
+}
+
 void test_pg_store_checkpoint_then_discard_recover() {
   mem_device_backend dev(32 * 1024 * 1024);
   pg_id id{8, 2, 1};
@@ -641,6 +732,8 @@ int main() {
   test_pg_store_checkpoint_and_recover();
   test_pg_store_torn_checkpoint_fallback();
   test_pg_store_checkpoint_then_discard_recover();
+  test_segment_allocator_no_double_alloc();
+  test_pg_store_multi_segment_write_recover();
 
   if (g_failures != 0) {
     std::fprintf(stderr, "aos_m1_test: %d failure(s)\n", g_failures);

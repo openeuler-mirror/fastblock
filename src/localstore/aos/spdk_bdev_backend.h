@@ -61,6 +61,8 @@ public:
 
   void append(void* data, uint64_t nbytes, append_complete cb,
               void* arg) override;
+  void write_at(uint64_t phys_offset, void* data, uint64_t nbytes,
+                append_complete cb, void* arg) override;
   void read(uint64_t phys_offset, void* data, uint64_t nbytes, op_complete cb,
             void* arg) override;
   void flush(op_complete cb, void* arg) override;

@@ -23,22 +23,30 @@ mem_device_backend::mem_device_backend(uint64_t capacity_bytes,
 
 void mem_device_backend::append(void* data, uint64_t nbytes, append_complete cb,
                                  void* arg) {
+  write_at(write_pointer_, data, nbytes, std::move(cb), arg);
+}
+
+void mem_device_backend::write_at(uint64_t phys_offset, void* data,
+                                  uint64_t nbytes, append_complete cb,
+                                  void* arg) {
   if (cb == nullptr) {
     return;
   }
-  if (data == nullptr || nbytes == 0 || (nbytes % block_size_) != 0) {
+  if (data == nullptr || nbytes == 0 || (nbytes % block_size_) != 0 ||
+      (phys_offset % block_size_) != 0) {
     cb(arg, 0, -EINVAL);
     return;
   }
-  if (write_pointer_ + nbytes > capacity_) {
+  if (phys_offset + nbytes > capacity_) {
     cb(arg, 0, -ENOSPC);
     return;
   }
-  const uint64_t off = write_pointer_;
-  std::memcpy(storage_.data() + static_cast<size_t>(off), data,
+  std::memcpy(storage_.data() + static_cast<size_t>(phys_offset), data,
               static_cast<size_t>(nbytes));
-  write_pointer_ += nbytes;
-  cb(arg, off, 0);
+  if (phys_offset + nbytes > write_pointer_) {
+    write_pointer_ = phys_offset + nbytes;
+  }
+  cb(arg, phys_offset, 0);
 }
 
 void mem_device_backend::read(uint64_t phys_offset, void* data, uint64_t nbytes,
@@ -55,7 +63,7 @@ void mem_device_backend::read(uint64_t phys_offset, void* data, uint64_t nbytes,
     cb(arg, -ERANGE);
     return;
   }
-  // Only allow reading committed region (up to write_pointer for safety).
+  // High-water bound: allow reading any committed range.
   if (phys_offset + nbytes > write_pointer_) {
     cb(arg, -ERANGE);
     return;

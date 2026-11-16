@@ -12,6 +12,7 @@
 
 #include "device_backend.h"
 #include "record.h"
+#include "segment_allocator.h"
 
 #include <cstdint>
 #include <functional>
@@ -20,12 +21,13 @@
 namespace fastblock::aos {
 
 /**
- * Append-only segment on top of device_backend (SPDK async).
+ * Append-only records via device_backend + segment_allocator (SPDK async).
  *
  * Responsibilities:
- * - encode records and append via backend
- * - pad to block_size for bdev alignment
- * - expose phys_offset of payload for extent_map
+ * - encode records, pad to block_size
+ * - reserve space from allocator (may seal/open segments)
+ * - write_at reserved phys offset
+ * - expose phys_offset of record start for extent_map
  *
  * Does NOT block. All methods complete via callback on the SPDK thread.
  */
@@ -35,19 +37,18 @@ public:
   using append_record_complete =
       std::function<void(void* arg, uint64_t phys_offset, int err)>;
 
-  explicit segment(device_backend* backend) : backend_(backend) {}
+  segment(device_backend* backend, segment_allocator* alloc)
+      : backend_(backend), alloc_(alloc) {}
 
   device_backend* backend() const { return backend_; }
+  segment_allocator* allocator() const { return alloc_; }
 
   /**
-   * Encode rec, pad to block_size, append to device.
+   * Encode rec, pad to block_size, reserve + write_at.
    * On success: phys_offset is byte offset of the start of the on-disk
    * record (including header) within the backend region.
    *
-   * buf_holder must remain valid until cb fires; ownership stays with caller.
-   * For SPDK path, payload inside rec must already reference DMA memory
-   * or be copied into a DMA buffer by the caller before encode — M1 helper
-   * append_record_dma copies into a provided DMA slab.
+   * dma_buf must remain valid until cb fires; ownership stays with caller.
    */
   void append_record(const data_record& rec, void* dma_buf, uint64_t dma_cap,
                      append_record_complete cb, void* arg);
@@ -64,6 +65,7 @@ public:
 
 private:
   device_backend* backend_{nullptr};
+  segment_allocator* alloc_{nullptr};
 };
 
 } // namespace fastblock::aos

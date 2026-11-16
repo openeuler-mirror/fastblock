@@ -12,6 +12,7 @@
 
 #include <cerrno>
 #include <cstring>
+#include <new>
 
 namespace fastblock::aos {
 namespace {
@@ -21,7 +22,7 @@ struct append_ctx {
   void* arg{nullptr};
 };
 
-void on_append_done(void* arg, uint64_t phys_offset, int err) {
+void on_write_done(void* arg, uint64_t phys_offset, int err) {
   auto* ctx = static_cast<append_ctx*>(arg);
   auto cb = std::move(ctx->cb);
   void* user = ctx->arg;
@@ -36,7 +37,8 @@ void on_append_done(void* arg, uint64_t phys_offset, int err) {
 void segment::append_record(const data_record& rec, void* dma_buf,
                             uint64_t dma_cap, append_record_complete cb,
                             void* arg) {
-  if (backend_ == nullptr || dma_buf == nullptr || cb == nullptr) {
+  if (backend_ == nullptr || alloc_ == nullptr || dma_buf == nullptr ||
+      cb == nullptr) {
     if (cb) {
       cb(arg, 0, -EINVAL);
     }
@@ -50,6 +52,15 @@ void segment::append_record(const data_record& rec, void* dma_buf,
     return;
   }
 
+  uint64_t phys = 0;
+  uint32_t seg_id = 0;
+  const int rerr = alloc_->reserve(aligned, &phys, &seg_id);
+  if (rerr != 0) {
+    cb(arg, 0, rerr);
+    return;
+  }
+  (void)seg_id;
+
   std::memset(dma_buf, 0, static_cast<size_t>(aligned));
   std::memcpy(dma_buf, encoded.data(), encoded.size());
 
@@ -61,7 +72,7 @@ void segment::append_record(const data_record& rec, void* dma_buf,
   ctx->cb = std::move(cb);
   ctx->arg = arg;
 
-  backend_->append(dma_buf, aligned, on_append_done, ctx);
+  backend_->write_at(phys, dma_buf, aligned, on_write_done, ctx);
 }
 
 } // namespace fastblock::aos
