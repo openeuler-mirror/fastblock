@@ -676,6 +676,10 @@ inline void kvstore::replay(kvstore_rw_complete cb_fn, void* arg) {
 
 using make_kvs_complete = std::function<void (void *arg, struct kvstore* kvs, int kverrno)>;
 
+/**
+ * Blob-backed kvstore — **demo / residual tests only**.
+ * Production OSD uses make_aos_kvstore / storage_manager::attach_aos_kv (P4).
+ */
 void make_kvstore(struct spdk_blob_store *bs,
                   struct spdk_io_channel *channel,
                   make_kvs_complete cb_fn, void* arg);
@@ -685,6 +689,6 @@ void load_kvstore(spdk_blob_id blob_id, spdk_blob_id checkpoint_blob_id,
                   struct spdk_io_channel *channel,
                   make_kvs_complete cb_fn, void* arg);
 
-/** AOS-backed kvstore (design v2 P2). eng not owned. */
+/** Production: AOS-backed kvstore (design v2 P2/P4). eng not owned. */
 void make_aos_kvstore(fastblock::aos::kv_engine* eng, make_kvs_complete cb_fn,
                       void* arg);
