@@ -1,7 +1,8 @@
 # fastblock Append-Only Store（AOS）统一 Localstore 设计
 
-日期：2026-08-12（v2：AOS 管一切）  
+日期：2026-08-13（v2：AOS 管一切）  
 状态：**object + log + kv 引擎已落地；启动路径 AOS-only；P4 完成**（blob 实现归档到 `legacy_blob/`，不参与生产编译）  
+实现注记：KV 采纳备选 **K2**（data-region record 流），未做 §7.3 独立 kv_checkpoint slots；`layout_version` 保持 1。GC live 判断已覆盖三引擎。  
 
 
 实现目录：`src/localstore/aos/`  
@@ -79,7 +80,7 @@ v2 进一步要求：**一条盘栈服务全部本地持久状态**，而不是�
 - [x] `kv_store` / `kv_engine`：put/get/commit + WAL + checkpoint  
 - [x] 启动路径：**跳过** `blobstore_init/load`；`aos_format` / `aos_recover` + `attach_aos_kv`  
 - [x] PG load 从 AOS `list_pg_ids()` 发现，不再扫 blob xattr  
-- [ ] 单盘布局/部署文档完全收敛（可仍挂 legacy bdev 名但不 init bs）  
+- [x] 单盘布局/部署文档收敛：`osd/readme`、`aos/README`、`vstart` 仅 AOS；`localstore/README` 标明生产 AOS、blob 为档案  
 
 ### 2.3 终态（阶段 C / P4）
 
@@ -197,25 +198,19 @@ osd_store（设备门面）
 +-----------------------------+
 ```
 
-**过渡（knife-1 现状）**：
-
-```text
-主盘 bdev  → blobstore（仅 disk_log + kv）   ← 待删除
-AOS 盘     → object only（已强制）
-```
-
-过渡只为减少同时改动面；**不是终态**。B 阶段结束后主盘 blobstore 消失。
+**现状（P3/P4 后）**：单盘 AOS（`aos_disk`）。object / log / kv record 同 data-region；无生产 blobstore。  
+K1 独立 kv meta 区未做（见 §7）；新集群 only，无旧盘升级。
 
 ### 4.3 Segment 归属（多引擎共盘）
 
-首版约束：
+首版落地：
 
-- segment 可标记 `owner_class ∈ {object, log, kv_meta}`  
-- 或使用 **独立 open segment** 给 log / object，避免无限混杂导致 GC 扫描跨引擎  
-- GC live 判断：  
+- 三引擎各自 `segment writer_`（独立 open segment），**未**实现 `owner_class` 字段  
+- GC live 判断分引擎（`osd_store::visit_live_extents`）：  
   - object：extent + pin waterline  
-  - log：index map 仍引用的物理范围  
-  - kv：WAL 在 checkpoint 之前的 generation 可裁  
+  - log：`index_map` 仍引用的物理范围  
+  - kv：最新 `kv_checkpoint` + 其后 WAL；checkpoint 之前的 WAL 可裁  
+- 禁止只按 object live 回收 sealed segment（会误删 log/kv）  
 
 ### 4.4 启动顺序（目标）
 
@@ -228,8 +223,7 @@ AOS 盘     → object only（已强制）
 6. partition_manager 挂 raft（log + stm + kv 指针均来自 AOS）
 ```
 
-knife-1 现状：blobstore 先起 → storage(kv) → AOS recover object → load PG。  
-B 完成后变为上表。
+生产启动已是上表：`block_started` 跳过 blobstore；`storage_*` defer kv；`aos_runtime.recover` 单次扫盘回放三引擎。
 
 ---
 
@@ -361,22 +355,21 @@ checkpoint：整表快照，加速恢复、允许裁 WAL
 
 **不在 v2 改变** raft 对 kv 的调用形状（同步 put/get）。
 
-### 7.3 推荐实现：K1 Meta 区（首选）
+### 7.3 K1 Meta 区（未做，后置）
 
 ```text
 kv checkpoint slots（双 generation，类似 manifest）
   + kv WAL records（append-only，可放专用 meta segments）
 ```
 
-- 与 object/log **物理隔离**，避免 GC 纠缠  
-- 复用 generation + checksum 选择最新合法视图  
-- recover：`load best checkpoint → replay WAL`  
+与 object/log 物理隔离、避免 GC 纠缠。v2 生产未采用；若日后要做须升 `layout_version`。
 
-### 7.4 备选：K2 系统 record 流
+### 7.4 已采纳：K2 系统 record 流
 
 - `record_type::kv_put / kv_delete / kv_checkpoint`  
-- 系统 namespace或独立 segment pool  
-- 可行，但 live 规则必须与 object 分开实现  
+- 写入共享 data-region（独立 open segment，reserved pg `0.0` epoch 1）  
+- recover：顺序 apply；遇 checkpoint 替换整表再重放后续 WAL  
+- live 规则与 object/log **分开实现**（见 §4.3）  
 
 ### 7.5 明确禁止：K3 object 伪装
 
@@ -397,9 +390,9 @@ kv checkpoint slots（双 generation，类似 manifest）
 | object_name / checkpoint_marker | object | 已实现 |
 | raft/image pin-unpin / install_* | object | 已实现 |
 | segment_seal | 共享 | 已实现 |
-| **raft_log_entry** | log | **待实现** |
-| **kv_put / kv_delete** | kv | **待实现** |
-| **kv_checkpoint** | kv | **待实现** |
+| **raft_log_entry** | log | 已实现（type=14） |
+| **kv_put / kv_delete** | kv | 已实现（type=15/16） |
+| **kv_checkpoint** | kv | 已实现（type=17） |
 | metadata_delta | object 优化 | 可选，非阻塞 |
 
 所有类型共用 magic/version/CRC 框架；未知 type 在 recover 时按策略 skip 或 fail-fast（首版 fail-fast 更安全）。
@@ -408,28 +401,20 @@ kv checkpoint slots（双 generation，类似 manifest）
 
 ## 9. Device layout 细节（目标格式）
 
+**当前生产布局（`layout.h`，`kLayoutVersion = 1`）**：
+
 ```text
 offset 0
   superblock A (4KiB)
   superblock B (4KiB)
-  manifest slots (2 × 128KiB)     # PG epoch 表、open cursor、可选 log/kv 指针
-  kv_checkpoint slots (2 × N)     # 新；N 足够装整表序列化
-  [reserved]
-data_region_base
+  manifest slots (2 × 128KiB)     # PG epoch 表、open cursor、data_high_water
+data_region_base                  # kMetaSize
   segments[0..S)
-    owner: object | log | kv_wal
+    object / raft_log_entry / kv_*  分 writer 混部同一段池
 ```
 
-`superblock` 增加：
-
-- `layout_version`（v2 起）  
-- `flags`（是否含 kv_meta 区）  
-- `kv_checkpoint_generation` 提示（可选，真相仍以 slot checksum 为准）  
-
-`manifest` 增加（可选渐进）：
-
-- per-PG：`log_base_index` / `log_high_water` 提示  
-- `kv_wal_high_water`  
+§9 原先草拟的 `kv_checkpoint slots` + `owner` 字段 **未上盘**（K2，见 §7.4）。  
+record `format_version = 2` 已含 log/kv type；盘前缀 layout 仍为 v1。新集群 only。
 
 Checkpoint **不是唯一真相**；record 自描述 + 扫盘可重建。
 
@@ -449,9 +434,9 @@ Checkpoint **不是唯一真相**；record 自描述 + 扫盘可重建。
 
 | 阶段 | 内容 | blobstore |
 |------|------|-----------|
-| **A（已完成）** | object 仅 AOS；删 object 生产 blob 路径 | 仅 log+kv |
-| **B（进行中）** | log_store + kv_store 上 AOS 平台 | 可移除 |
-| **C** | 无 blobstore_init；链接与文档清理 | 无 |
+| **A（已完成）** | object 仅 AOS；删 object 生产 blob 路径 | 当时仅 log+kv |
+| **B（已完成）** | log_store + kv_engine 上 AOS 平台 | 可移除 |
+| **C（已完成）** | 无 blobstore_init；生产不链接 blob 实现 | 无 |
 
 ### 10.3 现状代码映射
 
@@ -459,9 +444,9 @@ Checkpoint **不是唯一真相**；record 自描述 + 扫盘可重建。
 |------|------|
 | `osd_stm` object IO | AOS only |
 | `aos_runtime` / 强制 `aos_disk` | 已落地 |
-| `disk_log` | 仍 rolling_blob |
-| `kvstore` | 仍 rolling_blob |
-| `blobstore_init` | 仍服务 log/kv 与遗留扫描 |
+| `disk_log` | AOS `log_store` 门面 |
+| `kvstore` | AOS `kv_engine` 门面 |
+| `blobstore_init` | 生产 stub（`-ENOTSUP`）；实现在 `legacy_blob/` |
 
 ---
 
@@ -494,7 +479,8 @@ Checkpoint **不是唯一真相**；record 自描述 + 扫盘可重建。
 ### P0 — 设计冻结（本文 v2）
 
 - [x] 平台三分引擎 + 禁止 object 模拟 log/kv  
-- [ ] layout_version 与 record type 枚举冻结（实现时写入 `types.h` / `layout.h`）  
+- [x] record type 枚举冻结于 `types.h`（format_version=2，含 14–17）  
+- [x] 盘前缀 `layout_version=1` 冻结（K2 不增加 kv slot；升 layout 留给 K1/ZNS）  
 
 ### P1 — log_store ✅
 
@@ -548,10 +534,11 @@ Checkpoint **不是唯一真相**；record 自描述 + 扫盘可重建。
 ### P5+ — image/CSI、ZNS、性能
 
 - [x] 数据面 image snap pin/clone/release + flatten（`pg_store` / `osd_store` / `osd_stm`）  
-- [x] GC 策略入口 `osd_store::gc_pass`（rewrite 限速 + free dead）  
-- [ ] mon snap_ctx / CSI 控制面编排  
-- [ ] ZNS segment=zone  
-- [ ] GC 压测与后台 poller 生产默认参数  
+- [x] GC 策略入口 `osd_store::gc_pass`（rewrite 限速 + free dead；live 含 object/log/kv）  
+- [x] 后台 GC poller（`aos_runtime`，format/recover 后默认 5s / max 16 rewrite）  
+- [ ] mon snap_ctx / CSI 控制面编排（OSD `process_image_snap` RPC 进行中）  
+- [ ] ZNS segment=zone（仅有 `choose_segment_size_for_device` 尺寸 helper）  
+- [ ] GC 压测与生产默认参数调优  
 
 状态：数据面 image/clone/flatten/GC 策略已具备；控制面 mon 与 ZNS 后续。
 
@@ -569,12 +556,16 @@ Checkpoint **不是唯一真相**；record 自描述 + 扫盘可重建。
 - index 连续与空洞拒绝策略  
 - trim 后读失败边界  
 - 恢复后 last_index 正确  
+- torn tail：CRC/magic 失败停扫，保留此前 entry  
+- GC：有 live index 的 sealed segment 不得 free；trim 后可回收  
 
 ### KV（新增）
 
 - 批量 put 后 kill，WAL replay  
 - checkpoint 后裁 WAL，重启数据完整  
 - 并发 put 与 poller commit  
+- WAL 半写 / checkpoint 半写：丢弃 torn tail，保留前一合法视图  
+- GC：checkpoint 前 WAL 可裁；最新 checkpoint + 后续 WAL 保活  
 
 ### 系统
 
@@ -600,18 +591,20 @@ Checkpoint **不是唯一真相**；record 自描述 + 扫盘可重建。
 
 ```text
 AOS = fastblock 本地存储平台
-  object_engine：已上线路径（knife-1）
-  log_engine：下一切，替换 disk_log
-  kv_engine：再下一切，meta WAL+checkpoint，替换 kvstore
-  终态：无 blobstore
+  object_engine：生产唯一路径（knife-1）
+  log_engine：已替换 disk_log
+  kv_engine：K2 WAL+checkpoint，已替换 kvstore
+  终态：生产无 blobstore（P4 已完成）
 
 不要：
   - 双生产引擎长期并存
   - 用 object 接口硬套 log/kv
   - 为未上线系统背兼容包袱
+  - 只按 object live 做 GC
 ```
 
-实现顺序：**冻结本文 → P1 log_store → P2 kv meta → P3 去 blobstore 启动 → P4 清理。**
+已完成：**冻结本文 → P1 log_store → P2 kv（K2）→ P3 去 blobstore 启动 → P4 清理。**  
+剩余：P5 控制面（mon/CSI）、ZNS、GC 压测。
 
 ---
 
@@ -621,10 +614,10 @@ AOS = fastblock 本地存储平台
 |------|------|
 | 平台 | `src/localstore/aos/`（device, segment, record, superblock, osd_store） |
 | object | `pg_store.*`, `snapshot_*. *`, `osd_stm` attach |
-| log（目标） | `src/localstore/aos/log_store.*` 或 `src/localstore/log_store.*` 接 AOS backend |
-| kv（目标） | `kv_store` 后端换 meta；或 `aos/kv_engine.*` |
+| log | `src/localstore/aos/log_store.*`；`disk_log` 为门面 |
+| kv | `src/localstore/aos/kv_engine.*`；`kv_store` 为门面 |
 | 进程 | `aos_runtime`, `partition_manager`, `osd.cc` |
-| 旧 blob | `blob_manager`, `rolling_blob`, `object_store` — 阶段 C 删除生产路径 |
+| 旧 blob | `legacy_blob/`（不参与生产编译）；`blob_manager` 生产 stub |
 
 ## 附录 B. v1 → v2 变更摘要
 
