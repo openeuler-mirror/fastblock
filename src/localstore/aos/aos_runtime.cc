@@ -95,6 +95,17 @@ void aos_runtime::recover(op_complete cb, void* arg) {
           if (kv_) {
             kv_->start();
           }
+          if (store_) {
+            const auto pgs = store_->list_pg_ids();
+            SPDK_NOTICELOG("aos_runtime recover: %zu pg id(s) in latest_epoch\n",
+                           pgs.size());
+            for (const auto& id : pgs) {
+              SPDK_NOTICELOG(
+                  "aos recover pg %lu.%lu serving=%lu latest=%lu\n", id.first,
+                  id.second, store_->serving_epoch(id.first, id.second),
+                  store_->latest_epoch(id.first, id.second));
+            }
+          }
         }
         if (cb) {
           cb(arg, err);
