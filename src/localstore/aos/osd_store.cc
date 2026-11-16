@@ -518,6 +518,63 @@ void osd_store::persist_continue(meta_req* req) {
       req);
 }
 
+void osd_store::apply(uint64_t pool_id, uint64_t pg_id,
+                      const std::string& object_name, uint64_t offset,
+                      const void* data, uint64_t len, uint64_t raft_write_index,
+                      uint64_t image_snap_seq, op_complete cb, void* arg) {
+  if (cb == nullptr) {
+    return;
+  }
+  if (data == nullptr || object_name.empty() || raft_write_index == 0) {
+    cb(arg, -EINVAL);
+    return;
+  }
+  pg_store* pg = get_active_pg(pool_id, pg_id);
+  if (pg == nullptr) {
+    cb(arg, -ENOENT);
+    return;
+  }
+  pg->write(object_name, offset, data, len, raft_write_index, image_snap_seq,
+            std::move(cb), arg);
+}
+
+void osd_store::read(uint64_t pool_id, uint64_t pg_id,
+                     const std::string& object_name, uint64_t offset, void* buf,
+                     uint64_t len, op_complete cb, void* arg) {
+  if (cb == nullptr) {
+    return;
+  }
+  if (buf == nullptr || object_name.empty()) {
+    cb(arg, -EINVAL);
+    return;
+  }
+  pg_store* pg = get_active_pg(pool_id, pg_id);
+  if (pg == nullptr) {
+    cb(arg, -ENOENT);
+    return;
+  }
+  pg->read(object_name, offset, buf, len, std::move(cb), arg);
+}
+
+void osd_store::remove(uint64_t pool_id, uint64_t pg_id,
+                       const std::string& object_name, uint64_t raft_write_index,
+                       uint64_t image_snap_seq, op_complete cb, void* arg) {
+  if (cb == nullptr) {
+    return;
+  }
+  if (object_name.empty() || raft_write_index == 0) {
+    cb(arg, -EINVAL);
+    return;
+  }
+  pg_store* pg = get_active_pg(pool_id, pg_id);
+  if (pg == nullptr) {
+    cb(arg, -ENOENT);
+    return;
+  }
+  pg->remove(object_name, raft_write_index, image_snap_seq, std::move(cb),
+             arg);
+}
+
 void osd_store::create_pg(uint64_t pool_id, uint64_t pg_id, op_complete cb,
                           void* arg) {
   if (cb == nullptr) {
@@ -529,6 +586,11 @@ void osd_store::create_pg(uint64_t pool_id, uint64_t pg_id, op_complete cb,
   }
   const uint64_t epoch = latest_epoch(pool_id, pg_id) + 1;
   ensure_pg(pool_id, pg_id, epoch);
+  // First PG: pin serving to this epoch. Install staging leaves serving as-is
+  // (snapshot_ingest::begin sets it to the pre-staging epoch).
+  if (serving_epoch_.find({pool_id, pg_id}) == serving_epoch_.end()) {
+    set_serving_epoch(pool_id, pg_id, epoch);
+  }
   persist_manifest(std::move(cb), arg);
 }
 
