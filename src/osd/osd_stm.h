@@ -11,9 +11,21 @@
 
 #pragma once
 #include <string>
+#include <cstdint>
 
 #include "raft/state_machine.h"
 #include "fastblock/rpc/osd_msg.pb.h"
+
+namespace fastblock::aos {
+class osd_store;
+}
+
+// Object data engine selection for osd_stm apply path (design M4).
+enum class object_engine_mode : uint8_t {
+  blob = 0,   // legacy blobstore object_store (default)
+  aos = 1,    // append-only store primary
+  shadow = 2, // write AOS + blob; read from AOS (divergence logged later)
+};
 
 
 // Allows READ-READ, or WRITE-WRITE.
@@ -221,12 +233,25 @@ public:
 
     void apply(std::shared_ptr<raft_entry_t> entry, utils::context *complete) override;
 
-    void write_obj(const std::string& obj_name, uint64_t offset, const std::string& data, utils::context *complete);
-    void delete_obj(const std::string& obj_name, utils::context *complete);
+    void write_obj(const std::string& obj_name, uint64_t offset, const std::string& data,
+                   uint64_t raft_write_index, utils::context *complete);
+    void delete_obj(const std::string& obj_name, uint64_t raft_write_index,
+                    utils::context *complete);
 
     void write_and_wait(const osd::write_request* request, osd::write_reply* response, google::protobuf::Closure* done);
     void read_and_wait(const osd::read_request* request, osd::read_reply* response, google::protobuf::Closure* done);
     void delete_and_wait(const osd::delete_request* request, osd::delete_reply* response, google::protobuf::Closure* done);
+
+    /**
+     * Attach AppendOnlyStore for this PG (M4). Lifetime of store must outlive
+     * the stm. pool_id/pg_id identify the serving generation in osd_store.
+     * Default mode remains blob until this is called.
+     */
+    void attach_aos(fastblock::aos::osd_store* store, uint64_t pool_id,
+                    uint64_t pg_id, object_engine_mode mode = object_engine_mode::aos);
+
+    object_engine_mode engine_mode() const { return _engine_mode; }
+    bool aos_attached() const { return _aos != nullptr; }
 
     auto unlock(const std::string& key, const utils::operation_type type){
         return _object_rw_lock.unlock(key, type);
@@ -241,4 +266,8 @@ public:
 private:
     lock_manager<op_type_excl_lock<utils::operation_type>>   _object_rw_lock;
     uint32_t  _sockid;
+    fastblock::aos::osd_store* _aos{nullptr};
+    uint64_t _pool_id{0};
+    uint64_t _pg_id{0};
+    object_engine_mode _engine_mode{object_engine_mode::blob};
 };
