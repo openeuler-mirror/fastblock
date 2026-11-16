@@ -30,6 +30,7 @@
 #include <utility>
 #include <errno.h>
 #include <algorithm>
+#include <cstdlib>
 #include <string>
 #include <sstream>
 
@@ -70,6 +71,8 @@ struct log_op_ctx {
 
 class disk_log {
     static constexpr uint64_t header_size = 4_KB;
+    static constexpr uint64_t default_trim_keep_entries = 1000;
+    static constexpr uint64_t default_trim_trigger_entries = 1500;
 
 public:
     disk_log(rolling_blob* rblob) : _rblob(rblob) {}
@@ -256,12 +259,28 @@ public:
     // 只保留apply_index前面的1000条，超过1500条就trim一次
     bool maybe_trim() {
       _polls_count++;
-      if (_trim_index > 1500 + _lowest_index) {
+      auto trim_keep_entries = get_env_u64(
+        "FASTBLOCK_RAFT_LOG_TRIM_KEEP_ENTRIES", default_trim_keep_entries);
+      auto trim_trigger_entries = get_env_u64(
+        "FASTBLOCK_RAFT_LOG_TRIM_TRIGGER_ENTRIES", default_trim_trigger_entries);
+      const bool trim_hook_enabled =
+        std::getenv("FASTBLOCK_RAFT_LOG_TRIM_KEEP_ENTRIES") ||
+        std::getenv("FASTBLOCK_RAFT_LOG_TRIM_TRIGGER_ENTRIES");
+      if (trim_keep_entries >= trim_trigger_entries) {
+          trim_keep_entries = default_trim_keep_entries;
+          trim_trigger_entries = default_trim_trigger_entries;
+      }
+      if (_trim_index > trim_trigger_entries + _lowest_index) {
           // trim前： lowest_index: 100  apply_index: 1700
           //   trim:  从 100 到 700
           // trim后： lowest_index: 701  apply_index: 1700 (一共保留1000条)
-          SPDK_INFOLOG(disk_log, "do trim [%lu, %lu]\n", _lowest_index, _trim_index - 1000);
-          trim_back(_lowest_index, _trim_index - 1000, [](void *, int){}, nullptr);
+          if (trim_hook_enabled) {
+              SPDK_NOTICELOG("raft log test trim [%lu, %lu], applied %lu, trigger %lu, keep %lu\n",
+                             _lowest_index, _trim_index - trim_keep_entries,
+                             _trim_index, trim_trigger_entries, trim_keep_entries);
+          }
+          SPDK_INFOLOG(disk_log, "do trim [%lu, %lu]\n", _lowest_index, _trim_index - trim_keep_entries);
+          trim_back(_lowest_index, _trim_index - trim_keep_entries, [](void *, int){}, nullptr);
           _trims_count++;
           return true;
       } else if(_rblob->should_trim(TRIM_TRIGGER_PERCENTAGE)) {
@@ -455,6 +474,21 @@ private:
     std::map<uint64_t, log_position> _index_map;
 
 private:
+    static uint64_t get_env_u64(const char* name, uint64_t fallback) {
+        const char* value = std::getenv(name);
+        if (!value || value[0] == '\0') {
+            return fallback;
+        }
+
+        char* end = nullptr;
+        errno = 0;
+        const auto parsed = std::strtoull(value, &end, 10);
+        if (errno != 0 || end == value || *end != '\0' || parsed == 0) {
+            return fallback;
+        }
+        return parsed;
+    }
+
     void maybe_index(uint64_t index, log_position&& log_pos) {
         _highest_index = std::max(_highest_index, index);
         _index_map.emplace(index, std::move(log_pos));
