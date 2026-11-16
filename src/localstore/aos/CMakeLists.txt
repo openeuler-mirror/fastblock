@@ -21,6 +21,7 @@ compile_library(
     aos_runtime.cc
     log_store.cc
     kv_engine.cc
+    aos_dump.cc
   DEPS
     spdk::spdk
   COPTS
