@@ -565,6 +565,67 @@ void osd_store::persist_continue(meta_req* req) {
       req);
 }
 
+osd_store::gc_stats osd_store::gc_pass() {
+  return gc_pass(gc_options{});
+}
+
+osd_store::gc_stats osd_store::gc_pass(const gc_options& opt) {
+  gc_stats st;
+  if (opt.rewrite_victim) {
+    // gc_rewrite_once rewrites then free_dead via gc_once.
+    st.extents_rewritten =
+        gc_rewrite_once(opt.persist_manifest, opt.max_rewrite_extents);
+  } else if (opt.free_dead_segments) {
+    st.segments_freed = gc_once(opt.persist_manifest);
+  }
+  return st;
+}
+
+void osd_store::create_image_snapshot(uint64_t pool_id, uint64_t pg_id,
+                                      uint64_t image_snap_seq, op_complete cb,
+                                      void* arg) {
+  if (cb == nullptr) {
+    return;
+  }
+  pg_store* pg = get_active_pg(pool_id, pg_id);
+  if (pg == nullptr) {
+    cb(arg, -ENOENT);
+    return;
+  }
+  pg->create_image_snapshot(image_snap_seq, std::move(cb), arg);
+}
+
+void osd_store::release_image_snapshot(uint64_t pool_id, uint64_t pg_id,
+                                       uint64_t image_snap_seq, op_complete cb,
+                                       void* arg) {
+  if (cb == nullptr) {
+    return;
+  }
+  pg_store* pg = get_active_pg(pool_id, pg_id);
+  if (pg == nullptr) {
+    cb(arg, -ENOENT);
+    return;
+  }
+  pg->release_image_snapshot(image_snap_seq, std::move(cb), arg);
+}
+
+void osd_store::flatten_image(uint64_t pool_id, uint64_t pg_id,
+                              uint64_t parent_image_seq,
+                              uint64_t new_image_seq,
+                              uint64_t raft_write_index, op_complete cb,
+                              void* arg) {
+  if (cb == nullptr) {
+    return;
+  }
+  pg_store* pg = get_active_pg(pool_id, pg_id);
+  if (pg == nullptr) {
+    cb(arg, -ENOENT);
+    return;
+  }
+  pg->flatten_image(parent_image_seq, new_image_seq, raft_write_index,
+                    std::move(cb), arg);
+}
+
 void osd_store::apply(uint64_t pool_id, uint64_t pg_id,
                       const std::string& object_name, uint64_t offset,
                       const void* data, uint64_t len, uint64_t raft_write_index,
@@ -588,6 +649,14 @@ void osd_store::apply(uint64_t pool_id, uint64_t pg_id,
 void osd_store::read(uint64_t pool_id, uint64_t pg_id,
                      const std::string& object_name, uint64_t offset, void* buf,
                      uint64_t len, op_complete cb, void* arg) {
+  read(pool_id, pg_id, object_name, offset, buf, len, /*raft*/ 0, /*image*/ 0,
+       std::move(cb), arg);
+}
+
+void osd_store::read(uint64_t pool_id, uint64_t pg_id,
+                     const std::string& object_name, uint64_t offset, void* buf,
+                     uint64_t len, uint64_t raft_read_index,
+                     uint64_t image_read_seq, op_complete cb, void* arg) {
   if (cb == nullptr) {
     return;
   }
@@ -600,7 +669,8 @@ void osd_store::read(uint64_t pool_id, uint64_t pg_id,
     cb(arg, -ENOENT);
     return;
   }
-  pg->read(object_name, offset, buf, len, std::move(cb), arg);
+  pg->read(object_name, offset, buf, len, raft_read_index, image_read_seq,
+           std::move(cb), arg);
 }
 
 void osd_store::remove(uint64_t pool_id, uint64_t pg_id,
