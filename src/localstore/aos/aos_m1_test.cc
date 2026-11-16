@@ -891,6 +891,53 @@ void test_osd_store_gc_once() {
   EXPECT_EQ(out[0], 'X');
 }
 
+void test_osd_store_apply_read_remove() {
+  mem_device_backend dev(16 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, /*segment*/ 0);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(7, 1, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  std::vector<char> data(4096, 'W');
+  r = {};
+  osd.apply(7, 1, "o", 0, data.data(), data.size(), /*raft*/ 42, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  // Idempotent re-apply same raft index + range
+  r = {};
+  osd.apply(7, 1, "o", 0, data.data(), data.size(), 42, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  std::vector<char> out(4096, 0);
+  r = {};
+  osd.read(7, 1, "o", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'W');
+
+  // Overwrite with newer raft index
+  std::vector<char> data2(4096, 'X');
+  r = {};
+  osd.apply(7, 1, "o", 0, data2.data(), data2.size(), 43, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  out.assign(4096, 0);
+  osd.read(7, 1, "o", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'X');
+
+  r = {};
+  osd.remove(7, 1, "o", 44, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  out.assign(4096, 0);
+  osd.read(7, 1, "o", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 0);
+}
+
 void test_snapshot_ingest_state_machine() {
   const uint64_t seg = 256 * 1024;
   mem_device_backend dev(8 * 1024 * 1024);
@@ -1407,6 +1454,7 @@ int main() {
   test_pg_store_image_snapshot_read();
   test_segment_allocator_free_sealed();
   test_osd_store_gc_once();
+  test_osd_store_apply_read_remove();
   test_snapshot_ingest_state_machine();
   test_pg_snapshot_reader_stream();
   test_pg_store_rewrite_extent();
