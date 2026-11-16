@@ -12,6 +12,8 @@
 #include "raft/pg_group.h"
 #include "osd/osd_stm.h"
 #include "fastblock/base/core_sharded.h"
+#include "localstore/aos/aos_runtime.h"
+#include "localstore/aos/types.h"
 #include "raft/pg_group.h"
 
 #include <atomic>
@@ -20,6 +22,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include <spdk/thread.h>
 
@@ -59,8 +62,45 @@ public:
           auto shard_num = _shard_cores.size();
           for(i = 0; i < shard_num; i++){
               _sm_table.push_back(std::map<std::string, std::shared_ptr<osd_stm>>());
+              _aos_runtime.push_back(std::make_unique<fastblock::aos::aos_runtime>());
           }
       }
+
+    /**
+     * Configure AppendOnlyStore (required for object data; knife-1).
+     * Must be called before start_aos().
+     */
+    void configure_aos(std::string aos_bdev_name,
+                       uint64_t segment_size = fastblock::aos::kDefaultSegmentSize);
+
+    bool aos_enabled() const { return !_aos_bdev_name.empty(); }
+    const std::string& aos_bdev_name() const { return _aos_bdev_name; }
+
+    /**
+     * Open + format/recover AOS on every shard. Required before create/load PG.
+     */
+    void start_aos(bool format, pm_complete cb_fn, void* arg);
+
+    /** Close AOS backends (after PGs stopped). */
+    void stop_aos(pm_complete cb_fn, void* arg);
+
+    fastblock::aos::aos_runtime* aos_runtime(uint32_t shard_id) {
+      if (shard_id >= _aos_runtime.size()) {
+        return nullptr;
+      }
+      return _aos_runtime[shard_id].get();
+    }
+    fastblock::aos::osd_store* aos_store(uint32_t shard_id) {
+      auto* rt = aos_runtime(shard_id);
+      return rt && rt->ready() ? rt->store() : nullptr;
+    }
+
+    /**
+     * Ensure AOS PG epoch exists and attach to stm (create if missing).
+     * Required for all PGs (object path is AOS-only).
+     */
+    void ensure_aos_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id,
+                       std::shared_ptr<osd_stm> sm, pm_complete cb_fn, void* arg);
 
     void start(utils::context *complete, std::shared_ptr<monitor_client> mon_client);
 
@@ -158,6 +198,9 @@ private:
     core_sharded&  _shard;
     std::vector<uint32_t> _shard_cores;
     std::vector<std::map<std::string, std::shared_ptr<osd_stm>>> _sm_table;
+    std::vector<std::unique_ptr<fastblock::aos::aos_runtime>> _aos_runtime;
+    std::string _aos_bdev_name;
+    uint64_t _aos_segment_size{fastblock::aos::kDefaultSegmentSize};
     osd_state _state;
     std::shared_ptr<monitor_client> _mon_client;
     bool _is_terminated{false};
