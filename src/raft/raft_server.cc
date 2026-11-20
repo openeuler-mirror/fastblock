@@ -702,11 +702,20 @@ int raft_server_t::raft_recv_appendentries(
           ae->leader_commit(), raft_get_current_idx());
     }
 
-    auto hand_error = [this, r, ae, complete](int err_num){
+    const raft_index_t prev_log_idx = ae->prev_log_idx();
+    const raft_index_t leader_commit = ae->leader_commit();
+    std::vector<std::shared_ptr<raft_entry_t>> owned_entries;
+    owned_entries.reserve(static_cast<size_t>(entries_num));
+    for (int j = 0; j < entries_num; ++j) {
+        owned_entries.emplace_back(
+            std::make_shared<raft_entry_t>(ae->entries(j)));
+    }
+
+    auto hand_error = [this, r, complete, prev_log_idx](int err_num){
         r->set_term(raft_get_current_term());
         if (1 != r->success())
             r->set_current_idx(raft_get_current_idx());
-        r->set_first_idx(ae->prev_log_idx() + 1);
+        r->set_first_idx(prev_log_idx + 1);
         complete->complete(err_num);
         return err_num;
     };
@@ -781,9 +790,9 @@ int raft_server_t::raft_recv_appendentries(
             }
             /* Delete all the following log entries because they don't match */
             raft_log_truncate(
-              ae->prev_log_idx(),
-              [this, ae, r, hand_error = std::move(hand_error)](void *arg, int rberrno){
-                _current_idx = ae->prev_log_idx() - 1;
+              prev_log_idx,
+              [this, r, prev_log_idx, hand_error = std::move(hand_error)](void *arg, int rberrno){
+                _current_idx = prev_log_idx - 1;
                 int err_num = err::RAFT_ERR_LOG_NOT_MATCH;
                 if(rberrno != 0)
                     err_num = rberrno;
@@ -798,15 +807,15 @@ int raft_server_t::raft_recv_appendentries(
     r->set_success(1);
     r->set_current_idx(ae->prev_log_idx());
 
-    auto append_entry_func = [this, entries_num, ae, complete, r](int i){
+    auto append_entry_func = [this, entries_num, complete, r, prev_log_idx,
+                              leader_commit,
+                              owned_entries = std::move(owned_entries)](int i) {
         /* 4. Append any new entries not already in the log */
         int k = entries_num - i;
         std::vector<std::pair<std::shared_ptr<raft_entry_t>, utils::context*>> entrys;
 
         for(auto j = i; j < entries_num; j++){
-            const raft_entry_t& ety = ae->entries(j);
-
-            std::shared_ptr<raft_entry_t> ety_ptr = std::make_shared<raft_entry_t>(std::move(ety));
+            auto ety_ptr = owned_entries[static_cast<size_t>(j)];
             // Followers need to update their local membership view as soon as a
             // configuration entry is appended so removed nodes stop campaigning.
             check_and_set_configuration(ety_ptr);
@@ -816,23 +825,23 @@ int raft_server_t::raft_recv_appendentries(
                 entrys.emplace_back(std::make_pair(std::move(ety_ptr), nullptr));
             }
         }
-        raft_index_t start_idx = ae->prev_log_idx() + 1 + i;
+        raft_index_t start_idx = prev_log_idx + 1 + i;
         raft_index_t end_idx =  start_idx + k - 1;
         SPDK_DEBUGLOG(pg_group, "in pg %lu.%lu, start_idx: %ld  end_idx: %ld \n", _pool_id, _pg_id, start_idx, end_idx);
         raft_append_entries(entrys);
         i += k;
-        r->set_current_idx(ae->prev_log_idx() + i);
+        r->set_current_idx(prev_log_idx + i);
 
         raft_index_t new_commit_idx = 0;
         /* 5. If leaderCommit > commitIndex, set commitIndex =
             min(leaderCommit, index of last new entry) */
-        if (raft_get_commit_idx() < ae->leader_commit())
+        if (raft_get_commit_idx() < leader_commit)
         {
-            new_commit_idx = std::min(ae->leader_commit(), r->current_idx());
+            new_commit_idx = std::min(leader_commit, r->current_idx());
         }
 
         r->set_term(raft_get_current_term());
-        r->set_first_idx(ae->prev_log_idx() + 1);
+        r->set_first_idx(prev_log_idx + 1);
         if(start_idx > end_idx){
             /*
              *   follower的_commit_idx是在收到leader的append entry后更新的，会比leader的_commit_idx滞后:
@@ -840,7 +849,7 @@ int raft_server_t::raft_recv_appendentries(
              *   就会更新_commit_idx为n，而follower在收到idx为n + 1的append entry处理后才会更新_commit_idx为n。
              *   append entry请求中有leader_commit参数。
              */
-            if (raft_get_commit_idx() < ae->leader_commit()  &&  raft_get_commit_idx() < new_commit_idx){
+            if (raft_get_commit_idx() < leader_commit  &&  raft_get_commit_idx() < new_commit_idx){
                 SPDK_INFOLOG(pg_group, "in pg %lu.%lu, _node_id %d start_idx: %ld end_idx: %ld set _commit_idx to %ld.\n",
                         _pool_id, _pg_id, _node_id, start_idx, end_idx, new_commit_idx);
                 raft_set_commit_idx(new_commit_idx);
