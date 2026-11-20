@@ -35,6 +35,10 @@
 #include <utility>
 #include <vector>
 
+namespace fastblock::aos {
+class osd_store;
+}
+
 class disk_log;
 
 using log_op_complete =
@@ -44,8 +48,10 @@ using log_op_with_entry_complete =
 
 class disk_log {
 public:
-  /** Does not own log_store (osd_store owns it). */
-  explicit disk_log(fastblock::aos::log_store* aos_log) : _aos_log(aos_log) {}
+  /** Does not own log_store or osd_store (osd_store owns the log). */
+  explicit disk_log(fastblock::aos::log_store* aos_log,
+                    fastblock::aos::osd_store* osd = nullptr)
+      : _aos_log(aos_log), _osd(osd) {}
 
   ~disk_log() = default;
 
@@ -124,15 +130,7 @@ public:
     }
   }
 
-  void truncate(uint64_t start_index, log_op_complete cb_fn, void* arg) {
-    if (_aos_log) {
-      _aos_log->truncate_from(start_index, std::move(cb_fn), arg);
-      return;
-    }
-    if (cb_fn) {
-      cb_fn(arg, -EINVAL);
-    }
-  }
+  void truncate(uint64_t start_index, log_op_complete cb_fn, void* arg);
 
   void advance_trim_index(uint64_t index) {
     _trim_index = std::max(_trim_index, index);
@@ -210,6 +208,7 @@ public:
 
 private:
   fastblock::aos::log_store* _aos_log{nullptr}; // not owned
+  fastblock::aos::osd_store* _osd{nullptr};     // not owned
   uint64_t _lowest_index = 1;
   uint64_t _trim_index = 1;
   uint64_t _highest_index = 0;
@@ -223,6 +222,9 @@ private:
 using make_disklog_complete =
     std::function<void(void* arg, struct disk_log* dlog, int rberrno)>;
 
-/** Production: disk_log backed by AOS log_store. log_store not owned. */
+/** Production: disk_log backed by AOS log_store. Neither pointer is owned. */
 void make_aos_disk_log(fastblock::aos::log_store* log,
+                       make_disklog_complete cb_fn, void* arg);
+void make_aos_disk_log(fastblock::aos::log_store* log,
+                       fastblock::aos::osd_store* osd,
                        make_disklog_complete cb_fn, void* arg);
