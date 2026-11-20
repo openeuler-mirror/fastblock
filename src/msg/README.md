@@ -1,6 +1,19 @@
 # MSG
 
-该目录下的代码包含了所有 *RDMA RPC* 的代码。
+该目录下的代码包含 *RDMA RPC* 以及 *sock RPC*（`msg::sock`，SPDK posix `sock_group`）。
+
+`msg::sock` 是无 RNIC / 开发默认后端（设计见 `docs/msg_sock_transport_design.md`）。PR1 只提供运输层 + demo + 帧单测，OSD / Raft 尚未认 `msg_transport=sock`。
+
+```bash
+# 帧单测（不需要网卡 / hugepage）
+ninja sock_frame_test && ./src/test/sock_frame_test
+
+# demo（需要能起来的 SPDK env）
+./src/msg/demo/sock_server -C src/msg/demo/sock_server.json
+./src/msg/demo/sock_client -C src/msg/demo/sock_client.json
+```
+
+CMake 开关：`FASTBLOCK_WITH_RDMA`（默认随是否找到 mlx5）。`OFF` 时跳过 osd/raft/client/bdev/tools，仍可编 `sock_*` 与 `sock_frame_test`。
 
 ## 模块配置
 
