@@ -190,3 +190,5 @@ if (next_idx < raft_get_log()->log_get_base_index()){
 | 收尾 | `set_index_after_snapshot` + 持久化 lapply | follower `last_applied` / `current` / `commit` 推到 `last_idx` |
 
 不再走 blob `object_store::recovery_create`。旧 `aos_snapshot_session` 双路径草稿已废弃，以 STM 虚函数为准。
+
+空 live set：`snapshot_check` 回 0 个 object 时 leader 直接发 `done` 的 `installsnapshot`，不再 `read_snapshot(count=0)` 卡住。错误路径必须 `unpin` 再释放 `_obr`，避免 pin 泄漏。
