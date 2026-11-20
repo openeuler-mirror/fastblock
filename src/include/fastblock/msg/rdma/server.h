@@ -280,7 +280,10 @@ public:
     }
 
     server(std::string thread_name, ::spdk_cpuset* cpumask, std::shared_ptr<options> opts, int sock_id = SPDK_ENV_SOCKET_ID_ANY)
-      : server{::spdk_thread_create(thread_name.c_str(), cpumask), opts, sock_id} {}
+      : server{::spdk_thread_create(thread_name.c_str(), cpumask), opts, sock_id} {
+        // Only this ctor creates the thread; OSD passes a borrowed shard thread.
+        _owns_thread = (_thread != nullptr);
+    }
 
     server(const server&) = delete;
 
@@ -1037,7 +1040,16 @@ private:
             }
         }
 
-        ::spdk_thread_exit(_thread);
+        // OSD hands in core_sharded::get_thread(shard_id). Exiting that
+        // kills the shard reactor. Only exit a thread this server created.
+        if (_owns_thread && _thread != nullptr &&
+            _thread != ::spdk_thread_get_app_thread()) {
+            ::spdk_thread_exit(_thread);
+        } else {
+            SPDK_NOTICELOG(
+              "rpc server stop complete on borrowed thread %s; not calling spdk_thread_exit\n",
+              _thread ? ::spdk_thread_get_name(_thread) : "<null>");
+        }
 
         return SPDK_POLLER_IDLE;
     }
@@ -1388,6 +1400,7 @@ private:
 
     ::spdk_cpuset _cpumask{};
     ::spdk_thread* _thread{nullptr};
+    bool _owns_thread{false};
     bool _is_terminated{false};
     std::shared_ptr<options> _opts{nullptr};
     std::shared_ptr<device> _dev{nullptr};
