@@ -122,6 +122,8 @@ inline refresh_transport_result compute_refresh_transport(
     r.new_addr = mon_addr;
     r.new_port = *port;
     r.changed = (old_addr != mon_addr) || (old_port != *port);
+    // Same osd id + new listen port is a new process (replacement boot).
+    // Caller must drop cached leader identity and re-query get_leader.
     return r;
 }
 
