@@ -102,8 +102,14 @@ public:
   /** True when object data is AppendOnlyStore. */
   virtual bool uses_aos_objects() const { return false; }
 
-  /** Live object names for install-snapshot leader. */
+  /** Live object names for install-snapshot leader (current head view). */
   virtual std::vector<std::string> list_live_objects() { return {}; }
+
+  /** Live names at a raft snapshot index (0 = head). Default: head list. */
+  virtual std::vector<std::string> list_live_objects_at(uint64_t raft_idx) {
+    (void)raft_idx;
+    return list_live_objects();
+  }
 
   virtual bool object_exists(const std::string& name) {
     (void)name;
