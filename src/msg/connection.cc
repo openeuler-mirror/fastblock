@@ -3,7 +3,7 @@
  */
 #include "fastblock/msg/sock/connection.h"
 
-#include "fastblock/msg/rdma/oob_payload.h"
+#include "fastblock/msg/oob_payload.h"
 #include "fastblock/msg/sock/quota.h"
 
 #include <spdk/log.h>
