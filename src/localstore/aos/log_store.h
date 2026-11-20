@@ -97,6 +97,16 @@ public:
 
   uint64_t get_term(uint64_t index) const;
   bool contains(uint64_t index) const;
+  record_type rec_type_at(uint64_t index) const;
+
+  struct index_meta {
+    uint64_t index{0};
+    uint64_t term{0};
+    uint64_t phys{0};
+    uint64_t length{0};
+    record_type rec_type{record_type::raft_log_entry};
+  };
+  void for_each_index(const std::function<void(const index_meta&)>& fn) const;
 
   /**
    * After install-snapshot: make last_index == index with term on disk.
