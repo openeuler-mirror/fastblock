@@ -1978,9 +1978,19 @@ void osd_store::recover_process(recover_req* req) {
               }
             }
           } else if (lg != nullptr && unified_log_enabled()) {
-            (void)lg->register_index(idx, rec.raft_term, rec_phys, aligned,
-                                     rec.type);
-            publish = rec.type == record_type::gc_rewrite;
+            const int reg = lg->register_index(idx, rec.raft_term, rec_phys,
+                                               aligned, rec.type);
+            if (reg == 0) {
+              publish = rec.type == record_type::gc_rewrite;
+            } else {
+              // Gap / conflict: step 5 will not see this index. Keep
+              // today's put so the payload is not dropped.
+              SPDK_NOTICELOG(
+                  "aos recover register_index fail pool=%lu pg=%lu idx=%lu "
+                  "phys=%lu rc=%d, publish\n",
+                  rec.pool_id, rec.pg_id, idx, rec_phys, reg);
+              publish = true;
+            }
           }
         }
         pg->apply_record(rec, rec_phys, publish);
