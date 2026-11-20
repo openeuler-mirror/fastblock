@@ -22,6 +22,8 @@ message write_request
     bytes data = 5;
     // AOS image timeline (0 = unset / head-only path). Design P5.
     uint64 image_snap_seq = 6;
+    // Bulk payload length when data is sent out-of-band (not in bytes data).
+    uint32 data_len = 7;
 }
 
 message write_reply
@@ -45,6 +47,7 @@ message read_reply
 {
     int32 state = 1;
     bytes data = 2;
+    uint32 data_len = 3;
 }
 
 message delete_request
@@ -151,32 +154,6 @@ message change_nodes_response {
     repeated int32 new_nodes = 2;
 }
 
-message write_ring_slot {
-    uint32 slot_index = 1;
-    uint64 remote_addr = 2;
-    uint32 remote_key = 3;
-    uint32 slot_size = 4;
-}
-
-message acquire_write_ring_request {
-    uint32 slot_count = 1;
-    uint32 slot_size = 2;
-    uint64 lease_us = 3;
-}
-
-message acquire_write_ring_response {
-    int32 state = 1;
-    uint64 queue_id = 2;
-    uint64 lease_us = 3;
-    repeated write_ring_slot slots = 4;
-}
-
-message commit_ring_write_request {
-    uint64 queue_id = 1;
-    uint32 slot_index = 2;
-    uint32 serialized_size = 3;
-}
-
 // --- AOS image snapshot / clone / flatten (design P5) ---
 
 enum image_snap_op {
@@ -213,7 +190,5 @@ service rpc_service_osd{
     rpc process_add_node(add_node_request) returns (add_node_response);
     rpc process_remove_node(remove_node_request) returns (remove_node_response);
     rpc process_change_nodes(change_nodes_request) returns (change_nodes_response);
-    rpc process_acquire_write_ring(acquire_write_ring_request) returns (acquire_write_ring_response);
-    rpc process_commit_ring_write(commit_ring_write_request) returns (write_reply);
     rpc process_image_snap(image_snap_request) returns (image_snap_reply);
 }
