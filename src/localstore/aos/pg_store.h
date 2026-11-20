@@ -271,6 +271,9 @@ public:
 
   bool object_exists(const std::string& name) const;
 
+  /** object_id → name for AE name_lookup. Missing or empty → -ENOENT. */
+  int name_of(uint64_t object_id, std::string* name) const;
+
 private:
   // In-memory version log for snapshot reads (M3).
   struct version_op {
