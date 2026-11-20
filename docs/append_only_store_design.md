@@ -542,6 +542,15 @@ Checkpoint **不是唯一真相**；record 自描述 + 扫盘可重建。
 
 状态：数据面 image/clone/flatten/GC 策略已具备；控制面 mon 与 ZNS 后续。
 
+### P6 — log=STM（`aos_unified_log`）✅
+
+- [x] 用户写只落一条 data/tombstone；`log_store` 只登记 index → phys
+- [x] apply 只 `publish_commit`；`load` `commit_idx=min(lapply,current)`；`become_leader` 不提交 suffix，当选后 NOOP
+- [x] recover 按 lapply 分 pending/head；rewrite `update_phys(record_start)`；ckpt 后 snapshot 只装 head
+- [x] 开发阶段默认开启；不兼容旧二进制。细节见 `docs/aos_unified_log_design.md`
+
+---
+
 ---
 
 ## 13. 测试计划（增量）
@@ -603,8 +612,8 @@ AOS = fastblock 本地存储平台
   - 只按 object live 做 GC
 ```
 
-已完成：**冻结本文 → P1 log_store → P2 kv（K2）→ P3 去 blobstore 启动 → P4 清理。**  
-剩余：P5 控制面（mon/CSI）、ZNS、GC 压测。
+已完成：**冻结本文 → P1 log_store → P2 kv（K2）→ P3 去 blobstore 启动 → P4 清理 → P6 log=STM。**  
+剩余：P5 控制面（mon/CSI）、ZNS、GC 压测；集群级 snapshot trim 回归。
 
 ---
 
