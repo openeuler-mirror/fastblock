@@ -44,6 +44,7 @@ public:
 
   device_backend* backend() const { return backend_; }
   segment_allocator* allocator() const { return alloc_; }
+  void set_allocator(segment_allocator* alloc) { alloc_ = alloc; }
 
   /**
    * Encode rec, pad to block_size, reserve + write_at.
