@@ -91,6 +91,10 @@ private:
         std::optional<status> reply_status{};
         std::chrono::system_clock::time_point start_at{std::chrono::system_clock::now()};
         server* this_server{nullptr};
+        // Set when a reply has been queued. CallMethod may still be using
+        // request/response/done; the unique_ptr stays in _on_fligh_tasks
+        // until handle_rpc_done.
+        bool replied{false};
     };
 
 public:
@@ -334,6 +338,25 @@ private:
         enqueue_reply(std::move(task), status::request_timeout);
     }
 
+    // CallMethod already owns request/response/done. Reply timeout on a
+    // clone; leave the original in _on_fligh_tasks until handle_rpc_done.
+    void timeout_inflight_task(rpc_task* task) {
+        if (task == nullptr || task->replied) {
+            return;
+        }
+        SPDK_ERRLOG(
+          "ERROR: Timeout on inflight task %lu, keep until service done\n",
+          task->id);
+        ++rdma_probe.rpc_timeout;
+        auto reply = std::make_unique<rpc_task>(task->server_id, task->id, task->conn);
+        reply->this_server = this;
+        reply->start_at = task->start_at;
+        if (enqueue_reply(std::move(reply), status::request_timeout)) {
+            task->replied = true;
+            ++rdma_probe.rpc_complete_fail;
+        }
+    }
+
     void forget_rpc_task(
       connection_record* conn, transport_data::correlation_index_type full) {
         if (not conn) {
@@ -386,13 +409,9 @@ private:
         expire_list(_task_list);
         expire_list(_read_task_list);
 
-        for (auto it = _on_fligh_tasks.begin(); it != _on_fligh_tasks.end(); ) {
-            if (is_timeout(it->second.get())) {
-                auto task = std::move(it->second);
-                it = _on_fligh_tasks.erase(it);
-                handle_timeout_task(std::move(task));
-            } else {
-                ++it;
+        for (auto& kv : _on_fligh_tasks) {
+            if (is_timeout(kv.second.get()) && not kv.second->replied) {
+                timeout_inflight_task(kv.second.get());
             }
         }
     }
@@ -1225,6 +1244,13 @@ public:
         auto owned = std::move(it->second);
         const auto task_id = owned->id;
         _on_fligh_tasks.erase(it);
+        if (owned->replied) {
+            SPDK_NOTICELOG(
+              "late complete of already-replied task %lu, drop\n", task_id);
+            drop_rpc_task(std::move(owned));
+            return;
+        }
+        owned->replied = true;
         if (owned->rpc_ctrlr->Failed()) {
             SPDK_ERRLOG("ERROR: Exec rpc failed: %s\n", owned->rpc_ctrlr->ErrorText().c_str());
             enqueue_reply(std::move(owned), status::server_error);
