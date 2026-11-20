@@ -12,6 +12,7 @@
 #include "verify_pattern.h"
 
 #include "aos_dump.h"
+#include "checkpoint.h"
 #include "types.h"
 
 #include <cstdint>
@@ -183,14 +184,40 @@ file_view load_one(const char* path, uint32_t align,
   };
 
   // Snapshot ingest restages objects with new ids. Compare by name.
+  // After GC, object_name records may have been reclaimed; names survive
+  // in the latest checkpoint_marker payload.
   std::map<oid_key, std::string> id_to_name;
+  std::map<std::pair<uint64_t, uint64_t>, uint64_t> ckpt_gen;
   for (const auto& rec : report.live_records) {
-    if (rec.type != fastblock::aos::record_type::object_name ||
-        rec.payload.empty() || !is_serving(rec)) {
+    if (!is_serving(rec)) {
       continue;
     }
-    id_to_name[oid_key{rec.pool_id, rec.pg_id, rec.store_epoch,
-                       rec.object_id}] = rec.payload;
+    if (rec.type == fastblock::aos::record_type::object_name &&
+        !rec.payload.empty()) {
+      id_to_name[oid_key{rec.pool_id, rec.pg_id, rec.store_epoch,
+                         rec.object_id}] = rec.payload;
+      continue;
+    }
+    if (rec.type != fastblock::aos::record_type::checkpoint_marker ||
+        rec.payload.empty()) {
+      continue;
+    }
+    fastblock::aos::checkpoint_snapshot snap;
+    if (!fastblock::aos::decode_checkpoint_payload(rec.payload, &snap)) {
+      continue;
+    }
+    auto pg = std::make_pair(rec.pool_id, rec.pg_id);
+    if (snap.generation < ckpt_gen[pg]) {
+      continue;
+    }
+    ckpt_gen[pg] = snap.generation;
+    for (const auto& obj : snap.objects) {
+      if (obj.name.empty()) {
+        continue;
+      }
+      id_to_name[oid_key{rec.pool_id, rec.pg_id, rec.store_epoch,
+                         obj.object_id}] = obj.name;
+    }
   }
   v.name_map = id_to_name.size();
   for (const auto& kv : serving_epoch) {
@@ -247,9 +274,6 @@ file_view load_one(const char* path, uint32_t align,
                         uint32_t crc) {
       extent_key k = make_key(rec.pool_id, rec.pg_id, rec.store_epoch,
                               rec.object_id, obj_off);
-      if (k.name.empty()) {
-        return;
-      }
       auto it = v.live.find(k);
       if (it != v.live.end() &&
           rec.raft_apply_index < it->second.raft_apply_index) {
