@@ -1863,6 +1863,12 @@ void osd_store::recover(op_complete cb, void* arg) {
                                       : r2->sb_best.segment_size;
               self2->alloc_ = std::make_shared<segment_allocator>(
                   self2->data_offset_, self2->data_length_, ss, bs2);
+              // kv_engine is created in aos_runtime::open() against the
+              // pre-recover allocator. Replacing alloc_ without rebind
+              // makes KV and object/log reserve the same phys range.
+              if (self2->kv_ != nullptr) {
+                self2->kv_->rebind_allocator(self2->alloc_);
+              }
 
               // Read preferred manifest slot (and fallback other).
               const uint64_t mgen = r2->sb_best.manifest_generation;
