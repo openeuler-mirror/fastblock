@@ -10,6 +10,7 @@
  */
 #pragma once
 
+#include "fastblock/msg/channel.h"
 #include "fastblock/msg/rdma/connection_id.h"
 #include "fastblock/msg/rdma/cq.h"
 #include "fastblock/msg/rdma/memory_pool.h"
@@ -169,7 +170,7 @@ public:
 
 public:
 
-    class connection : public std::enable_shared_from_this<connection>, public google::protobuf::RpcChannel {
+    class connection : public std::enable_shared_from_this<connection>, public ::msg::channel {
 
     public:
 
@@ -1489,8 +1490,12 @@ read_done:
             _opts.reset();
         }
 
-        auto async_shutdown(
-          const state shutdown_state = state::shutdown,
+        int async_shutdown() override {
+            return async_shutdown(state::shutdown, nullptr);
+        }
+
+        int async_shutdown(
+          const state shutdown_state,
           std::function<void()> on_done = nullptr) {
             if (on_done) {
                 if (_on_shutdown_done) {
@@ -1574,7 +1579,7 @@ read_done:
             return _dispatch_id.dispatch_id();
         }
 
-        bool is_terminated() noexcept {
+        bool is_terminated() noexcept override {
             return _state == state::termianted;
         }
 

@@ -15,7 +15,6 @@
 #include "fastblock/monclient/client.h"
 
 namespace global {
-extern std::shared_ptr<msg::rdma::client::options> rpc_cli_opts;
 extern std::shared_ptr<connect_cache> conn_cache;
 extern std::unique_ptr<monitor::client> mon_client;
 extern std::shared_ptr<::libblk_client> blk_client;

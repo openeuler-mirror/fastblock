@@ -796,7 +796,7 @@ private:
 
             SPDK_DEBUGLOG(
               msg,
-              "correlation index: %d, metadata{io_count: %d, io_length: %d, rm_info_counter: %ld, serial_no: %d}, "
+              "correlation index: %lu, metadata{io_count: %d, io_length: %d, rm_info_counter: %ld, serial_no: %d}, "
               "max_rm_info: %ld, _metas.size(): %ld, meta_counter: %ld\n",
               _correlation_index, meta_ptr->io_count, meta_ptr->io_length, rm_info_counter + 1, meta_ptr->serial_no,
               max_rm_info, _metas.size(), _meta_count - 1);

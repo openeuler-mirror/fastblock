@@ -12,15 +12,18 @@
 #pragma once
 
 #include "fastblock/monclient/client.h"
+#include "fastblock/msg/channel.h"
 #include "fastblock/msg/rpc_controller.h"
-#include "fastblock/msg/rdma/client.h"
 #include "fastblock/client/pg_home_shard.h"
+#include "fastblock/utils/fmt.h"
 #include "fastblock/utils/overload.h"
 #include "fastblock/utils/simple_poller.h"
 #include "fastblock/utils/err_num.h"
+#include "fastblock/utils/utils.h"
 
 #include "fastblock/rpc/osd_msg.pb.h"
 
+#include <boost/property_tree/ptree.hpp>
 #include <spdk/env.h>
 
 #include <cerrno>
@@ -107,7 +110,7 @@ private:
     };
 
     struct osd_conn_state {
-        std::shared_ptr<msg::rdma::client::connection> conn{nullptr};
+        std::shared_ptr<msg::channel> conn{nullptr};
         bool is_connecting{false};
         int32_t node_id{-1};
         uint32_t port{0};
@@ -293,7 +296,7 @@ private:
       const uint64_t conn_id,
       const uint64_t connect_gen,
       const bool is_connected,
-      std::shared_ptr<msg::rdma::client::connection> conn) {
+      std::shared_ptr<msg::channel> conn) {
         auto it = _osd_conns.find(conn_id);
         if (it == _osd_conns.end()) {
             if (conn && !conn->is_terminated()) {
@@ -364,7 +367,7 @@ private:
           addr,
           static_cast<uint16_t>(port),
           [this, conn_id, connect_gen](
-            bool is_connected, std::shared_ptr<msg::rdma::client::connection> conn) {
+            bool is_connected, std::shared_ptr<msg::channel> conn) {
               on_connection_ready(conn_id, connect_gen, is_connected, std::move(conn));
           });
     }
@@ -557,8 +560,11 @@ private:
 
 public:
 
-    fblock_client(monitor::client* mon_cli, ::spdk_thread* thd, std::shared_ptr<msg::rdma::client::options> opts)
-      : _rpc_client{std::make_shared<msg::rdma::client>(FB_FMT_1("fblock_%1%", utils::random_string(3)), thd, opts)}
+    fblock_client(monitor::client* mon_cli, ::spdk_thread* thd, const boost::property_tree::ptree& conf)
+      : _rpc_client{msg::make_client(msg::parse_transport(conf), msg::client_ctor{
+          .name = FB_FMT_1("fblock_%1%", utils::random_string(3)),
+          .thread = thd,
+          .conf = &conf})}
       , _mon_cli{mon_cli}
       , _current_thread{thd} {
         _leader_poller.set_thread(_current_thread);
@@ -1216,7 +1222,7 @@ private:
     void calc_pg_masks(int32_t target_pool_id);
 
 private:
-    std::shared_ptr<msg::rdma::client> _rpc_client{nullptr};
+    std::shared_ptr<msg::client> _rpc_client{nullptr};
     std::unordered_map<uint64_t, std::unique_ptr<osd::rpc_service_osd_Stub>> _stubs{};
     std::unordered_map<uint64_t, std::shared_ptr<osd_conn_state>> _osd_conns{};
     monitor::client* _mon_cli{nullptr};

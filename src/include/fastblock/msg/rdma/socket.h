@@ -10,6 +10,7 @@
  */
 #pragma once
 
+#include "fastblock/msg/bind_error.h"
 #include "fastblock/msg/rdma/endpoint.h"
 #include "fastblock/msg/rdma/event_channel.h"
 #include "fastblock/msg/rdma/numeric_addr.h"
@@ -35,13 +36,9 @@
 namespace msg {
 namespace rdma {
 
-class bindException : public std::exception {
+class bindException : public ::msg::bind_error {
 public:
-
     bindException() noexcept = default;
-    const char* what() const throw() override {
-        return "bind addr and port failed";
-    }
 };
 
 class socket {

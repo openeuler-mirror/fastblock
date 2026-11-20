@@ -3,6 +3,7 @@
  */
 #pragma once
 
+#include "fastblock/msg/channel.h"
 #include "fastblock/msg/rdma/completed_key_ring.h"
 #include "fastblock/msg/rpc_controller.h"
 #include "fastblock/msg/sock/frame.h"
@@ -55,7 +56,7 @@ struct assembled_rpc {
 };
 
 class connection : public std::enable_shared_from_this<connection>,
-                   public google::protobuf::RpcChannel {
+                   public ::msg::channel {
 public:
     connection(::spdk_sock* sock, ::spdk_sock_group* group, std::shared_ptr<options> opts,
                bool is_server, probe* pr, ::spdk_thread* thread);
@@ -67,8 +68,8 @@ public:
     bool attach();
     void detach_and_close();
 
-    bool is_terminated() const noexcept { return _torn; }
-    void async_shutdown();
+    bool is_terminated() noexcept override { return _torn; }
+    int async_shutdown() override;
 
     ::spdk_sock* sock() const noexcept { return _sock; }
     void set_server(server* s) noexcept { _server = s; }
