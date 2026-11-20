@@ -68,9 +68,13 @@
 - *listen_backlog*  
     该字段用于配置 [`rdma_listen()` 函数的 `backlog` 参数](https://man7.org/linux/man-pages/man3/rdma_listen.3.html#ARGUMENTS)  
 - *resolve_timeout_us*  
-    指定 [`rdma_resolve_addr()`](https://man7.org/linux/man-pages/man3/rdma_resolve_addr.3.html) 和 [`rdma_resolve_route()`](https://man7.org/linux/man-pages/man3/rdma_resolve_route.3.html) 的超时时间  
+    指定 [`rdma_resolve_addr()`](https://man7.org/linux/man-pages/man3/rdma_resolve_addr.3.html) 和 [`rdma_resolve_route()`](https://man7.org/linux/man-pages/man3/rdma_resolve_route.3.html) 的超时时间。  
+    数字 IPv4 / IPv6 字面量用 `inet_pton` 直接填 `sockaddr`，不在 reactor 上调 `rdma_getaddrinfo`。hostname 仍走阻塞 `rdma_getaddrinfo` 并打 NOTICE；解析失败抛错，不再带着空 `_res` 继续。生产地址是数字 IPv4。  
 - *poll_cm_event_timeout_us*  
     指定 *poll rdma cm* 事件的超时时间  
+- *reactor / lifecycle*  
+    `server::handle_stop_timeout` 只对 **server 自己 `spdk_thread_create` 出来的线程** 调 `spdk_thread_exit`。OSD 传入的 shard 线程是借来的，stop 后仍在。  
+    启动期 `ibv_reg_mr` 失败抛 `std::runtime_error`（回滚已注册 MR），不再 `SIGABRT`。OSD `create_rpc_server` 已 catch，该 shard 标失败、不向 mon boot。
 - *max_send_wr & max_send_sge & max_recv_wr & max_recv_sge & max_inline_data*  
     [`ibv_create_qp()`](https://man7.org/linux/man-pages/man3/ibv_create_qp.3.html) 的相关参数  
 - *cq_num_entries*  
