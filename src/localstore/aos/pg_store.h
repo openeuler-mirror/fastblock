@@ -267,6 +267,9 @@ public:
   bool has_pending(uint64_t raft_index) const {
     return pending_.find(raft_index) != pending_.end();
   }
+  // Data/tomb record start for register_index (not type=4).
+  bool pending_record_start(uint64_t raft_index, uint64_t* record_start,
+                            uint16_t* header_len) const;
 
   // Load ObjectMap from a decoded checkpoint payload (clears prior maps).
   int apply_checkpoint_snapshot(const checkpoint_snapshot& snap,
