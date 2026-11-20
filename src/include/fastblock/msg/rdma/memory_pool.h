@@ -17,9 +17,11 @@
 #include <spdk/env.h>
 #include <spdk/string.h>
 
-#include <csignal>
+#include <cerrno>
+#include <cstring>
 #include <list>
 #include <memory>
+#include <stdexcept>
 #include <string>
 
 namespace msg {
@@ -70,6 +72,8 @@ public:
           SPDK_MALLOC_DMA);
 
         if (not _net_ctx_ptr) {
+            ::spdk_free(_data_ptr);
+            _data_ptr = nullptr;
             throw std::runtime_error{"allocate net_context mem failed"};
         }
 
@@ -83,9 +87,13 @@ public:
 
             if (not mr) {
                 SPDK_ERRLOG(
-                  "ERROR: Call ibv_reg_mr() failed, errno is %d(%s)\n",
-                  errno, std::strerror(errno));
-                std::raise(SIGABRT);
+                  "ERROR: Call ibv_reg_mr() failed on pool %s at element %zu/%zu, errno is %d(%s)\n",
+                  _name.c_str(), i, _capacity, errno, std::strerror(errno));
+                rollback_ctor();
+                throw std::runtime_error{
+                  FB_FMT_4(
+                    "ibv_reg_mr failed for pool %1% at %2%/%3%: %4%",
+                    _name, i, _capacity, std::strerror(errno))};
             }
 
             ctx_ptr = &(_net_ctx_ptr[i]);
@@ -227,6 +235,26 @@ public:
     }
 
 private:
+
+    // Constructor-only: destructor is not run if we throw, so free DMA + MRs here.
+    void rollback_ctor() noexcept {
+        for (auto* ctx : _net_context_list) {
+            if (ctx && ctx->mr) {
+                ::ibv_dereg_mr(ctx->mr);
+                ctx->mr = nullptr;
+            }
+        }
+        _net_context_list.clear();
+        if (_net_ctx_ptr) {
+            ::spdk_free(_net_ctx_ptr);
+            _net_ctx_ptr = nullptr;
+        }
+        if (_data_ptr) {
+            ::spdk_free(_data_ptr);
+            _data_ptr = nullptr;
+        }
+        _is_free = true;
+    }
 
     void on_free_changed() noexcept {
         update_bulk_gate(
