@@ -3,7 +3,7 @@
  */
 #pragma once
 
-#include "fastblock/msg/rdma/types.h"
+#include "fastblock/msg/types.h"
 #include "fastblock/msg/sock/types.h"
 
 #include <boost/property_tree/ptree.hpp>
