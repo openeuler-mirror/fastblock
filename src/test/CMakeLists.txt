@@ -42,7 +42,6 @@ target_link_libraries(sock_frame_test
     spdk::spdk)
 add_test(NAME sock_frame_test COMMAND sock_frame_test)
 
-if(FASTBLOCK_WITH_RDMA)
 add_executable(disk_log_trim_test
   disk_log_trim_test.cc
 )
@@ -60,6 +59,7 @@ target_link_libraries(disk_log_trim_test
 )
 add_test(NAME disk_log_trim_test COMMAND disk_log_trim_test)
 
+if(FASTBLOCK_WITH_RDMA)
 add_executable(rdma_memory_pool_test
   rdma_memory_pool_test.cc
 )
@@ -68,6 +68,7 @@ target_include_directories(rdma_memory_pool_test
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/include)
 add_test(NAME rdma_memory_pool_test COMMAND rdma_memory_pool_test)
+endif()
 
 add_executable(rdma_numeric_addr_test
   rdma_numeric_addr_test.cc
@@ -170,4 +171,3 @@ target_link_libraries(snapshot_pg_stress
     osd_msg
     msg
 )
-endif()
