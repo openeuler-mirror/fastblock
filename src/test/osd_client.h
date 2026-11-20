@@ -205,8 +205,8 @@ private:
 
 class osd_client {
 public:
-    osd_client(server_t *s, ::spdk_cpuset* cpumask, std::shared_ptr<msg::rdma::client::options> opts)
-        : _cache(cpumask, opts)
+    osd_client(server_t *s, ::spdk_cpuset* cpumask, const boost::property_tree::ptree& conf)
+        : _cache(cpumask, conf)
         , _shard_cores(core_sharded::get_shard_cores())
         , _s(s)
         , _shard(core_sharded::get_core_sharded())
@@ -237,7 +237,7 @@ public:
 
                   _cache.create_connect(
                     shard_id, node_id, addr, port, complete,
-                    [this, shard_id, node_id] (msg::rdma::client::connection* conn) {
+                    [this, shard_id, node_id] (msg::channel* conn) {
                         auto &stub = _stubs[shard_id];
                         stub[node_id] = std::make_shared<osd::rpc_service_osd_Stub>(conn);
                     }
