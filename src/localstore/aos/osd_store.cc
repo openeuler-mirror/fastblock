@@ -1231,6 +1231,52 @@ void osd_store::publish_commit(uint64_t pool_id, uint64_t pg_id, uint64_t index,
   pg->publish_commit(index, std::move(cb), arg);
 }
 
+void osd_store::rewrite_extent(uint64_t pool_id, uint64_t pg_id,
+                               const std::string& object_name,
+                               uint64_t logical_offset, uint64_t len,
+                               op_complete cb, void* arg) {
+  if (cb == nullptr) {
+    return;
+  }
+  pg_store* pg = get_active_pg(pool_id, pg_id);
+  if (pg == nullptr) {
+    cb(arg, -ENOENT);
+    return;
+  }
+  struct pack {
+    osd_store* self{nullptr};
+    uint64_t pool_id{0};
+    uint64_t pg_id{0};
+    op_complete cb;
+    void* arg{nullptr};
+  };
+  auto* p = new (std::nothrow) pack{this, pool_id, pg_id, std::move(cb), arg};
+  if (p == nullptr) {
+    cb(arg, -ENOMEM);
+    return;
+  }
+  pg->rewrite_extent(
+      object_name, logical_offset, len,
+      [](void* a, int err) {
+        auto* c = static_cast<pack*>(a);
+        if (err == 0) {
+          pg_store* pg2 = c->self->get_active_pg(c->pool_id, c->pg_id);
+          log_store* lg = c->self->get_active_log(c->pool_id, c->pg_id);
+          if (pg2 != nullptr && lg != nullptr &&
+              pg2->last_rewrite_raft_index() != 0) {
+            lg->update_phys(pg2->last_rewrite_raft_index(),
+                            pg2->last_rewrite_record_start(),
+                            pg2->last_rewrite_aligned_len());
+          }
+        }
+        op_complete user = std::move(c->cb);
+        void* uarg = c->arg;
+        delete c;
+        user(uarg, err);
+      },
+      p);
+}
+
 void osd_store::truncate_log_and_pending(uint64_t pool_id, uint64_t pg_id,
                                          uint64_t from_index, op_complete cb,
                                          void* arg) {
@@ -1551,6 +1597,13 @@ uint32_t osd_store::gc_rewrite_once(bool persist, uint32_t max_extents) {
                          &r);
       if (r.err == 0) {
         ++rewritten;
+        log_store* lg =
+            get_active_log(pg->id().pool_id, pg->id().pg_id);
+        if (lg != nullptr && pg->last_rewrite_raft_index() != 0) {
+          lg->update_phys(pg->last_rewrite_raft_index(),
+                          pg->last_rewrite_record_start(),
+                          pg->last_rewrite_aligned_len());
+        }
       }
     }
   }
