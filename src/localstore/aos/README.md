@@ -74,7 +74,8 @@ cmake --build build --target aos_m1_test fastblock-osd -j$(nproc)
 ## dump / light fsck
 
 库：`aos_dump.h` — `scan_image(image, len)` 解析 superblock A/B、manifest、扫 data 区 record，输出 `dump_report` / `format_report`。  
-`scan_image(..., collect_live=true)` 额外收集 object data / rewrite / tombstone（含 payload），供副本对照。  
+`scan_image(..., collect_live=true)` 额外收集 object data / rewrite / tombstone / object_name（含 payload），供副本对照。  
+`image_verify -M dump-compare` 按 **object name + serving epoch** 对比（snapshot ingest 会换新 object_id，不能再用 id）。4MiB snapshot 填充的尾部零块会裁掉再比 CRC。  
 不依赖 SPDK reactor。扫描策略与 `osd_store::recover` 一致：扫满 data 区上界（不截断在可能滞后的 `data_high_water`）。
 
 CLI：
