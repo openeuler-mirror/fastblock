@@ -1258,6 +1258,30 @@ void test_pg_store_rewrite_extent() {
     EXPECT_EQ(r.err, 0);
     EXPECT_EQ(out[0], 'A');
   }
+
+  // Rewrite must append a fresh object_name so GC can reclaim the original
+  // name+data segment without orphaning the name on recover.
+  {
+    const auto& img = dev.storage();
+    uint32_t name_recs = 0;
+    size_t off = 0;
+    while (off + kRecordHeaderLenV1 < img.size()) {
+      data_record rec;
+      size_t consumed = 0;
+      const decode_status st =
+          decode_record(img.data() + off, img.size() - off, &rec, &consumed);
+      if (st != decode_status::ok || consumed == 0) {
+        off += 4096;
+        continue;
+      }
+      if (rec.type == record_type::object_name && rec.payload == "rw") {
+        ++name_recs;
+      }
+      const size_t step = (consumed + 4095) / 4096 * 4096;
+      off += step == 0 ? 4096 : step;
+    }
+    EXPECT_TRUE(name_recs >= 2u);
+  }
 }
 
 void test_osd_store_gc_rewrite_once() {
@@ -1315,6 +1339,10 @@ void test_osd_store_gc_rewrite_once() {
   EXPECT_EQ(r.err, 0);
   EXPECT_EQ(out[0], 'A');
 
+  // Reclaim the original name+data segment. Recover must still resolve keep0
+  // via the name record rewrite_extent re-emitted next to the new payload.
+  (void)osd.gc_once(true);
+
   {
     osd_store osd2(&dev, buffer_mode::heap, seg);
     r = {};
@@ -1325,6 +1353,7 @@ void test_osd_store_gc_rewrite_once() {
     if (pg2 == nullptr) {
       return;
     }
+    EXPECT_TRUE(pg2->object_exists("keep0"));
     r = {};
     out.assign(4096, 0);
     pg2->read("keep0", 0, out.data(), 4096, on_done, &r);
@@ -4759,6 +4788,68 @@ void test_truncate_log_and_pending() {
   EXPECT_EQ(lg->last_index(), 1);
 }
 
+void test_pg_store_list_live_names_snapshot_view() {
+  mem_device_backend dev(32 * 1024 * 1024);
+  pg_store store(&dev, pg_id{1, 0, 1});
+  std::vector<char> data(4096, 'L');
+  sync_result r;
+  std::vector<std::string> names;
+
+  store.append_uncommitted("ghost", 0, data.data(), data.size(), 3, 1, 0,
+                           on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(store.object_exists("ghost"));
+  store.list_live_object_names(&names);
+  EXPECT_EQ(names.size(), 0u);
+
+  r = {};
+  store.write("keep", 0, data.data(), data.size(), 5, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  store.write("gone", 0, data.data(), data.size(), 6, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  store.remove("gone", 8, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  store.list_live_object_names(&names);
+  EXPECT_EQ(names.size(), 1u);
+  EXPECT_TRUE(names.size() == 1 && names[0] == "keep");
+
+  store.list_live_object_names_at(6, 0, &names);
+  EXPECT_EQ(names.size(), 2u);
+  bool saw_keep = false;
+  bool saw_gone = false;
+  bool saw_ghost = false;
+  for (const auto& n : names) {
+    if (n == "keep") {
+      saw_keep = true;
+    }
+    if (n == "gone") {
+      saw_gone = true;
+    }
+    if (n == "ghost") {
+      saw_ghost = true;
+    }
+  }
+  EXPECT_TRUE(saw_keep);
+  EXPECT_TRUE(saw_gone);
+  EXPECT_TRUE(!saw_ghost);
+
+  store.list_live_object_names_at(4, 0, &names);
+  EXPECT_EQ(names.size(), 0u);
+
+  r = {};
+  store.publish_commit(3, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(store.object_exists("ghost"));
+  store.list_live_object_names(&names);
+  EXPECT_EQ(names.size(), 2u);
+  store.list_live_object_names_at(4, 0, &names);
+  EXPECT_EQ(names.size(), 1u);
+  EXPECT_TRUE(names.size() == 1 && names[0] == "ghost");
+}
+
 } // namespace
 
 int main() {
@@ -4867,6 +4958,7 @@ int main() {
   test_append_as_log_write_config_sequential();
   test_append_as_log_missing_name_not_published();
   test_truncate_log_and_pending();
+  test_pg_store_list_live_names_snapshot_view();
 
   if (g_failures != 0) {
     std::fprintf(stderr, "aos_m1_test: %d failure(s)\n", g_failures);
