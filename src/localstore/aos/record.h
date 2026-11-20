@@ -64,6 +64,11 @@ inline uint64_t payload_phys(uint64_t record_start, uint16_t header_len) {
   return record_start + (header_len != 0 ? header_len : kRecordHeaderLenV1);
 }
 
+// Default encode header size: v3/86B only when the process flag is on.
+inline uint16_t encode_header_len() {
+  return unified_log_enabled() ? kRecordHeaderLenV3 : kRecordHeaderLenV1;
+}
+
 enum class decode_status {
   ok = 0,
   need_more,          // buffer shorter than one full record
@@ -75,7 +80,7 @@ enum class decode_status {
   bad_type,
 };
 
-// Encode a data/tombstone-style record. Default encode is v2/78B.
+// Encode a data/tombstone-style record. Default is v2/78B; flag=1 uses v3/86B.
 // format_version==3 writes 86B header with raft_term.
 std::vector<uint8_t> encode_record(const data_record& rec);
 std::vector<uint8_t> encode_record(const data_record& rec,
