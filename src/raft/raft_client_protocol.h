@@ -165,7 +165,7 @@ public:
               node_id, address.c_str(), port, _shard_cores[shard_id], shard_id);
             _cache->create_connect(
               shard_id, node_id, address, port,
-              [this, shard_id, node_id, address, port, ctx] (bool is_ok, msg::rdma::client::connection* conn) {
+              [this, shard_id, node_id, address, port, ctx] (bool is_ok, msg::channel* conn) {
                   if (not is_ok) {
                       SPDK_ERRLOG(
                         "create connect to node %d (address %s, port %d) in core %u failed\n",
@@ -201,7 +201,7 @@ public:
 
                 _cache->create_connect(
                   shard_id, node_id, address, port, complete,
-                  [this, shard_id, node_id] (msg::rdma::client::connection* conn) {
+                  [this, shard_id, node_id] (msg::channel* conn) {
                       auto &stub = _stubs[shard_id];
                       stub[node_id] = std::make_shared<rpc_service_raft_Stub>(conn);
                   }
