@@ -4041,6 +4041,345 @@ void test_recover_p6_pending_live_for_gc() {
   EXPECT_TRUE(out == data);
 }
 
+void put_varint_test(std::string& o, uint64_t v) {
+  while (v >= 0x80) {
+    o.push_back(static_cast<char>((v & 0x7f) | 0x80));
+    v >>= 7;
+  }
+  o.push_back(static_cast<char>(v));
+}
+
+std::string test_write_cmd(const std::string& name, uint64_t off, uint64_t img) {
+  std::string o;
+  if (!name.empty()) {
+    o.push_back(static_cast<char>((1 << 3) | 2));
+    put_varint_test(o, name.size());
+    o.append(name);
+  }
+  if (off != 0) {
+    o.push_back(static_cast<char>((2 << 3) | 0));
+    put_varint_test(o, off);
+  }
+  if (img != 0) {
+    o.push_back(static_cast<char>((3 << 3) | 0));
+    put_varint_test(o, img);
+  }
+  return o;
+}
+
+uint32_t count_typed_records(const mem_device_backend& dev, record_type ty) {
+  uint32_t n = 0;
+  const auto& s = dev.storage();
+  const uint64_t wp = dev.write_pointer();
+  const uint32_t bs = dev.block_size();
+  uint64_t pos = 0;
+  while (pos + kRecordHeaderLenV1 <= wp) {
+    data_record rec;
+    size_t consumed = 0;
+    const decode_status st =
+        decode_record(s.data() + static_cast<size_t>(pos),
+                      static_cast<size_t>(wp - pos), &rec, &consumed);
+    if (st != decode_status::ok || consumed == 0) {
+      if (bs == 0) {
+        break;
+      }
+      pos += bs;
+      continue;
+    }
+    if (rec.type == ty) {
+      ++n;
+    }
+    const uint64_t al = ((consumed + bs - 1) / bs) * bs;
+    pos += al == 0 ? bs : al;
+  }
+  return n;
+}
+
+void test_record_default_encode_follows_flag() {
+  data_record in;
+  in.type = record_type::data;
+  in.raft_term = 11;
+  in.payload.assign(64, 'E');
+  {
+    unified_log_guard off(false);
+    auto bytes = encode_record(in);
+    EXPECT_EQ(bytes.size(), static_cast<size_t>(kRecordHeaderLenV1 + 64));
+  }
+  {
+    unified_log_guard on(true);
+    auto bytes = encode_record(in);
+    EXPECT_EQ(bytes.size(), static_cast<size_t>(kRecordHeaderLenV3 + 64));
+    data_record out;
+    size_t consumed = 0;
+    auto st = decode_record(bytes.data(), bytes.size(), &out, &consumed);
+    EXPECT_TRUE(st == decode_status::ok);
+    EXPECT_EQ(out.header_len, kRecordHeaderLenV3);
+    EXPECT_EQ(out.raft_term, 11u);
+  }
+}
+
+void test_flag0_write_still_dual_v2() {
+  unified_log_guard off(false);
+  mem_device_backend dev(8 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, 256 * 1024);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  std::vector<char> data(4096, 'D');
+  r = {};
+  osd.apply(1, 0, "dual", 0, data.data(), data.size(), /*raft*/ 1, 0, on_done,
+            &r);
+  EXPECT_EQ(r.err, 0);
+
+  log_store* lg = osd.get_or_create_log(1, 0, osd.serving_epoch(1, 0));
+  EXPECT_TRUE(lg != nullptr);
+  log_entry e;
+  e.term = 2;
+  e.index = 1;
+  e.type = 0;
+  e.meta = test_write_cmd("dual", 0, 0);
+  e.data.assign(data.begin(), data.end());
+  r = {};
+  lg->append(e, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  uint64_t start14 = 0;
+  uint64_t al14 = 0;
+  uint16_t hl14 = 0;
+  EXPECT_TRUE(find_typed_record(dev, record_type::raft_log_entry, 1, &start14,
+                                &al14, &hl14));
+  EXPECT_EQ(hl14, kRecordHeaderLenV1);
+  uint64_t start1 = 0;
+  uint64_t al1 = 0;
+  uint16_t hl1 = 0;
+  EXPECT_TRUE(find_typed_record(dev, record_type::data, 1, &start1, &al1, &hl1));
+  EXPECT_EQ(hl1, kRecordHeaderLenV1);
+  EXPECT_TRUE(count_typed_records(dev, record_type::raft_log_entry) >= 1u);
+  EXPECT_TRUE(count_typed_records(dev, record_type::data) >= 1u);
+
+  auto bytes = encode_record(data_record{});
+  EXPECT_EQ(bytes.size(), static_cast<size_t>(kRecordHeaderLenV1));
+}
+
+void test_append_as_log_write_pending_v3() {
+  unified_log_guard on(true);
+  mem_device_backend dev(8 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, 256 * 1024);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  std::vector<char> data(4096, 'V');
+  log_entry e;
+  e.term = 7;
+  e.index = 1;
+  e.type = 0;
+  e.meta = test_write_cmd("v3obj", 0, 0);
+  e.data.assign(data.begin(), data.end());
+  r = {};
+  osd.append_as_log(1, 0, e, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  pg_store* pg = osd.get_active_pg(1, 0);
+  EXPECT_TRUE(pg != nullptr);
+  EXPECT_TRUE(pg->has_pending(1));
+  EXPECT_TRUE(pg->pending_count() >= 1u);
+
+  log_store* lg = osd.get_active_log(1, 0);
+  EXPECT_TRUE(lg != nullptr);
+  EXPECT_TRUE(lg->contains(1));
+  EXPECT_EQ(static_cast<unsigned>(lg->rec_type_at(1)),
+            static_cast<unsigned>(record_type::data));
+  EXPECT_EQ(lg->last_index(), 1);
+
+  std::vector<char> out(4096, 1);
+  r = {};
+  osd.read(1, 0, "v3obj", 0, out.data(), out.size(), on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(
+      std::all_of(out.begin(), out.end(), [](char c) { return c == 0; }));
+
+  uint64_t start = 0;
+  uint64_t al = 0;
+  uint16_t hl = 0;
+  EXPECT_TRUE(find_typed_record(dev, record_type::data, 1, &start, &al, &hl));
+  EXPECT_EQ(hl, kRecordHeaderLenV3);
+  data_record rec;
+  size_t consumed = 0;
+  const auto& s = dev.storage();
+  auto st = decode_record(s.data() + static_cast<size_t>(start),
+                          static_cast<size_t>(al), &rec, &consumed);
+  EXPECT_TRUE(st == decode_status::ok);
+  EXPECT_EQ(rec.raft_term, 7u);
+  EXPECT_EQ(rec.header_len, kRecordHeaderLenV3);
+  EXPECT_EQ(count_typed_records(dev, record_type::raft_log_entry), 0u);
+  EXPECT_EQ(count_typed_records(dev, record_type::data), 1u);
+}
+
+void test_append_as_log_write_config_sequential() {
+  unified_log_guard on(true);
+  mem_device_backend dev(8 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, 256 * 1024);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  const uint32_t reserved_before =
+      osd.allocator() != nullptr ? osd.allocator()->open_segment()
+                                 : segment_allocator::kInvalidSeg;
+  (void)reserved_before;
+
+  std::vector<char> data(4096, 'S');
+  log_entry w;
+  w.term = 3;
+  w.index = 1;
+  w.type = 0;
+  w.meta = test_write_cmd("seq", 0, 0);
+  w.data.assign(data.begin(), data.end());
+  r = {};
+  osd.append_as_log(1, 0, w, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  log_entry cfg;
+  cfg.term = 3;
+  cfg.index = 2;
+  cfg.type = 3; // RAFT_LOGTYPE_CONFIGURATION
+  cfg.meta = "cfg-members";
+  r = {};
+  osd.append_as_log(1, 0, cfg, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  log_store* lg = osd.get_active_log(1, 0);
+  EXPECT_TRUE(lg != nullptr);
+  EXPECT_EQ(lg->last_index(), 2);
+  EXPECT_TRUE(lg->contains(1));
+  EXPECT_TRUE(lg->contains(2));
+  EXPECT_EQ(static_cast<unsigned>(lg->rec_type_at(1)),
+            static_cast<unsigned>(record_type::data));
+  EXPECT_EQ(static_cast<unsigned>(lg->rec_type_at(2)),
+            static_cast<unsigned>(record_type::raft_log_entry));
+  EXPECT_EQ(lg->get_term(1), 3);
+  EXPECT_EQ(lg->get_term(2), 3);
+
+  uint64_t p1 = 0;
+  uint64_t a1 = 0;
+  uint16_t h1 = 0;
+  uint64_t p2 = 0;
+  uint64_t a2 = 0;
+  uint16_t h2 = 0;
+  EXPECT_TRUE(find_typed_record(dev, record_type::data, 1, &p1, &a1, &h1));
+  EXPECT_TRUE(
+      find_typed_record(dev, record_type::raft_log_entry, 2, &p2, &a2, &h2));
+  EXPECT_EQ(h1, kRecordHeaderLenV3);
+  EXPECT_EQ(h2, kRecordHeaderLenV3);
+  EXPECT_TRUE(p2 != p1);
+  EXPECT_EQ(count_typed_records(dev, record_type::data), 1u);
+  EXPECT_EQ(count_typed_records(dev, record_type::raft_log_entry), 1u);
+  EXPECT_TRUE(osd.allocator() != nullptr);
+  EXPECT_TRUE(osd.allocator()->open_segment() !=
+              segment_allocator::kInvalidSeg);
+}
+
+void test_append_as_log_missing_name_not_published() {
+  unified_log_guard on(true);
+  mem_device_backend dev(8 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, 256 * 1024);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  log_entry bad;
+  bad.term = 1;
+  bad.index = 1;
+  bad.type = 0;
+  bad.meta.clear();
+  bad.data.assign(4096, 'X');
+  r = {};
+  osd.append_as_log(1, 0, bad, on_done, &r);
+  EXPECT_EQ(r.err, -EINVAL);
+
+  pg_store* pg = osd.get_active_pg(1, 0);
+  EXPECT_TRUE(pg != nullptr);
+  EXPECT_TRUE(!pg->has_pending(1));
+  log_store* lg = osd.get_active_log(1, 0);
+  EXPECT_TRUE(lg != nullptr);
+  EXPECT_TRUE(!lg->contains(1));
+
+  std::vector<char> data(4096, 'M');
+  log_entry ok;
+  ok.term = 1;
+  ok.index = 1;
+  ok.type = 0;
+  ok.meta = test_write_cmd("named", 0, 0);
+  ok.data.assign(data.begin(), data.end());
+  r = {};
+  osd.append_as_log(1, 0, ok, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(pg->has_pending(1));
+  std::vector<char> out(4096, 2);
+  r = {};
+  osd.read(1, 0, "named", 0, out.data(), out.size(), on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(
+      std::all_of(out.begin(), out.end(), [](char c) { return c == 0; }));
+}
+
+void test_truncate_log_and_pending() {
+  unified_log_guard on(true);
+  mem_device_backend dev(8 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, 256 * 1024);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  std::vector<char> data(4096, 'T');
+  for (uint64_t i = 1; i <= 3; ++i) {
+    log_entry e;
+    e.term = 1;
+    e.index = i;
+    e.type = 0;
+    e.meta = test_write_cmd("trunc", (i - 1) * 4096, 0);
+    e.data.assign(data.begin(), data.end());
+    r = {};
+    osd.append_as_log(1, 0, e, on_done, &r);
+    EXPECT_EQ(r.err, 0);
+  }
+  pg_store* pg = osd.get_active_pg(1, 0);
+  log_store* lg = osd.get_active_log(1, 0);
+  EXPECT_TRUE(pg != nullptr && lg != nullptr);
+  EXPECT_TRUE(pg->has_pending(1));
+  EXPECT_TRUE(pg->has_pending(2));
+  EXPECT_TRUE(pg->has_pending(3));
+  EXPECT_EQ(lg->last_index(), 3);
+
+  r = {};
+  osd.truncate_log_and_pending(1, 0, 2, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(pg->has_pending(1));
+  EXPECT_TRUE(!pg->has_pending(2));
+  EXPECT_TRUE(!pg->has_pending(3));
+  EXPECT_TRUE(lg->contains(1));
+  EXPECT_TRUE(!lg->contains(2));
+  EXPECT_TRUE(!lg->contains(3));
+  EXPECT_EQ(lg->last_index(), 1);
+}
+
 } // namespace
 
 int main() {
@@ -4136,6 +4475,12 @@ int main() {
   test_recover_p6_lapply_promotes_to_head();
   test_recover_old_pair_type1_to_head();
   test_recover_p6_pending_live_for_gc();
+  test_record_default_encode_follows_flag();
+  test_flag0_write_still_dual_v2();
+  test_append_as_log_write_pending_v3();
+  test_append_as_log_write_config_sequential();
+  test_append_as_log_missing_name_not_published();
+  test_truncate_log_and_pending();
 
   if (g_failures != 0) {
     std::fprintf(stderr, "aos_m1_test: %d failure(s)\n", g_failures);
