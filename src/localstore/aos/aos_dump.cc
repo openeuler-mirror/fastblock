@@ -38,7 +38,8 @@ void push_err(dump_report* r, uint64_t off, std::string msg) {
 bool is_collectable(record_type t) {
   return t == record_type::data || t == record_type::gc_rewrite ||
          t == record_type::delete_tombstone ||
-         t == record_type::range_tombstone || t == record_type::object_name;
+         t == record_type::range_tombstone || t == record_type::object_name ||
+         t == record_type::checkpoint_marker;
 }
 
 } // namespace

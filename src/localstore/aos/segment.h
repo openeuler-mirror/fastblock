@@ -13,6 +13,7 @@
 #include "device_backend.h"
 #include "record.h"
 #include "segment_allocator.h"
+#include "types.h"
 
 #include <cstdint>
 #include <functional>
@@ -37,8 +38,9 @@ public:
   using append_record_complete =
       std::function<void(void* arg, uint64_t phys_offset, int err)>;
 
-  segment(device_backend* backend, segment_allocator* alloc)
-      : backend_(backend), alloc_(alloc) {}
+  segment(device_backend* backend, segment_allocator* alloc,
+          buffer_mode mode = buffer_mode::heap)
+      : backend_(backend), alloc_(alloc), mode_(mode) {}
 
   device_backend* backend() const { return backend_; }
   segment_allocator* allocator() const { return alloc_; }
@@ -48,7 +50,8 @@ public:
    * On success: phys_offset is byte offset of the start of the on-disk
    * record (including header) within the backend region.
    *
-   * dma_buf must remain valid until cb fires; ownership stays with caller.
+   * dma_buf is only a size hint (must hold the aligned record). I/O uses an
+   * owned copy so callers may reuse their scratch after this call returns.
    */
   void append_record(const data_record& rec, void* dma_buf, uint64_t dma_cap,
                      append_record_complete cb, void* arg);
@@ -66,6 +69,7 @@ public:
 private:
   device_backend* backend_{nullptr};
   segment_allocator* alloc_{nullptr};
+  buffer_mode mode_{buffer_mode::heap};
 };
 
 } // namespace fastblock::aos

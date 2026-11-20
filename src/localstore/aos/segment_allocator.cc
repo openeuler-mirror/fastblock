@@ -183,24 +183,42 @@ void segment_allocator::note_written(uint64_t phys_offset, uint64_t len) {
     }
   }
   // Highest touched segment becomes open with cursor at local end.
-  if (last < states_.size()) {
-    for (uint32_t id = first; id < last && id < states_.size(); ++id) {
-      if (states_[id] != segment_state::bad) {
-        states_[id] = segment_state::sealed;
-      }
-    }
-    states_[last] = segment_state::open;
-    open_id_ = last;
-    const uint64_t base = segment_base(last);
-    const uint64_t end_abs = phys_offset + len;
-    open_cursor_ = end_abs > base ? end_abs - base : 0;
-    if (open_cursor_ > segment_size_) {
-      open_cursor_ = segment_size_;
-      states_[last] = segment_state::sealed;
-      open_id_ = kInvalidSeg;
-      open_cursor_ = 0;
+  // Never rewind: reserve() may have already handed out offsets past
+  // this write. A stale note_written (out-of-order recover, late I/O)
+  // overlapping those reservations tears later records.
+  if (last >= states_.size()) {
+    return;
+  }
+  for (uint32_t id = first; id < last && id < states_.size(); ++id) {
+    if (states_[id] != segment_state::bad && id != open_id_) {
+      states_[id] = segment_state::sealed;
     }
   }
+  const uint64_t base = segment_base(last);
+  const uint64_t end_abs = phys_offset + len;
+  uint64_t new_cursor = end_abs > base ? end_abs - base : 0;
+  if (new_cursor > segment_size_) {
+    new_cursor = segment_size_;
+  }
+  if (open_id_ != kInvalidSeg && last < open_id_) {
+    return;
+  }
+  if (open_id_ == last && new_cursor <= open_cursor_) {
+    return;
+  }
+  if (open_id_ != kInvalidSeg && open_id_ != last &&
+      states_[open_id_] == segment_state::open) {
+    states_[open_id_] = segment_state::sealed;
+  }
+  if (new_cursor >= segment_size_) {
+    states_[last] = segment_state::sealed;
+    open_id_ = kInvalidSeg;
+    open_cursor_ = 0;
+    return;
+  }
+  states_[last] = segment_state::open;
+  open_id_ = last;
+  open_cursor_ = new_cursor;
 }
 
 void segment_allocator::export_states(std::vector<uint8_t>* out) const {

@@ -131,7 +131,7 @@ log_store::log_store(device_backend* backend, pg_id id,
     , id_(id)
     , mode_(mode)
     , alloc_(std::move(alloc))
-    , writer_(backend, alloc_.get()) {}
+    , writer_(backend, alloc_.get(), mode) {}
 
 void* log_store::alloc_buf(uint64_t n) {
   if (mode_ == buffer_mode::spdk_dma) {

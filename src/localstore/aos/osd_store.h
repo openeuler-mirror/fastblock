@@ -200,6 +200,13 @@ public:
   gc_stats gc_pass(const gc_options& opt);
 
   /**
+   * Async GC for SPDK: rewrite completions must finish before gc_once.
+   * Sync gc_rewrite_once() is only safe when rewrite_extent completes inline
+   * (mem backend / unit tests).
+   */
+  void gc_pass_async(const gc_options& opt, op_complete cb, void* arg);
+
+  /**
    * Image snapshot pin/release on active PG (design §11 / P5).
    * clone_image is an alias of create (re-pin for COW readers).
    */
@@ -292,6 +299,9 @@ private:
                      op_complete cb, void* arg);
 
   struct ckpt_pass_req;
+  struct gc_job;
+  static void gc_job_rewrite_next(gc_job* job);
+  static void gc_job_finish(gc_job* job, int err);
 
   device_backend* backend_{nullptr};
   buffer_mode mode_{buffer_mode::heap};

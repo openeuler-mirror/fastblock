@@ -756,6 +756,21 @@ void test_segment_allocator_no_double_alloc() {
   EXPECT_EQ(alloc.reserve(4096, &pfail, nullptr), -ENOSPC);
 }
 
+void test_note_written_does_not_rewind_cursor() {
+  segment_allocator alloc(4ull * 1024 * 1024, 1024 * 1024, 4096);
+  uint64_t p0 = 0, p1 = 0, p2 = 0;
+  EXPECT_EQ(alloc.reserve(4096, &p0, nullptr), 0);
+  EXPECT_EQ(alloc.reserve(4096, &p1, nullptr), 0);
+  EXPECT_EQ(p1, 4096u);
+  // Late/out-of-order completion of the first write must not rewind
+  // open_cursor over the second reservation.
+  alloc.note_written(p0, 4096);
+  EXPECT_EQ(alloc.open_cursor(), 8192u);
+  EXPECT_EQ(alloc.reserve(4096, &p2, nullptr), 0);
+  EXPECT_EQ(p2, 8192u);
+  EXPECT_TRUE(p2 != p1);
+}
+
 void test_pg_store_raft_snapshot_read() {
   mem_device_backend dev(32 * 1024 * 1024);
   pg_store store(&dev, pg_id{1, 0, 1});
@@ -997,6 +1012,90 @@ void test_osd_store_gc_once() {
   pg->read("keep", 0, out.data(), 4096, on_done, &r);
   EXPECT_EQ(r.err, 0);
   EXPECT_EQ(out[0], 'X');
+}
+
+void test_gc_pins_object_name_across_free() {
+  const uint64_t seg = 64 * 1024;
+  mem_device_backend dev(4 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, seg);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  pg_store* pg = osd.get_latest_pg(1, 0);
+  EXPECT_TRUE(pg != nullptr);
+
+  std::vector<char> buf(4096, 'K');
+  r = {};
+  pg->write("keep", 0, buf.data(), buf.size(), 1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  int idx = 0;
+  std::vector<char> junk(4096, 'Z');
+  while (osd.allocator()->sealed_count() < 1 && idx < 40) {
+    r = {};
+    pg->write("tmp" + std::to_string(idx), 0, junk.data(), junk.size(),
+              static_cast<uint64_t>(10 + idx), 0, on_done, &r);
+    EXPECT_EQ(r.err, 0);
+    ++idx;
+  }
+  for (int i = 0; i < idx; ++i) {
+    r = {};
+    pg->remove("tmp" + std::to_string(i), 100 + static_cast<uint64_t>(i), 0,
+               on_done, &r);
+    EXPECT_EQ(r.err, 0);
+  }
+  (void)osd.gc_once(true);
+
+  std::vector<char> out(4096, 0);
+  r = {};
+  pg->read("keep", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'K');
+}
+
+void test_gc_pass_async_completes_before_free() {
+  const uint64_t seg = 32 * 1024;
+  mem_device_backend dev(8 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, seg);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  pg_store* pg = osd.get_latest_pg(1, 0);
+  std::vector<char> a(4096, 'A');
+  r = {};
+  pg->write("keep0", 0, a.data(), a.size(), 1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  std::vector<char> filler(4096, 'Z');
+  int idx = 0;
+  while (osd.allocator()->sealed_count() < 1 && idx < 80) {
+    r = {};
+    pg->write("tmp" + std::to_string(idx), 0, filler.data(), filler.size(),
+              static_cast<uint64_t>(10 + idx), 0, on_done, &r);
+    EXPECT_EQ(r.err, 0);
+    ++idx;
+  }
+  for (int i = 0; i < idx; ++i) {
+    r = {};
+    pg->remove("tmp" + std::to_string(i), 1000 + static_cast<uint64_t>(i), 0,
+               on_done, &r);
+    EXPECT_EQ(r.err, 0);
+  }
+  osd_store::gc_options opt;
+  opt.max_rewrite_extents = 8;
+  r = {};
+  osd.gc_pass_async(opt, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  std::vector<char> out(4096, 0);
+  r = {};
+  pg->read("keep0", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'A');
 }
 
 void test_osd_store_apply_read_remove() {
@@ -3961,14 +4060,15 @@ void test_recover_old_pair_type1_to_head() {
   EXPECT_EQ(static_cast<unsigned>(lg2->rec_type_at(1)),
             static_cast<unsigned>(record_type::raft_log_entry));
 
-  uint64_t live_phys = 0;
-  pg->for_each_live_extent([&](uint64_t phys, uint64_t len) {
-    if (len == 4096) {
-      live_phys = phys;
+  bool found_payload = false;
+  const uint64_t want = payload_phys(phys1, hl1);
+  pg->for_each_live_extent([&](uint64_t phys, uint64_t /*len*/) {
+    if (phys == want) {
+      found_payload = true;
     }
   });
-  EXPECT_EQ(live_phys, payload_phys(phys1, hl1));
-  EXPECT_TRUE(live_phys != phys14);
+  EXPECT_TRUE(found_payload);
+  EXPECT_TRUE(want != phys14);
 
   std::vector<char> out(4096, 0);
   r = {};
@@ -4108,6 +4208,57 @@ std::string test_write_cmd(const std::string& name, uint64_t off, uint64_t img) 
     put_varint_test(o, img);
   }
   return o;
+}
+
+std::string test_delete_cmd(const std::string& name, uint64_t img) {
+  std::string o;
+  if (!name.empty()) {
+    o.push_back(static_cast<char>((1 << 3) | 2));
+    put_varint_test(o, name.size());
+    o.append(name);
+  }
+  if (img != 0) {
+    o.push_back(static_cast<char>((2 << 3) | 0));
+    put_varint_test(o, img);
+  }
+  return o;
+}
+
+void dump_allocator(const char* tag, const segment_allocator* alloc) {
+  if (alloc == nullptr) {
+    std::printf("[gc-eval] %s allocator=null\n", tag);
+    return;
+  }
+  std::printf("[gc-eval] %s segs=%u free=%u sealed=%u open=%u cursor=%lu\n",
+              tag, alloc->segment_count(), alloc->free_count(),
+              alloc->sealed_count(), alloc->open_segment(),
+              static_cast<unsigned long>(alloc->open_cursor()));
+  const uint32_t n = alloc->segment_count();
+  for (uint32_t id = 0; id < n && id < 32; ++id) {
+    const auto st = alloc->state(id);
+    const char* name = "unknown";
+    switch (st) {
+    case segment_state::free:
+      name = "free";
+      break;
+    case segment_state::open:
+      name = "open";
+      break;
+    case segment_state::sealed:
+      name = "sealed";
+      break;
+    case segment_state::gc_candidate:
+      name = "gc_candidate";
+      break;
+    case segment_state::cleaning:
+      name = "cleaning";
+      break;
+    case segment_state::bad:
+      name = "bad";
+      break;
+    }
+    std::printf("[gc-eval]   seg[%u]=%s\n", id, name);
+  }
 }
 
 uint32_t count_typed_records(const mem_device_backend& dev, record_type ty) {
@@ -4533,6 +4684,231 @@ void test_empty_ingest_abort_keeps_serving() {
   EXPECT_EQ(out[0], 'K');
 }
 
+void append_write_and_publish(osd_store* osd, uint64_t index, uint64_t term,
+                              const std::string& name, char fill) {
+  std::vector<char> data(4096, fill);
+  log_entry e;
+  e.term = term;
+  e.index = index;
+  e.type = 0; // RAFT_LOGTYPE_WRITE
+  e.meta = test_write_cmd(name, 0, 0);
+  e.data.assign(data.begin(), data.end());
+  sync_result r;
+  osd->append_as_log(1, 0, e, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd->publish_commit(1, 0, index, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+}
+
+void append_delete_and_publish(osd_store* osd, uint64_t index, uint64_t term,
+                               const std::string& name) {
+  log_entry e;
+  e.term = term;
+  e.index = index;
+  e.type = 1; // RAFT_LOGTYPE_DELETE
+  e.meta = test_delete_cmd(name, 0);
+  sync_result r;
+  osd->append_as_log(1, 0, e, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd->publish_commit(1, 0, index, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+}
+
+// Unified-log (log=STM) GC: delete + prefix trim must recycle sealed
+// segments that only held dead raft-log / object records, then reuse them.
+void test_unified_log_delete_trim_recycles_segments() {
+  unified_log_guard on(true);
+  const uint64_t seg = 64 * 1024;
+  mem_device_backend dev(4 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, seg);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  uint64_t idx = 0;
+  int victims = 0;
+  while (osd.allocator()->sealed_count() < 2 && victims < 80) {
+    ++idx;
+    ++victims;
+    append_write_and_publish(&osd, idx, /*term*/ 1,
+                             "victim" + std::to_string(victims), 'V');
+  }
+  EXPECT_TRUE(osd.allocator()->sealed_count() >= 2u);
+  std::printf("[gc-eval] wrote %d victim objects, last_idx=%lu\n", victims,
+              static_cast<unsigned long>(idx));
+  dump_allocator("after-victim-writes", osd.allocator());
+
+  ++idx;
+  const uint64_t keep_idx = idx;
+  append_write_and_publish(&osd, keep_idx, 1, "keep", 'K');
+
+  const uint32_t sealed_after_write = osd.allocator()->sealed_count();
+  const uint32_t free_after_write = osd.allocator()->free_count();
+  const uint32_t freed_while_live = osd.gc_once(true);
+  std::printf("[gc-eval] gc while live log+head: freed=%u (expect 0)\n",
+              freed_while_live);
+  EXPECT_EQ(freed_while_live, 0u);
+  EXPECT_EQ(osd.allocator()->sealed_count(), sealed_after_write);
+
+  for (int i = 1; i <= victims; ++i) {
+    ++idx;
+    append_delete_and_publish(&osd, idx, 1, "victim" + std::to_string(i));
+  }
+  dump_allocator("after-deletes-before-trim", osd.allocator());
+
+  const uint32_t freed_after_delete = osd.gc_once(true);
+  std::printf("[gc-eval] gc after delete, log still live: freed=%u (expect 0)\n",
+              freed_after_delete);
+  EXPECT_EQ(freed_after_delete, 0u);
+  EXPECT_EQ(osd.allocator()->sealed_count(), sealed_after_write);
+
+  log_store* lg = osd.get_active_log(1, 0);
+  EXPECT_TRUE(lg != nullptr);
+  // Drop prefix through last victim write. keep + delete tombstones remain.
+  lg->trim_to(keep_idx - 1);
+  EXPECT_TRUE(lg->contains(keep_idx));
+  EXPECT_TRUE(!lg->contains(1));
+  std::printf("[gc-eval] trimmed log to %lu; base=%lu last=%lu count=%zu\n",
+              static_cast<unsigned long>(keep_idx - 1),
+              static_cast<unsigned long>(lg->base_index()),
+              static_cast<unsigned long>(lg->last_index()), lg->entry_count());
+
+  const uint32_t freed = osd.gc_once(true);
+  dump_allocator("after-trim-gc", osd.allocator());
+  std::printf("[gc-eval] gc after delete+trim: freed=%u free %u->%u sealed %u->%u\n",
+              freed, free_after_write, osd.allocator()->free_count(),
+              sealed_after_write, osd.allocator()->sealed_count());
+  EXPECT_TRUE(freed >= 1u);
+  EXPECT_TRUE(osd.allocator()->free_count() > free_after_write);
+  EXPECT_TRUE(osd.allocator()->sealed_count() < sealed_after_write);
+
+  std::vector<char> out(4096, 0);
+  r = {};
+  osd.read(1, 0, "keep", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'K');
+
+  r = {};
+  out.assign(4096, 0);
+  osd.read(1, 0, "victim1", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 0);
+
+  // Freed segments must be reusable for later appends.
+  std::vector<uint32_t> free_ids;
+  const uint32_t nseg = osd.allocator()->segment_count();
+  for (uint32_t id = 0; id < nseg; ++id) {
+    if (osd.allocator()->state(id) == segment_state::free) {
+      free_ids.push_back(id);
+    }
+  }
+  EXPECT_TRUE(!free_ids.empty());
+  const uint32_t free_before_reuse = osd.allocator()->free_count();
+  int extra = 0;
+  while (osd.allocator()->free_count() == free_before_reuse && extra < 40) {
+    ++idx;
+    ++extra;
+    append_write_and_publish(&osd, idx, 2, "reuse" + std::to_string(extra),
+                             'R');
+  }
+  dump_allocator("after-reuse-writes", osd.allocator());
+  std::printf("[gc-eval] reuse writes=%d free %u->%u\n", extra,
+              free_before_reuse, osd.allocator()->free_count());
+  EXPECT_TRUE(osd.allocator()->free_count() < free_before_reuse);
+  bool reused = false;
+  for (uint32_t id : free_ids) {
+    if (osd.allocator()->state(id) != segment_state::free) {
+      reused = true;
+      std::printf("[gc-eval] reused previously-free seg[%u]\n", id);
+    }
+  }
+  EXPECT_TRUE(reused);
+
+  r = {};
+  out.assign(4096, 0);
+  osd.read(1, 0, "keep", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'K');
+}
+
+// Snapshot pin must block recycle of deleted extents until unpin.
+void test_unified_log_snapshot_pin_blocks_gc() {
+  unified_log_guard on(true);
+  const uint64_t seg = 64 * 1024;
+  mem_device_backend dev(4 * 1024 * 1024);
+  osd_store osd(&dev, buffer_mode::heap, seg);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  osd.create_pg(1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  uint64_t idx = 0;
+  int victims = 0;
+  while (osd.allocator()->sealed_count() < 2 && victims < 80) {
+    ++idx;
+    ++victims;
+    append_write_and_publish(&osd, idx, 1, "pinobj" + std::to_string(victims),
+                             'P');
+  }
+  EXPECT_TRUE(osd.allocator()->sealed_count() >= 2u);
+  const uint64_t snap_idx = idx;
+
+  pg_store* pg = osd.get_active_pg(1, 0);
+  EXPECT_TRUE(pg != nullptr);
+  r = {};
+  pg->create_raft_snapshot(snap_idx, /*term*/ 1, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(pg->snapshot_pin_count(snap_idx) >= 1u);
+
+  ++idx;
+  append_write_and_publish(&osd, idx, 1, "keep2", 'Q');
+  for (int i = 1; i <= victims; ++i) {
+    ++idx;
+    append_delete_and_publish(&osd, idx, 1, "pinobj" + std::to_string(i));
+  }
+  log_store* lg = osd.get_active_log(1, 0);
+  EXPECT_TRUE(lg != nullptr);
+  lg->trim_to(snap_idx);
+  dump_allocator("pinned-after-delete-trim", osd.allocator());
+
+  const uint32_t sealed_pinned = osd.allocator()->sealed_count();
+  const uint32_t freed_pinned = osd.gc_once(true);
+  std::printf("[gc-eval] gc while snapshot pinned: freed=%u (expect 0)\n",
+              freed_pinned);
+  EXPECT_EQ(freed_pinned, 0u);
+  EXPECT_EQ(osd.allocator()->sealed_count(), sealed_pinned);
+
+  std::vector<char> hist(4096, 0);
+  r = {};
+  pg->read("pinobj1", 0, hist.data(), 4096, snap_idx, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(hist[0], 'P');
+
+  r = {};
+  pg->release_raft_snapshot(snap_idx, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(pg->snapshot_pin_count(snap_idx), 0u);
+
+  const uint32_t freed_unpinned = osd.gc_once(true);
+  dump_allocator("after-unpin-gc", osd.allocator());
+  std::printf("[gc-eval] gc after unpin: freed=%u\n", freed_unpinned);
+  EXPECT_TRUE(freed_unpinned >= 1u);
+  EXPECT_TRUE(osd.allocator()->sealed_count() < sealed_pinned);
+
+  std::vector<char> out(4096, 0);
+  r = {};
+  osd.read(1, 0, "keep2", 0, out.data(), 4096, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(out[0], 'Q');
+}
+
 void test_trim_gc_keeps_head_after_log_trim() {
   unified_log_guard on(true);
   const uint64_t seg = 256 * 1024;
@@ -4879,11 +5255,14 @@ int main() {
   test_pg_store_torn_checkpoint_fallback();
   test_pg_store_checkpoint_then_discard_recover();
   test_segment_allocator_no_double_alloc();
+  test_note_written_does_not_rewind_cursor();
   test_pg_store_multi_segment_write_recover();
   test_pg_store_raft_snapshot_read();
   test_pg_store_image_snapshot_read();
   test_segment_allocator_free_sealed();
   test_osd_store_gc_once();
+  test_gc_pins_object_name_across_free();
+  test_gc_pass_async_completes_before_free();
   test_osd_store_apply_read_remove();
   test_snapshot_ingest_state_machine();
   test_pg_snapshot_reader_stream();
@@ -4954,6 +5333,8 @@ int main() {
   test_snapshot_reader_after_log_trim();
   test_empty_ingest_abort_keeps_serving();
   test_trim_gc_keeps_head_after_log_trim();
+  test_unified_log_delete_trim_recycles_segments();
+  test_unified_log_snapshot_pin_blocks_gc();
   test_append_as_log_write_pending_v3();
   test_append_as_log_write_config_sequential();
   test_append_as_log_missing_name_not_published();

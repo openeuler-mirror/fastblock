@@ -39,6 +39,17 @@ bool is_recover_io_type(record_type t) {
 using recover_idx_key = std::tuple<uint64_t, uint64_t, uint64_t, uint64_t>;
 }
 
+struct osd_store::gc_job {
+  osd_store* self{nullptr};
+  gc_options opt{};
+  op_complete cb;
+  void* arg{nullptr};
+  std::vector<std::tuple<pg_store*, std::string, uint64_t, uint64_t>> work;
+  size_t i{0};
+  uint32_t rewritten{0};
+  uint32_t freed{0};
+};
+
 struct osd_store::meta_req {
   osd_store* self{nullptr};
   op_complete cb;
@@ -781,13 +792,149 @@ osd_store::gc_stats osd_store::gc_pass() {
 osd_store::gc_stats osd_store::gc_pass(const gc_options& opt) {
   gc_stats st;
   if (opt.rewrite_victim) {
-    // gc_rewrite_once rewrites then free_dead via gc_once.
+    // Mem-backend only: rewrite_extent completes inline. SPDK must use
+    // gc_pass_async so gc_once cannot free a segment still being rewritten.
     st.extents_rewritten =
         gc_rewrite_once(opt.persist_manifest, opt.max_rewrite_extents);
   } else if (opt.free_dead_segments) {
     st.segments_freed = gc_once(opt.persist_manifest);
   }
   return st;
+}
+
+void osd_store::gc_job_finish(gc_job* job, int err) {
+  if (job == nullptr) {
+    return;
+  }
+  auto cb = std::move(job->cb);
+  void* a = job->arg;
+  delete job;
+  if (cb) {
+    cb(a, err);
+  }
+}
+
+void osd_store::gc_job_rewrite_next(gc_job* job) {
+  if (job == nullptr || job->self == nullptr) {
+    return;
+  }
+  if (job->i >= job->work.size()) {
+    if (job->opt.free_dead_segments) {
+      job->freed = job->self->gc_once(job->opt.persist_manifest);
+    }
+    gc_job_finish(job, 0);
+    return;
+  }
+  auto [pg, name, off, len] = job->work[job->i++];
+  pg->rewrite_extent(
+      name, off, len,
+      [](void* a, int err) {
+        auto* j = static_cast<gc_job*>(a);
+        if (err == 0) {
+          ++j->rewritten;
+          pg_store* pg2 = std::get<0>(j->work[j->i - 1]);
+          log_store* lg = j->self->get_active_log(pg2->id().pool_id,
+                                                  pg2->id().pg_id);
+          if (lg != nullptr && pg2->last_rewrite_raft_index() != 0) {
+            lg->update_phys(pg2->last_rewrite_raft_index(),
+                            pg2->last_rewrite_record_start(),
+                            pg2->last_rewrite_aligned_len());
+          }
+        }
+        gc_job_rewrite_next(j);
+      },
+      job);
+}
+
+void osd_store::gc_pass_async(const gc_options& opt, op_complete cb, void* arg) {
+  if (cb == nullptr) {
+    return;
+  }
+  auto* job = new (std::nothrow) gc_job();
+  if (job == nullptr) {
+    cb(arg, -ENOMEM);
+    return;
+  }
+  job->self = this;
+  job->opt = opt;
+  job->cb = std::move(cb);
+  job->arg = arg;
+
+  if (!opt.rewrite_victim || alloc_ == nullptr || pgs_.empty()) {
+    if (opt.free_dead_segments && alloc_ != nullptr) {
+      job->freed = gc_once(opt.persist_manifest);
+    }
+    gc_job_finish(job, 0);
+    return;
+  }
+
+  const uint32_t nseg = alloc_->segment_count();
+  const uint64_t seg_size = alloc_->segment_size();
+  if (nseg == 0 || seg_size == 0) {
+    gc_job_finish(job, 0);
+    return;
+  }
+
+  std::vector<uint64_t> live_bytes(nseg, 0);
+  auto mark = [&](uint64_t phys, uint64_t len) {
+    if (len == 0 || phys + len <= alloc_->region_base()) {
+      return;
+    }
+    const uint64_t rel0 =
+        phys > alloc_->region_base() ? phys - alloc_->region_base() : 0;
+    const uint64_t rel1 = phys + len - alloc_->region_base();
+    const uint32_t first = static_cast<uint32_t>(rel0 / seg_size);
+    const uint32_t last =
+        rel1 == 0 ? first : static_cast<uint32_t>((rel1 - 1) / seg_size);
+    for (uint32_t id = first; id <= last && id < nseg; ++id) {
+      live_bytes[id] += len;
+    }
+  };
+  for (const auto& kv : pgs_) {
+    kv.second->for_each_live_extent(mark);
+  }
+
+  uint32_t victim = segment_allocator::kInvalidSeg;
+  uint64_t best_live = UINT64_MAX;
+  for (uint32_t id = 0; id < nseg; ++id) {
+    if (alloc_->state(id) != segment_state::sealed) {
+      continue;
+    }
+    if (live_bytes[id] == 0) {
+      continue;
+    }
+    if (live_bytes[id] < best_live) {
+      best_live = live_bytes[id];
+      victim = id;
+    }
+  }
+  if (victim == segment_allocator::kInvalidSeg) {
+    if (opt.free_dead_segments) {
+      job->freed = gc_once(opt.persist_manifest);
+    }
+    gc_job_finish(job, 0);
+    return;
+  }
+
+  const uint64_t phys_begin = alloc_->segment_base(victim);
+  const uint64_t phys_end = phys_begin + seg_size;
+  const uint32_t max_extents = opt.max_rewrite_extents;
+  for (const auto& kv : pgs_) {
+    pg_store* pg = kv.second.get();
+    std::vector<std::tuple<std::string, uint64_t, uint64_t>> targets;
+    pg->collect_head_extents_in_range(phys_begin, phys_end, &targets);
+    for (const auto& t : targets) {
+      if (max_extents != 0 && job->work.size() >= max_extents) {
+        break;
+      }
+      job->work.emplace_back(pg, std::get<0>(t), std::get<1>(t),
+                             std::get<2>(t));
+    }
+    if (max_extents != 0 && job->work.size() >= max_extents) {
+      break;
+    }
+  }
+  gc_job_rewrite_next(job);
 }
 
 void osd_store::create_image_snapshot(uint64_t pool_id, uint64_t pg_id,
@@ -1419,7 +1566,8 @@ void osd_store::checkpoint_pass_continue(void* arg, int err) {
       self->kv_->checkpoint(
           [](void* a, int e) {
             auto* r = static_cast<ckpt_pass_req*>(a);
-            r->self->checkpoint_pass_continue(a, e);
+            // kv WAL already in flight — skip this tick, do not fail the pass.
+            r->self->checkpoint_pass_continue(a, e == -EBUSY ? 0 : e);
           },
           req);
       return;
@@ -1576,6 +1724,7 @@ uint32_t osd_store::gc_rewrite_once(bool persist, uint32_t max_extents) {
   const uint64_t phys_end = phys_begin + seg_size;
 
   uint32_t rewritten = 0;
+  bool all_inline = true;
   for (const auto& kv : pgs_) {
     if (max_extents != 0 && rewritten >= max_extents) {
       break;
@@ -1595,6 +1744,11 @@ uint32_t osd_store::gc_rewrite_once(bool persist, uint32_t max_extents) {
                            static_cast<decltype(r)*>(a)->err = err;
                          },
                          &r);
+      if (r.err == -1) {
+        // SPDK async: caller must use gc_pass_async. Do not free yet.
+        all_inline = false;
+        continue;
+      }
       if (r.err == 0) {
         ++rewritten;
         log_store* lg =
@@ -1608,9 +1762,11 @@ uint32_t osd_store::gc_rewrite_once(bool persist, uint32_t max_extents) {
     }
   }
 
-  // After rewrite, free sealed segments with no remaining live refs.
-  const uint32_t freed = gc_once(persist);
-  (void)freed;
+  // Free only after every rewrite finished inline (mem tests). SPDK must
+  // wait for rewrite callbacks via gc_pass_async before gc_once.
+  if (all_inline) {
+    gc_once(persist);
+  }
   return rewritten;
 }
 

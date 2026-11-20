@@ -100,7 +100,8 @@ public:
   /**
    * Recover helper: note that [phys, phys+len) contains valid data.
    * Marks covering segments sealed (or open for the highest one) and
-   * bumps open_cursor if in the open segment.
+   * bumps open_cursor if in the open segment. Never rewinds past
+   * offsets already returned by reserve().
    */
   void note_written(uint64_t phys_offset, uint64_t len);
 

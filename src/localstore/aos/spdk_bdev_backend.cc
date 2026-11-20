@@ -93,6 +93,13 @@ void spdk_bdev_backend::set_max_write_inflight(uint32_t n) {
 }
 
 void spdk_bdev_backend::close() {
+  auto q = std::move(write_q_);
+  write_q_.clear();
+  for (auto& p : q) {
+    if (p.cb) {
+      p.cb(p.arg, 0, -ESHUTDOWN);
+    }
+  }
   if (channel_ != nullptr) {
     spdk_put_io_channel(channel_);
     channel_ = nullptr;
@@ -141,6 +148,7 @@ void spdk_bdev_backend::write_done(struct spdk_bdev_io* bdev_io, bool success,
   if (cb) {
     cb(arg, phys, err);
   }
+  self->pump_writes();
 }
 
 void spdk_bdev_backend::read_done(struct spdk_bdev_io* bdev_io, bool success,
@@ -174,32 +182,14 @@ void spdk_bdev_backend::append(void* data, uint64_t nbytes, append_complete cb,
   write_at(write_pointer_, data, nbytes, std::move(cb), arg);
 }
 
-void spdk_bdev_backend::write_at(uint64_t phys_offset, void* data,
-                                  uint64_t nbytes, append_complete cb,
-                                  void* arg) {
-  if (!ready() || data == nullptr || cb == nullptr) {
-    if (cb) {
-      cb(arg, 0, -EINVAL);
-    }
-    return;
-  }
-  if (nbytes == 0 || (nbytes % block_size_) != 0 ||
-      (phys_offset % block_size_) != 0) {
-    cb(arg, 0, -EINVAL);
-    return;
-  }
-  if (write_inflight_ >= max_write_inflight_) {
-    cb(arg, 0, -EAGAIN);
-    return;
-  }
-  if (phys_offset + nbytes > region_length_) {
-    cb(arg, 0, -ENOSPC);
-    return;
-  }
-
+void spdk_bdev_backend::submit_write(uint64_t phys_offset, void* data,
+                                     uint64_t nbytes, append_complete cb,
+                                     void* arg) {
   auto* ctx = new (std::nothrow) io_ctx_append();
   if (ctx == nullptr) {
-    cb(arg, 0, -ENOMEM);
+    if (cb) {
+      cb(arg, 0, -ENOMEM);
+    }
     return;
   }
   ctx->self = this;
@@ -223,7 +213,42 @@ void spdk_bdev_backend::write_at(uint64_t phys_offset, void* data,
     void* a = ctx->arg;
     delete ctx;
     done(a, 0, rc);
+    pump_writes();
   }
+}
+
+void spdk_bdev_backend::pump_writes() {
+  while (write_inflight_ < max_write_inflight_ && !write_q_.empty()) {
+    pending_write p = std::move(write_q_.front());
+    write_q_.pop_front();
+    submit_write(p.phys_offset, p.data, p.nbytes, std::move(p.cb), p.arg);
+  }
+}
+
+void spdk_bdev_backend::write_at(uint64_t phys_offset, void* data,
+                                  uint64_t nbytes, append_complete cb,
+                                  void* arg) {
+  if (!ready() || data == nullptr || cb == nullptr) {
+    if (cb) {
+      cb(arg, 0, -EINVAL);
+    }
+    return;
+  }
+  if (nbytes == 0 || (nbytes % block_size_) != 0 ||
+      (phys_offset % block_size_) != 0) {
+    cb(arg, 0, -EINVAL);
+    return;
+  }
+  if (phys_offset + nbytes > region_length_) {
+    cb(arg, 0, -ENOSPC);
+    return;
+  }
+  if (write_inflight_ >= max_write_inflight_) {
+    write_q_.push_back(
+        pending_write{phys_offset, data, nbytes, std::move(cb), arg});
+    return;
+  }
+  submit_write(phys_offset, data, nbytes, std::move(cb), arg);
 }
 
 void spdk_bdev_backend::read(uint64_t phys_offset, void* data, uint64_t nbytes,

@@ -119,6 +119,12 @@ private:
   uint64_t gc_pass_count_{0};
   uint64_t ckpt_pass_count_{0};
   bool ckpt_in_flight_{false};
+  bool gc_in_flight_{false};
+  bool stop_pending_{false};
+  op_complete stop_cb_;
+  void* stop_arg_{nullptr};
+
+  void finish_stop(int err);
 };
 
 /** Parse "blob" | "aos" | "shadow". Unknown => blob. */
