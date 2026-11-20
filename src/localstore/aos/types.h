@@ -68,7 +68,8 @@ inline uint64_t unified_log_load_commit_idx(uint64_t lapply, uint64_t current) {
   return lapply < current ? lapply : current;
 }
 
-// Process-wide P6 flag. Default off; tests may set. Env FASTBLOCK_AOS_UNIFIED_LOG.
+// Process-wide P6 flag. Default on (dev: log=STM is the only write path).
+// FASTBLOCK_AOS_UNIFIED_LOG=0 forces the old dual-write path for isolated tests.
 bool unified_log_enabled();
 void set_unified_log_enabled(bool on);
 
