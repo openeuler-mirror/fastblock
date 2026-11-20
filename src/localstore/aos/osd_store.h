@@ -253,6 +253,14 @@ public:
 
   void publish_commit(uint64_t pool_id, uint64_t pg_id, uint64_t index,
                       op_complete cb, void* arg);
+
+  /**
+   * Rewrite one head extent then point log_store index at the new
+   * record start (P6 PR7). Missing log index is a no-op.
+   */
+  void rewrite_extent(uint64_t pool_id, uint64_t pg_id,
+                      const std::string& object_name, uint64_t logical_offset,
+                      uint64_t len, op_complete cb, void* arg);
   void truncate_log_and_pending(uint64_t pool_id, uint64_t pg_id,
                                 uint64_t from_index, op_complete cb, void* arg);
 
