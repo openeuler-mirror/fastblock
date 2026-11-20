@@ -16,6 +16,7 @@
 #include "fastblock/msg/rdma/probe.h"
 #include "fastblock/msg/rdma/work_request_id.h"
 #include "fastblock/msg/rdma/socket.h"
+#include "fastblock/msg/rdma/completed_key_ring.h"
 #include "fastblock/msg/rdma/oob_payload.h"
 #include "fastblock/msg/rdma/transport_data.h"
 #include "fastblock/msg/rdma/types.h"
@@ -320,15 +321,15 @@ public:
             return _sock->send(head_wr);
         }
 
-        auto send_finish_request(const uint32_t req_key) {
+        auto send_finish_request(const rpc_request::key_type req_key) {
             auto wr = std::make_unique<::ibv_send_wr>();
             std::memset(wr.get(), 0, sizeof(decltype(wr)::element_type));
             wr->opcode = IBV_WR_SEND_WITH_IMM;
-            wr->imm_data = ::htobe32(req_key);
+            wr->imm_data = ::htobe32(transport_data::correlation_index_lo(req_key));
             _dispatch_id.inc_request_id();
             wr->wr_id = _dispatch_id.value();
 
-            SPDK_INFOLOG(msg, "Post finish wr of request id %d\n", req_key);
+            SPDK_INFOLOG(msg, "Post finish wr of request id %lu\n", req_key);
             return send_request([this, wr = wr.get()] (bool should_signal) {
                 if (should_signal) {
                     wr->send_flags |= IBV_SEND_SIGNALED;
@@ -368,14 +369,14 @@ public:
 
             if (not req->request_data or not req->request_data->prepared()) {
                 SPDK_NOTICELOG(
-                  "request %d is not prepared, fail-soft without enqueue retry\n",
+                  "request %lu is not prepared, fail-soft without enqueue retry\n",
                   req->request_key);
                 return -ENOMEM;
             }
 
             SPDK_DEBUGLOG(
               msg,
-              "request id is %d, request serialize size is %ld, request body size is %ld\n",
+              "request id is %lu, request serialize size is %ld, request body size is %ld\n",
               req->request_key,
               req->request->ByteSizeLong() + request_meta_size,
               req->request->ByteSizeLong());
@@ -402,7 +403,7 @@ public:
 
             SPDK_INFOLOG(
               msg,
-              "Send rpc request(id: %d, name: %s) with body size %ld, %s => %s\n",
+              "Send rpc request(id: %lu, name: %s) with body size %ld, %s => %s\n",
               req_ptr->request_key,
               req_ptr->method->name().c_str(),
               req_ptr->request_data->serilaized_size(),
@@ -412,7 +413,7 @@ public:
             auto err = send_metadata_request(req_ptr->request_data.get());
             if (err and err->err.value() == ENOMEM) {
                 SPDK_NOTICELOG(
-                  "Post the metadata of request %d return enomem, onflight_send_wr: %d\n",
+                  "Post the metadata of request %lu return enomem, onflight_send_wr: %d\n",
                   req_ptr->request_key, _onflight_send_wr);
                 return -EAGAIN;
             }
@@ -431,6 +432,20 @@ public:
 
         bool is_priority_request(const google::protobuf::MethodDescriptor* m) {
             return m->name() == "heartbeat";
+        }
+
+        rpc_request::key_type next_request_key() {
+            for (int n{0}; n < 8; ++n) {
+                const auto key = transport_data::make_correlation_index(_key_gen, _key_idx);
+                if (++_key_idx == 0) {
+                    ++_key_gen;
+                    _key_idx = 1;
+                }
+                if (not _done_keys.contains(key)) {
+                    return key;
+                }
+            }
+            return transport_data::make_correlation_index(_key_gen, _key_idx);
         }
 
         void enqueue_request(std::unique_ptr<rpc_request> req, bool priority_req) {
@@ -505,13 +520,14 @@ public:
                 if (req and req->completed) {
                     ++rdma_probe.rpc_closure_double;
                     SPDK_INFOLOG(
-                      msg, "rpc %u complete_rpc double, why=%d double=%lu\n",
+                      msg, "rpc %lu complete_rpc double, why=%d double=%lu\n",
                       req->request_key, static_cast<int>(why),
                       rdma_probe.rpc_closure_double);
                 }
                 return;
             }
             req->completed = true;
+            _done_keys.remember(req->request_key);
 
             switch (why) {
             case rpc_fail::ok:
@@ -521,7 +537,7 @@ public:
                 fail_rpc(req->ctrlr, "resource_exhausted",
                          rpc_error_class::resource_exhausted);
                 SPDK_WARNLOG(
-                  "rpc %u resource_exhausted method=%s data_free=%zu data_inuse=%zu pool_exhausted=%lu\n",
+                  "rpc %lu resource_exhausted method=%s data_free=%zu data_inuse=%zu pool_exhausted=%lu\n",
                   req->request_key,
                   req->method ? req->method->name().c_str() : "?",
                   _data_pool ? _data_pool->size() : 0,
@@ -532,7 +548,7 @@ public:
                 ++rdma_probe.rpc_timeout;
                 fail_rpc(req->ctrlr, "timeout", rpc_error_class::timeout);
                 SPDK_NOTICELOG(
-                  "rpc %u timeout, rpc_timeout=%lu\n",
+                  "rpc %lu timeout, rpc_timeout=%lu\n",
                   req->request_key, rdma_probe.rpc_timeout);
                 break;
             case rpc_fail::request_timeout:
@@ -540,13 +556,13 @@ public:
                 fail_rpc(req->ctrlr, "request_timeout",
                          rpc_error_class::request_timeout);
                 SPDK_NOTICELOG(
-                  "rpc %u request_timeout, rpc_timeout=%lu\n",
+                  "rpc %lu request_timeout, rpc_timeout=%lu\n",
                   req->request_key, rdma_probe.rpc_timeout);
                 break;
             case rpc_fail::too_large:
                 ++rdma_probe.rpc_pool_too_large;
                 fail_rpc(req->ctrlr, "too_large", rpc_error_class::too_large);
-                SPDK_ERRLOG("rpc %u too_large for memory pool\n", req->request_key);
+                SPDK_ERRLOG("rpc %lu too_large for memory pool\n", req->request_key);
                 break;
             case rpc_fail::connection_dead:
                 set_failed_msg(req->ctrlr);
@@ -824,7 +840,7 @@ public:
                 return;
             }
 
-            auto req_key = _unresponsed_request_key_gen++;
+            auto req_key = next_request_key();
             FASTBLOCK_DUR_MAP_EMPLACE_START(_enqueue_dur_map, req_key);
             std::string payload;
             peel_rpc_payload(*const_cast<google::protobuf::Message*>(request),
@@ -849,13 +865,13 @@ public:
 
             SPDK_DEBUGLOG(
               msg,
-              "transport data_size: %d, serialized_size: %ld, req_key: %d, service: %s, method: %s\n",
+              "transport data_size: %d, serialized_size: %ld, req_key: %lu, service: %s, method: %s\n",
               meta.data_size, request->ByteSizeLong() + request_meta_size,
               req_key, service_name.c_str(), method_name.c_str());
 
             SPDK_INFOLOG(
               msg,
-              "Enqueued rpc task(%s::%s) %d\n",
+              "Enqueued rpc task(%s::%s) %lu\n",
               meta.service_name,
               meta.method_name,
               req->request_key);
@@ -899,7 +915,7 @@ public:
             auto* stack_ptr = it->get();
             if (rc == -EINVAL) {
                 SPDK_ERRLOG(
-                  "ERROR: Timeout occurred of rpc request key %d\n",
+                  "ERROR: Timeout occured of rpc request key %lu\n",
                   stack_ptr->request_key);
                 complete_rpc(stack_ptr, rpc_fail::timeout);
             } else if (rc == -ENOMEM) {
@@ -991,7 +1007,7 @@ public:
             if (err) {
                 if (err->err.value() == ENOMEM) {
                     SPDK_NOTICELOG(
-                      "Post free wr of request %u return enomem, onflight_send_wr: %d\n",
+                      "Post free wr of request %lu return enomem, onflight_send_wr: %d\n",
                       head, _onflight_send_wr);
                     return false;
                 }
@@ -1016,7 +1032,7 @@ public:
             if (err) {
                 if (err->err.value() == ENOMEM) {
                     SPDK_NOTICELOG(
-                      "enomem for post read wr of request %d, on_flight_send_wr: %d\n",
+                      "enomem for post read wr of request %lu, on_flight_send_wr: %d\n",
                       req->request_key, _onflight_send_wr);
                     return true;
                 }
@@ -1030,7 +1046,7 @@ public:
 
             SPDK_DEBUGLOG(
               msg,
-              "request key of %d start rdma reading, _wait_read_requests addr is %p\n",
+              "request key of %lu start rdma reading, _wait_read_requests addr is %p\n",
               req->request_key,
               &_wait_read_requests);
             _wait_read_requests.push_back(std::move(req));
@@ -1048,7 +1064,7 @@ public:
             auto* stack_ptr = _wait_read_requests.begin()->get();
             if (is_timeout(stack_ptr)) {
                 SPDK_ERRLOG(
-                  "Timeout occurred on rpc request of request key %d\n",
+                  "Timeout occurred on rpc request of request key %lu\n",
                   stack_ptr->request_key);
                 complete_rpc(stack_ptr, rpc_fail::timeout);
                 quarantine_request(stack_ptr);
@@ -1061,7 +1077,7 @@ public:
 
             SPDK_INFOLOG(
               msg,
-              "Read the response body of request %d\n",
+              "Read the response body of request %lu\n",
               stack_ptr->request_key);
 
             SPDK_DEBUGLOG(msg, "_onflight_rpc_task_size: %ld\n", _onflight_rpc_task_size);
@@ -1082,7 +1098,7 @@ public:
             }
             if (not is_parsed) {
                 SPDK_ERRLOG(
-                  "ERROR: Unserialize the response body of request key %d failed\n",
+                  "ERROR: Unserialize the response body of request key %lu failed\n",
                   stack_ptr->request_key);
                 complete_rpc(stack_ptr, rpc_fail::unserialize);
             } else {
@@ -1100,7 +1116,7 @@ read_done:
 
             if (rpc_dur >= _opts->slow_rpc_warn) {
                 SPDK_WARNLOG(
-                  "slow rpc detected, request id %d, rpc duration %ldms\n",
+                  "slow rpc detected, request id %lu, rpc duration %ldms\n",
                   stack_ptr->request_key, rpc_dur.count() / 1000 / 1000);
             }
 
@@ -1146,10 +1162,14 @@ read_done:
                 auto req_key = transport_data::read_correlation_index(recv_ctx);
                 auto req_it = _unresponsed_requests.find(req_key);
                 if (req_it == _unresponsed_requests.end()) {
+                    if (_done_keys.contains(req_key)) {
+                        post_recv_ctx(recv_ctx, it->first);
+                        return true;
+                    }
                     ++rdma_probe.rpc_unknown_key;
                     SPDK_INFOLOG(
                       msg,
-                      "unknown rpc key %d wr_id=%lu, drop and keep QP, unknown_key=%lu\n",
+                      "unknown rpc key %lu wr_id=%lu, drop and keep QP, unknown_key=%lu\n",
                       req_key, cqe->wr_id, rdma_probe.rpc_unknown_key);
                     post_recv_ctx(recv_ctx, it->first);
                     return true;
@@ -1157,7 +1177,7 @@ read_done:
 
                 if (is_timeout(req_it->second.get())) {
                     SPDK_ERRLOG(
-                      "Timeout occurred on rpc request of request key %d\n",
+                      "Timeout occurred on rpc request of request key %lu\n",
                       req_it->second->request_key);
                     quarantine_request(req_it->second.get());
                     complete_rpc(req_it->second.get(), rpc_fail::timeout);
@@ -1172,13 +1192,13 @@ read_done:
                 auto reply_m = transport_data::read_reply_meta(it->second);
                 SPDK_INFOLOG(
                   msg,
-                  "Received reply of request %d, status is %s\n",
+                  "Received reply of request %lu, status is %s\n",
                   req_it->second->request_key,
                   string_status(reply_m));
 
                 SPDK_DEBUGLOG(
                   msg,
-                  "received reply of request %d, status is %s, elapsed: %ldus\n",
+                  "received reply of request %lu, status is %s, elapsed: %ldus\n",
                   req_it->second->request_key,
                   string_status(reply_m),
                   (std::chrono::system_clock::now() - req_it->second->start_at).count() / 1000);
@@ -1229,14 +1249,14 @@ read_done:
                         if (not req_it->second->reply_data->is_metadata_complete()) {
                             SPDK_DEBUGLOG(
                               msg,
-                              "request key %d, metadata is not complete\n",
+                              "request key %lu, metadata is not complete\n",
                               req_it->second->request_key);
                             break;
                         }
 
                         if (not req_it->second->reply_data->is_ready()) {
                             SPDK_NOTICELOG(
-                              "request key %d reply transport not prepared, fail-soft\n",
+                              "request key %lu reply transport not prepared, fail-soft\n",
                               req_it->second->request_key);
                             complete_rpc(
                               req_it->second.get(),
@@ -1259,7 +1279,7 @@ read_done:
                     SPDK_DEBUGLOG(msg, "_onflight_rpc_task_size: %ld\n", _onflight_rpc_task_size);
                     if (not is_parsed) {
                         SPDK_ERRLOG(
-                          "ERROR: Parse response body failed of request %d\n",
+                          "ERROR: Parse response body failed of request %lu\n",
                           req_it->second->request_key);
 
                         complete_rpc(req_it->second.get(), rpc_fail::unserialize, "unserialize failed");
@@ -1270,7 +1290,7 @@ read_done:
 
                     SPDK_INFOLOG(
                       msg,
-                      "Read the inlined response body of request %d\n",
+                      "Read the inlined response body of request %lu\n",
                       req_it->second->request_key);
                     complete_rpc(req_it->second.get(), rpc_fail::ok);
                     _free_server_list.push_back(req_it->second->request_key);
@@ -1279,7 +1299,7 @@ read_done:
                 }
                 default: {
                     SPDK_ERRLOG(
-                      "ERROR: RPC call failed of request %d with reply status %s\n",
+                      "ERROR: RPC call failed of request %lu with reply status %s\n",
                       req_it->second->request_key,
                       string_status(reply_m));
                     if (reply_m == status::resource_exhausted) {
@@ -1549,7 +1569,9 @@ read_done:
         std::unique_ptr<memory_pool<::ibv_recv_wr>::net_context*[]> _recv_ctx{nullptr};
         std::unordered_map<work_request_id::value_type, memory_pool<::ibv_recv_wr>::net_context*> _recv_ctx_map{};
 
-        rpc_request::key_type _unresponsed_request_key_gen{1};
+        uint32_t _key_idx{1};
+        uint32_t _key_gen{1};
+        completed_key_ring _done_keys{};
         std::list<std::unique_ptr<rpc_request>> _onflight_requests{};
         std::list<std::unique_ptr<rpc_request>> _priority_onflight_requests{};
         std::list<rpc_request::key_type> _free_server_list{};
