@@ -2432,6 +2432,35 @@ void test_osd_store_empty_recover_then_append() {
   EXPECT_EQ(lg->last_index(), 1);
 }
 
+void test_recover_rebinds_kv_allocator() {
+  // aos_runtime::open() wires kv to the pre-recover allocator. recover()
+  // used to replace alloc_ and leave KV reserving from a stale cursor
+  // (data/KV overlap on vstart).
+  const uint64_t seg = 64 * 1024;
+  mem_device_backend dev(4 * 1024 * 1024, 512);
+  osd_store osd(&dev, buffer_mode::heap, seg);
+  sync_result r;
+  osd.format(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  kv_engine kv(&dev, osd.shared_allocator(), buffer_mode::heap);
+  osd.set_kv_engine(&kv);
+  const auto* before = kv.allocator();
+  EXPECT_TRUE(before == osd.allocator());
+
+  r = {};
+  osd.recover(on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(kv.allocator() == osd.allocator());
+  EXPECT_TRUE(kv.allocator() != nullptr);
+
+  uint64_t p_obj = 0;
+  uint64_t p_kv = 0;
+  EXPECT_EQ(osd.allocator()->reserve(4096, &p_obj, nullptr), 0);
+  EXPECT_EQ(kv.allocator()->reserve(4096, &p_kv, nullptr), 0);
+  EXPECT_EQ(p_kv, p_obj + 4096);
+}
+
 void test_osd_store_recover_keeps_existing_epoch_512() {
   unified_log_guard off(false);
   // Live vstart aio bdev is 512-byte blocks; recover must apply 512-aligned
@@ -5301,6 +5330,7 @@ int main() {
   test_gc_preserves_live_kv_and_frees_after_checkpoint();
   test_osd_store_list_pg_ids();
   test_osd_store_empty_recover_then_append();
+  test_recover_rebinds_kv_allocator();
   test_osd_store_recover_keeps_existing_epoch();
   test_osd_store_recover_keeps_existing_epoch_512();
   test_osd_store_recover_keeps_kv_across_pad_hole();
