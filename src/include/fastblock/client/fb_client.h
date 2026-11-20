@@ -173,18 +173,19 @@ private:
 
     static constexpr auto default_connection_retry_interval{std::chrono::seconds{1}};
 
-    static int32_t failed_rpc_errno(const msg::rdma::rpc_controller& ctrlr) noexcept {
+    static int32_t map_rpc_error(const msg::rdma::rpc_controller& ctrlr) noexcept {
         if (not ctrlr.Failed()) {
             return 0;
         }
-        if (ctrlr.is_soft_failure()) {
-            const auto& text = ctrlr.ErrorText();
-            if (text.find("resource_exhausted") != std::string::npos) {
-                return -ENOMEM;
-            }
+        switch (ctrlr.error_class()) {
+        case msg::rdma::rpc_error_class::resource_exhausted:
+            return -ENOMEM;
+        case msg::rdma::rpc_error_class::timeout:
+        case msg::rdma::rpc_error_class::request_timeout:
             return -EAGAIN;
+        default:
+            return -ENOLINK;
         }
-        return -ENOLINK;
     }
 
     static bool should_retry_request(const int32_t state) noexcept {
@@ -744,7 +745,7 @@ public:
             [this, stack_ptr = head] (std::unique_ptr<osd::write_reply>& resp) {
                 auto& req = std::get<std::unique_ptr<osd::write_request>>(stack_ptr->req);
                 auto state = stack_ptr->ctrlr->Failed()
-                  ? failed_rpc_errno(*stack_ptr->ctrlr) : resp->state();
+                  ? map_rpc_error(*stack_ptr->ctrlr) : resp->state();
                 SPDK_INFOLOG(
                   libblk,
                   "write_object pool: %lu pg: %lu object: %s offset: %lu done, state: %d\n",
@@ -762,7 +763,7 @@ public:
             [this, stack_ptr = head] (std::unique_ptr<osd::read_reply>& resp) {
                 auto& req = std::get<std::unique_ptr<osd::read_request>>(stack_ptr->req);
                 auto state = stack_ptr->ctrlr->Failed()
-                  ? failed_rpc_errno(*stack_ptr->ctrlr) : resp->state();
+                  ? map_rpc_error(*stack_ptr->ctrlr) : resp->state();
                 auto data = stack_ptr->ctrlr->Failed() ? std::string{} : resp->data();
                 SPDK_INFOLOG(
                  libblk,
@@ -781,7 +782,7 @@ public:
             [this, stack_ptr = head] (std::unique_ptr<osd::delete_reply>& resp) {
                 auto& req = std::get<std::unique_ptr<osd::delete_request>>(stack_ptr->req);
                 auto state = stack_ptr->ctrlr->Failed()
-                  ? failed_rpc_errno(*stack_ptr->ctrlr) : resp->state();
+                  ? map_rpc_error(*stack_ptr->ctrlr) : resp->state();
                 SPDK_INFOLOG(
                   libblk,
                   "delete_request pool: %lu pg:%lu object:%s done. state:%d\n",
