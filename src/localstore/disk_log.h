@@ -132,12 +132,7 @@ public:
 
   void truncate(uint64_t start_index, log_op_complete cb_fn, void* arg);
 
-  void advance_trim_index(uint64_t index) {
-    _trim_index = std::max(_trim_index, index);
-    if (_aos_log && index > 1000) {
-      _aos_log->trim_to(index - 1000);
-    }
-  }
+  void advance_trim_index(uint64_t index);
 
   std::string dump_state() {
     std::stringstream sstream;
