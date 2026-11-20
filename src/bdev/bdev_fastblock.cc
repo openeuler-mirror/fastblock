@@ -537,11 +537,16 @@ bdev_fastblock_create_cb(void *io_device, void *ctx_buf)
     if (global::blk_clients[hold_index]) {
         auto blk_cli = std::move(global::blk_clients[hold_index]);
         auto blk_thread = blk_cli->get_blk_thread();
+        // Second (and later) bdevs reopen a channel on the same shard/app
+        // thread. Exiting that thread kills nvmf poll groups / app_thread.
         blk_cli->stop(
-          [blk_cli, blk_thread](){
+          [blk_cli, blk_thread, keep = bdev_thd]() {
+            if (blk_thread == nullptr || blk_thread == keep ||
+                blk_thread == spdk_thread_get_app_thread()) {
+              return;
+            }
             spdk_thread_exit(blk_thread);
-          }
-        );
+          });
     }
 
     global::vhost_worker_threads.at(hold_index) = bdev_thd;
