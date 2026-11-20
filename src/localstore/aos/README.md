@@ -49,7 +49,10 @@ Object 子系统细节见设计文档 §5。
 | `read(..., raft, image)` | 读 snapshot 视图 |
 | `osd_store::gc_pass` | rewrite 限速 + free 无 live sealed segment（object + log + kv） |
 
-GC live-set 覆盖 object / log / kv（checkpoint 前 WAL 可裁）。  
+GC live-set 覆盖 object / log / kv（checkpoint 前 WAL 可裁）：head extents、
+unpublished pending put、snapshot pin 下的历史 put、**最新 ObjectMap checkpoint
+记录本身**、log index_map、kv ckpt+WAL。`object_name` 本身不单独进 live-set；
+`rewrite_extent` 会再写一条 name，避免原 name+data 所在 segment 被回收后 recover 丢名。  
 控制面 mon/CSI 后续对接；`osd_stm::set_image_snap_seq` 供 apply 写入 image 时间线。
 
 ## 启用
