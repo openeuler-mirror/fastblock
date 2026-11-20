@@ -23,7 +23,7 @@ public:
       osd::create_pg_request* request,
       uint32_t shard_id,
       int32_t target_node_id,
-      std::shared_ptr<msg::rdma::client::connection> conn,
+      std::shared_ptr<msg::channel> conn,
       std::function<void(int)> cb,
       raft_client_protocol* rcp)
       : _request(request)
@@ -69,7 +69,7 @@ private:
     osd::create_pg_request* _request;
     uint32_t _shard_id;
     int32_t _target_node_id;
-    std::shared_ptr<msg::rdma::client::connection> _conn;
+    std::shared_ptr<msg::channel> _conn;
     std::function<void(int)> _cb;
     raft_client_protocol* _rcp;
 };
