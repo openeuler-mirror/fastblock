@@ -34,6 +34,7 @@ namespace fastblock::aos {
 //  object_offset    u64
 //  raft_apply_index u64
 //  image_snap_seq   u64
+//  raft_term        u64  (v3 only; omitted on v1/v2)
 //  header_checksum  u32  (covers all fields above except itself)
 //  payload_checksum u32  (covers payload; 0 if payload_len==0)
 //
