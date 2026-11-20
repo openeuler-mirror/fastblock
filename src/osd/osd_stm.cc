@@ -17,6 +17,7 @@
 #include "fastblock/utils/err_num.h"
 #include "localstore/aos/log_store.h"
 #include "localstore/aos/osd_store.h"
+#include "localstore/aos/types.h"
 #include "localstore/aos/pg_store.h"
 #include "localstore/aos/snapshot_ingest.h"
 #include <errno.h>
@@ -181,6 +182,41 @@ void osd_stm::read_recovery_object(const std::string& object_name, char* buf,
 
 void osd_stm::apply(std::shared_ptr<raft_entry_t> entry, utils::context *complete){
     const uint64_t raft_idx = static_cast<uint64_t>(entry->idx());
+    if (fastblock::aos::unified_log_enabled() && _aos != nullptr &&
+        (entry->type() == RAFT_LOGTYPE_WRITE ||
+         entry->type() == RAFT_LOGTYPE_DELETE)) {
+        // P6: data already on disk from append_as_log; apply only publishes.
+        std::string name;
+        utils::operation_type unlock_type = utils::operation_type::WRITE;
+        if (entry->type() == RAFT_LOGTYPE_WRITE) {
+            osd::write_cmd write;
+            write.ParseFromString(entry->meta());
+            name = write.object_name();
+            unlock_type = utils::operation_type::WRITE;
+        } else {
+            osd::delete_cmd del;
+            del.ParseFromString(entry->meta());
+            name = del.object_name();
+            unlock_type = utils::operation_type::DELETE;
+        }
+        struct pub_ctx {
+            osd_stm* stm;
+            std::string name;
+            utils::operation_type unlock_type;
+            utils::context* complete;
+        };
+        auto* ctx = new pub_ctx{this, std::move(name), unlock_type, complete};
+        _aos->publish_commit(
+            _pool_id, _pg_id, raft_idx,
+            [](void* a, int err) {
+                auto* c = static_cast<pub_ctx*>(a);
+                c->stm->unlock(c->name, c->unlock_type);
+                c->complete->complete(err);
+                delete c;
+            },
+            ctx);
+        return;
+    }
     if(entry->type() == RAFT_LOGTYPE_WRITE){
         osd::write_cmd write;
         write.ParseFromString(entry->meta());
