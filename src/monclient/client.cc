@@ -595,15 +595,34 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
 
         auto osd_it = _osd_map.data.find(osds[i].osdid());
         if (osd_it != _osd_map.data.end()) {
+            const bool local_isup = osd_it->second->isup;
+            const bool remote_isup = osds[i].isup();
+            const bool self =
+              osd_it->second->node_id == _self_osd_id or
+              osds[i].osdid() == _self_osd_id;
+            bool endpoint_changed =
+              osd_it->second->address != osds[i].address() or
+              osd_it->second->sharded_ports.size() !=
+                static_cast<size_t>(osds[i].sharded_ports_size());
+            if (not endpoint_changed) {
+                for (const auto& [sid, p] : osd_it->second->sharded_ports) {
+                    auto pit = osds[i].sharded_ports().find(sid);
+                    if (pit == osds[i].sharded_ports().end() or
+                        pit->second.port() != p.port) {
+                        endpoint_changed = true;
+                        break;
+                    }
+                }
+            }
+
             should_create_connect =
-              not osd_it->second->isup and
-              osds[i].isup() and
-              osd_it->second->node_id != _self_osd_id;
+              not self and remote_isup and (not local_isup or endpoint_changed);
 
             SPDK_DEBUGLOG(
               mon,
-              "osd %d found, osd isup %d,  rsp osd isup %d, should_create_connect is %d\n",
-              osd_it->second->node_id, osd_it->second->isup, osds[i].isup(), should_create_connect);
+              "osd %d found, osd isup %d,  rsp osd isup %d, endpoint_changed %d, should_create_connect is %d\n",
+              osd_it->second->node_id, local_isup, remote_isup,
+              endpoint_changed, should_create_connect);
 
             osd_it->second->node_id = osds[i].osdid();
             osd_it->second->isin = osds[i].isin();
@@ -612,7 +631,7 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
             osd_it->second->sharded_ports.clear();
             make_sharded_ports(sharded_ports, osd_it->second->sharded_ports);
             osd_it->second->address = osds[i].address();
-            if(osd_it->second->isup && !osds[i].isup() && osd_it->second->node_id != _self_osd_id){
+            if(local_isup && !remote_isup && !self){
                 SPDK_DEBUGLOG(mon, "osd %d is down, remove connect to it\n", osds[i].osdid());
 
                 remove_osd_connect(osds[i].osdid(),
@@ -620,7 +639,24 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
                     SPDK_DEBUGLOG(mon, "remove the connect to osd %d\n",node_id);
                   }
                 );
-                osd_it->second->isup = false;
+                should_create_connect = false;
+            } else if (local_isup && remote_isup && endpoint_changed && !self) {
+                const int node_id = osds[i].osdid();
+                SPDK_NOTICELOG(
+                  "osd %d endpoint changed while still up, reconnect\n",
+                  node_id);
+                remove_osd_connect(
+                  node_id,
+                  [this, node_id](void *, int) {
+                    auto it = _osd_map.data.find(node_id);
+                    if (it == _osd_map.data.end() or not it->second or
+                        not it->second->isup) {
+                        return;
+                    }
+                    std::unique_ptr<response_stack> dummy{};
+                    connect_osd(dummy, *(it->second), nullptr);
+                  });
+                should_create_connect = false;
             }
             osd_it->second->isup = osds[i].isup();
         } else {
