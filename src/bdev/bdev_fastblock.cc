@@ -22,6 +22,7 @@
 #include <spdk/likely.h>
 #include <spdk/bdev_module.h>
 #include <spdk/log.h>
+#include <algorithm>
 #include <cstring>
 
 #include "bdev_fastblock.h"
@@ -69,7 +70,11 @@ struct bdev_fastblock_io_channel
 struct bdev_fastblock_io
 {
 	size_t total_len;
+	uint64_t wz_off;
+	uint64_t wz_left;
 };
+
+static constexpr size_t k_write_zeroes_chunk = 128 * 1024;
 
 static void
 bdev_fastblock_free(struct bdev_fastblock *fastblock)
@@ -330,6 +335,11 @@ bdev_fastblock_write(struct spdk_bdev_io *bdev_io,
 		blk_cli = global::blk_clients.at(global::app_thread_shard_id);
 	}
 
+	if (!blk_cli) {
+		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
+		return;
+	}
+
 	blk_cli->write(
       fastblock->pool_id,
       std::string(fastblock->image_name),
@@ -337,6 +347,70 @@ bdev_fastblock_write(struct spdk_bdev_io *bdev_io,
       bdev_io->u.bdev.num_blocks * bdev_io->bdev->blocklen,
       bdev_io,
       bdev_fastblock_write_callback);
+}
+
+static std::shared_ptr<libblk_client>
+bdev_fastblock_blk_cli()
+{
+	auto worker_index = utils::get_current_shard_id();
+	auto blk_cli = global::blk_clients.at(worker_index);
+	if (!blk_cli &&
+	    strcmp("app_thread", spdk_thread_get_name(spdk_get_thread())) == 0) {
+		blk_cli = global::blk_clients.at(global::app_thread_shard_id);
+	}
+	return blk_cli;
+}
+
+static void bdev_fastblock_write_zeroes_next(struct spdk_bdev_io *bdev_io);
+
+static void
+bdev_fastblock_write_zeroes_cb(struct spdk_bdev_io *bdev_io, int32_t res)
+{
+	if (res != errc::success) {
+		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
+		return;
+	}
+	auto *ctx = reinterpret_cast<struct bdev_fastblock_io *>(bdev_io->driver_ctx);
+	if (ctx->wz_left == 0) {
+		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_SUCCESS);
+		return;
+	}
+	bdev_fastblock_write_zeroes_next(bdev_io);
+}
+
+static void
+bdev_fastblock_write_zeroes_next(struct spdk_bdev_io *bdev_io)
+{
+	auto *ctx = reinterpret_cast<struct bdev_fastblock_io *>(bdev_io->driver_ctx);
+	auto *fastblock = (struct bdev_fastblock *)bdev_io->bdev->ctxt;
+	auto blk_cli = bdev_fastblock_blk_cli();
+	if (!blk_cli) {
+		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
+		return;
+	}
+
+	const uint64_t n = std::min(ctx->wz_left, static_cast<uint64_t>(k_write_zeroes_chunk));
+	std::string zeros(n, '\0');
+	const uint64_t off = ctx->wz_off;
+	ctx->wz_off += n;
+	ctx->wz_left -= n;
+	blk_cli->write(fastblock->pool_id, std::string(fastblock->image_name), off,
+				   bdev_io, zeros, bdev_fastblock_write_zeroes_cb);
+}
+
+static void
+bdev_fastblock_write_zeroes(struct spdk_bdev_io *bdev_io)
+{
+	const uint64_t len =
+		bdev_io->u.bdev.num_blocks * bdev_io->bdev->blocklen;
+	if (len == 0) {
+		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_SUCCESS);
+		return;
+	}
+	auto *ctx = reinterpret_cast<struct bdev_fastblock_io *>(bdev_io->driver_ctx);
+	ctx->wz_off = bdev_io->u.bdev.offset_blocks * bdev_io->bdev->blocklen;
+	ctx->wz_left = len;
+	bdev_fastblock_write_zeroes_next(bdev_io);
 }
 
 /*
@@ -405,7 +479,6 @@ static void _bdev_fastblock_submit_request(struct spdk_bdev_io *bdev_io)
 		return;
 
 	case SPDK_BDEV_IO_TYPE_WRITE:
-	case SPDK_BDEV_IO_TYPE_FLUSH:
 		bdev_fastblock_write(bdev_io,
 							 bdev_io->u.bdev.iovs,
 							 bdev_io->u.bdev.iovcnt,
@@ -413,14 +486,26 @@ static void _bdev_fastblock_submit_request(struct spdk_bdev_io *bdev_io)
 							 bdev_io->u.bdev.num_blocks * bdev_io->bdev->blocklen);
 		return;
 
+	case SPDK_BDEV_IO_TYPE_WRITE_ZEROES:
+		bdev_fastblock_write_zeroes(bdev_io);
+		return;
+
+	case SPDK_BDEV_IO_TYPE_FLUSH:
+		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_SUCCESS);
+		return;
+
 	case SPDK_BDEV_IO_TYPE_RESET:
-		// return bdev_fastblock_reset((struct bdev_rbd *)bdev_io->bdev->ctxt,
-		//		      bdev_io);
+		if (fastblock->reset_bdev_io != nullptr) {
+			spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
+			return;
+		}
+		bdev_fastblock_reset(fastblock, bdev_io);
+		return;
 
 	default:
+		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
 		return;
 	}
-	return;
 }
 
 /*
@@ -438,6 +523,7 @@ bdev_fastblock_io_type_supported(void *ctx, enum spdk_bdev_io_type io_type)
 	{
 	case SPDK_BDEV_IO_TYPE_READ:
 	case SPDK_BDEV_IO_TYPE_WRITE:
+	case SPDK_BDEV_IO_TYPE_WRITE_ZEROES:
 	case SPDK_BDEV_IO_TYPE_FLUSH:
 	case SPDK_BDEV_IO_TYPE_RESET:
 		return true;
