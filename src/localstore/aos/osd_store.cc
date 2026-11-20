@@ -21,12 +21,21 @@
 #include <cstdlib>
 #include <cstring>
 #include <new>
+#include <set>
+#include <string>
 #include <tuple>
 #include <vector>
 
 namespace fastblock::aos {
 namespace {
 constexpr uint64_t kRecoverChunk = 256 * 1024;
+
+bool is_recover_io_type(record_type t) {
+  return t == record_type::data || t == record_type::delete_tombstone ||
+         t == record_type::range_tombstone || t == record_type::gc_rewrite;
+}
+
+using recover_idx_key = std::tuple<uint64_t, uint64_t, uint64_t, uint64_t>;
 }
 
 struct osd_store::meta_req {
@@ -77,6 +86,19 @@ struct osd_store::recover_req {
   bool have_seg_table{false};
   std::vector<uint64_t> ckpt_queue;
   size_t ckpt_idx{0};
+  // Indices that already received a type=1 apply (old 4.9.1 pair).
+  std::set<recover_idx_key> paired_indices;
+  struct rebuild_item {
+    uint64_t pool_id{0};
+    uint64_t pg_id{0};
+    uint64_t store_epoch{0};
+    uint64_t index{0};
+    uint64_t phys{0};
+    uint64_t length{0};
+    record_type rec_type{record_type::data};
+  };
+  std::vector<rebuild_item> rebuild_queue;
+  size_t rebuild_i{0};
 };
 
 osd_store::osd_store(device_backend* backend, buffer_mode mode,
@@ -1478,6 +1500,188 @@ void osd_store::recover_load_checkpoints(recover_req* req) {
       req);
 }
 
+uint64_t osd_store::recover_lapply_of(uint64_t pool_id, uint64_t pg_id) const {
+  if (kv_ == nullptr) {
+    return 0;
+  }
+  const std::string key =
+      std::to_string(pool_id) + "." + std::to_string(pg_id) + ".lapply_idx";
+  const auto v = kv_->get(key);
+  if (!v.has_value() || v->empty()) {
+    return 0;
+  }
+  char* end = nullptr;
+  const unsigned long long n = std::strtoull(v->c_str(), &end, 10);
+  if (end == v->c_str()) {
+    return 0;
+  }
+  return static_cast<uint64_t>(n);
+}
+
+void osd_store::recover_rebuild_pending(recover_req* req) {
+  uint64_t wp = req->last_valid_end;
+  if (req->mf_ok && req->mf.data_high_water > wp) {
+    wp = req->mf.data_high_water;
+  }
+  backend_->set_write_pointer(wp);
+  if (alloc_) {
+    alloc_->set_open_cursor_abs(req->last_valid_end);
+  }
+
+  req->rebuild_queue.clear();
+  req->rebuild_i = 0;
+  for (auto& kv : logs_) {
+    log_store* lg = kv.second.get();
+    if (lg == nullptr) {
+      continue;
+    }
+    const uint64_t pool = std::get<0>(kv.first);
+    const uint64_t pgid = std::get<1>(kv.first);
+    const uint64_t epoch = std::get<2>(kv.first);
+    lg->for_each_index([&](const log_store::index_meta& m) {
+      if (!is_recover_io_type(m.rec_type) || m.index == 0 || m.length == 0) {
+        return;
+      }
+      const recover_idx_key key{pool, pgid, epoch, m.index};
+      if (req->paired_indices.find(key) != req->paired_indices.end()) {
+        return;
+      }
+      recover_req::rebuild_item item;
+      item.pool_id = pool;
+      item.pg_id = pgid;
+      item.store_epoch = epoch;
+      item.index = m.index;
+      item.phys = m.phys;
+      item.length = m.length;
+      item.rec_type = m.rec_type;
+      req->rebuild_queue.push_back(item);
+    });
+  }
+  recover_rebuild_next(req);
+}
+
+void osd_store::recover_rebuild_next(recover_req* req) {
+  if (req->rebuild_i >= req->rebuild_queue.size()) {
+    recover_finish(req);
+    return;
+  }
+  const recover_req::rebuild_item item = req->rebuild_queue[req->rebuild_i];
+  const uint32_t bs = backend_->block_size();
+  if (bs == 0 || item.phys % bs != 0) {
+    ++req->rebuild_i;
+    recover_rebuild_next(req);
+    return;
+  }
+  uint64_t to_read = item.length;
+  if (to_read % bs != 0) {
+    to_read = ((to_read + bs - 1) / bs) * bs;
+  }
+  if (to_read == 0 || to_read > req->buf_cap) {
+    ++req->rebuild_i;
+    recover_rebuild_next(req);
+    return;
+  }
+
+  backend_->read(
+      item.phys, req->buf, to_read,
+      [req, item](void* /*a*/, int err) {
+        osd_store* self = req->self;
+        if (err == 0) {
+          data_record rec;
+          size_t consumed = 0;
+          const decode_status st = decode_record(
+              static_cast<const uint8_t*>(req->buf),
+              static_cast<size_t>(item.length), &rec, &consumed);
+          if (st == decode_status::ok && is_recover_io_type(rec.type)) {
+            pg_store* pg =
+                self->ensure_pg(item.pool_id, item.pg_id, item.store_epoch);
+            if (pg != nullptr) {
+              const uint64_t lapply =
+                  self->recover_lapply_of(item.pool_id, item.pg_id);
+              if (rec.type == record_type::gc_rewrite) {
+                if (item.index <= lapply) {
+                  pg->apply_record(rec, item.phys, true);
+                }
+              } else {
+                pg->stash_pending_record(rec, item.phys);
+                if (item.index <= lapply) {
+                  pg->recover_publish_pending(item.index);
+                }
+              }
+            }
+          }
+        }
+        ++req->rebuild_i;
+        self->recover_rebuild_next(req);
+      },
+      req);
+}
+
+void osd_store::recover_finish(recover_req* req) {
+  // Install recovery: prefer activated staging as serving; drop incomplete.
+  for (const auto& kv : pgs_) {
+    pg_store* s = kv.second.get();
+    if (s != nullptr && s->install_activated()) {
+      set_serving_epoch(std::get<0>(kv.first), std::get<1>(kv.first),
+                        std::get<2>(kv.first));
+    }
+  }
+  drop_unsealed_staging();
+  retarget_serving_to_recovered();
+
+  SPDK_NOTICELOG(
+      "aos recover scan done last_valid_end=%lu applied=%u data=%u log=%u "
+      "kv=%u skipped=%u pgs=%zu first_decode=%d first_magic=0x%x kv_keys=%s\n",
+      req->last_valid_end, req->applied, req->applied_data, req->applied_log,
+      req->applied_kv, req->skipped, pgs_.size(), req->first_decode_st,
+      req->first_magic, req->kv_keys[0] ? req->kv_keys : "-");
+
+  // If data scan advanced past the stale manifest high_water, snapshot a
+  // fresh manifest so the next recover can bound the scan sooner.
+  const uint64_t mf_hw = req->mf_ok ? req->mf.data_high_water : 0;
+  const uint64_t last_good = req->last_valid_end;
+  const bool need_hw_snap = last_good > mf_hw;
+
+  meta_free_buf(req->buf, mode_);
+  auto cb = std::move(req->cb);
+  void* a = req->arg;
+  osd_store* self = req->self;
+  delete req;
+
+  if (need_hw_snap && self != nullptr) {
+    struct hw_snap {
+      op_complete cb;
+      void* arg{nullptr};
+    };
+    auto* snap = new (std::nothrow) hw_snap();
+    if (snap == nullptr) {
+      if (cb) {
+        cb(a, 0);
+      }
+      return;
+    }
+    snap->cb = std::move(cb);
+    snap->arg = a;
+    self->persist_manifest(
+        [](void* arg, int /*err*/) {
+          auto* s = static_cast<hw_snap*>(arg);
+          auto c = std::move(s->cb);
+          void* u = s->arg;
+          delete s;
+          // Recover already rebuilt memory state; high_water snap failure
+          // is non-fatal (next boot still full-scans).
+          if (c) {
+            c(u, 0);
+          }
+        },
+        snap);
+    return;
+  }
+  if (cb) {
+    cb(a, 0);
+  }
+}
+
 void osd_store::recover_process(recover_req* req) {
   const uint32_t bs = backend_->block_size();
   const uint64_t seg_size = alloc_ ? alloc_->segment_size() : 0;
@@ -1485,81 +1689,7 @@ void osd_store::recover_process(recover_req* req) {
   const uint64_t cap = backend_->capacity();
   const uint64_t data_end = data_offset_ + data_length_;
 
-  auto finish_ok = [&]() {
-    uint64_t wp = req->last_valid_end;
-    if (req->mf_ok && req->mf.data_high_water > wp) {
-      wp = req->mf.data_high_water;
-    }
-    backend_->set_write_pointer(wp);
-    if (alloc_ && !req->have_seg_table) {
-      alloc_->set_open_cursor_abs(req->last_valid_end);
-    } else if (alloc_ && req->have_seg_table) {
-      alloc_->set_open_cursor_abs(req->last_valid_end);
-    }
-    // Install recovery: prefer activated staging as serving; drop incomplete.
-    for (const auto& kv : pgs_) {
-      pg_store* s = kv.second.get();
-      if (s != nullptr && s->install_activated()) {
-        set_serving_epoch(std::get<0>(kv.first), std::get<1>(kv.first),
-                          std::get<2>(kv.first));
-      }
-    }
-    drop_unsealed_staging();
-    retarget_serving_to_recovered();
-
-    SPDK_NOTICELOG(
-        "aos recover scan done last_valid_end=%lu applied=%u data=%u log=%u "
-        "kv=%u skipped=%u pgs=%zu first_decode=%d first_magic=0x%x kv_keys=%s\n",
-        req->last_valid_end, req->applied, req->applied_data, req->applied_log,
-        req->applied_kv, req->skipped, pgs_.size(), req->first_decode_st,
-        req->first_magic, req->kv_keys[0] ? req->kv_keys : "-");
-
-    // If data scan advanced past the stale manifest high_water, snapshot a
-    // fresh manifest so the next recover can bound the scan sooner.
-    const uint64_t mf_hw =
-        req->mf_ok ? req->mf.data_high_water : 0;
-    const uint64_t last_good = req->last_valid_end;
-    const bool need_hw_snap = last_good > mf_hw;
-
-    meta_free_buf(req->buf, mode_);
-    auto cb = std::move(req->cb);
-    void* a = req->arg;
-    osd_store* self = req->self;
-    delete req;
-
-    if (need_hw_snap && self != nullptr) {
-      struct hw_snap {
-        op_complete cb;
-        void* arg{nullptr};
-      };
-      auto* snap = new (std::nothrow) hw_snap();
-      if (snap == nullptr) {
-        if (cb) {
-          cb(a, 0);
-        }
-        return;
-      }
-      snap->cb = std::move(cb);
-      snap->arg = a;
-      self->persist_manifest(
-          [](void* arg, int /*err*/) {
-            auto* s = static_cast<hw_snap*>(arg);
-            auto c = std::move(s->cb);
-            void* u = s->arg;
-            delete s;
-            // Recover already rebuilt memory state; high_water snap failure
-            // is non-fatal (next boot still full-scans).
-            if (c) {
-              c(u, 0);
-            }
-          },
-          snap);
-      return;
-    }
-    if (cb) {
-      cb(a, 0);
-    }
-  };
+  auto finish_ok = [&]() { recover_rebuild_pending(req); };
 
   auto skip_to_next_segment = [&]() -> bool {
     if (seg_size == 0 || alloc_ == nullptr) {
@@ -1776,6 +1906,27 @@ void osd_store::recover_process(recover_req* req) {
         if (decode_checkpoint_payload(rec.payload, &snap)) {
           pg->apply_checkpoint_snapshot(snap, rec_phys + aligned);
         }
+      } else if (is_recover_io_type(rec.type)) {
+        // 4.9.1: old pair (type=14 already in index_map) → type=1 to head.
+        // Registered P6 IO → register is idempotent; do not head.put.
+        // Unregistered type=1 is the flag=0 apply path; keep today's put.
+        bool publish = true;
+        const uint64_t idx = rec.raft_apply_index;
+        if (idx != 0) {
+          log_store* lg = get_or_create_log(rec.pool_id, rec.pg_id,
+                                            rec.store_epoch);
+          if (lg != nullptr && lg->contains(idx)) {
+            const record_type mapped = lg->rec_type_at(idx);
+            if (mapped == record_type::raft_log_entry) {
+              req->paired_indices.insert(
+                  recover_idx_key{rec.pool_id, rec.pg_id, rec.store_epoch, idx});
+              publish = true;
+            } else if (is_recover_io_type(mapped)) {
+              publish = false;
+            }
+          }
+        }
+        pg->apply_record(rec, rec_phys, publish);
       } else {
         pg->apply_record(rec, rec_phys);
       }
