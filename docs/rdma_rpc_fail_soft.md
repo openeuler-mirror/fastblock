@@ -1005,6 +1005,7 @@ PR1 只要求上面三个计数器可在故障注入后读到（成员变量 + �
 - **依赖：** PR1（字符串匹配已挡住拆连接）
 - **内容：** 引入 `error_class()`；Raft 仅在 `connection` 类错误时 `remove_connect`；删掉 PR1 的字符串匹配。**不改** AOS、不改 snapshot 列表。
 - **验收：** 与 PR1 集群行为相同；不再依赖 `ErrorText` 英文。
+- **落地：** `rpc_error_class` + `is_retryable` / `tears_connection`。`rpc_controller::error_class()` / `is_connection_failure()`；`SetFailed(text, class)`。运输层 `complete_rpc` / `set_failed_msg` 写 class，不再靠调用方扫英文。Raft 仅 `is_connection_failure()`（含 peer_terminating）才 `remove_connect`。`fblock_client::map_rpc_error()`：exhausted→`-ENOMEM`，timeout→`-EAGAIN`，其余仍 `-ENOLINK`。`is_soft_rpc_error` 只认精确 token，删掉 `find()`。
 
 ### PR6 — 可观测性（PR1 三个计数器以外的部分）
 
