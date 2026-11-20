@@ -1,6 +1,7 @@
 /* Copyright (c) 2023-2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
  */
+#include "fastblock/msg/rdma/probe.h"
 #include "fastblock/msg/rdma/types.h"
 
 #include <cstdio>
@@ -71,6 +72,21 @@ int main() {
   EXPECT_TRUE(is_soft_rpc_error("resource_exhausted"));
   EXPECT_TRUE(is_soft_rpc_error("timeout"));
   EXPECT_TRUE(!is_soft_rpc_error("connection terminated"));
+
+  msg::rdma::probe p{};
+  ++p.rpc_pool_exhausted;
+  ++p.rpc_unknown_key;
+  ++p.rpc_timeout;
+  ++p.rpc_pool_too_large;
+  ++p.rpc_complete_ok;
+  ++p.rpc_complete_fail;
+  ++p.rpc_qp_teardown;
+  ++p.rpc_closure_double;
+  const auto dump = p.fmt_rpc();
+  EXPECT_TRUE(dump.find("exhausted=1") != std::string::npos);
+  EXPECT_TRUE(dump.find("unknown_key=1") != std::string::npos);
+  EXPECT_TRUE(dump.find("double=1") != std::string::npos);
+  EXPECT_TRUE(dump.find("qp_teardown=1") != std::string::npos);
 
   if (g_failures != 0) {
     std::fprintf(stderr, "%d fail_soft checks failed\n", g_failures);
