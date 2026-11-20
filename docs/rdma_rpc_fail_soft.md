@@ -996,6 +996,7 @@ PR1 只要求上面三个计数器可在故障注入后读到（成员变量 + �
   - `handle_stop_timeout` 不得 `spdk_thread_exit` 外来 thread  
   - **另段说明：** `ibv_reg_mr` 失败改为构造抛错而非 `SIGABRT`。这是启动路径：`osd.cc:292-294` `create_rpc_server` 已 `catch (std::exception)` 并把 shard 标失败；要写清错误如何到 mon，不要和 `getaddrinfo` 混成一个「顺便」。  
 - **验收：** 构造连接路径在故障注入下不卡住 `rpc_cli_core` poller；OSD shard thread 在 server stop 后仍在；`ibv_reg_mr` 失败时进程不 abort、OSD boot 回调失败。
+- **落地：** 数字 IPv4/IPv6 走 `try_numeric_sockaddr`（`numeric_addr.h`），`socket` 构造不再对字面量调 `rdma_getaddrinfo`；hostname 才阻塞解析，失败抛错。`resolve_route` 不再解引用可能为空的 `_res`。client `handle_emplace_eonnection` catch 构造失败并回调 `cb(false)`，不把异常抛出 poller。`server::_owns_thread`：只有 `server(thread_name, cpumask, …)` 置位；`handle_stop_timeout` 对借来的 shard / app_thread 不 `spdk_thread_exit`。`ibv_reg_mr` 失败 `rollback_ctor` 后抛 `runtime_error`；`osd.cc:create_rpc_server` 已 catch → `on_rpc_server_started(false)` → `service_init` 回调 SIGINT，**不会**走到 `start_monitor`。
 
 ### PR5 — 调用方：`error_class()` 替换字符串匹配
 
