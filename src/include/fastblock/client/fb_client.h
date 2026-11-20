@@ -112,6 +112,7 @@ private:
         int32_t node_id{-1};
         uint32_t port{0};
         std::string addr{};
+        uint64_t connect_gen{0};
         std::chrono::steady_clock::time_point next_connect_retry_at{};
     };
 
@@ -249,6 +250,10 @@ private:
         }
 
         auto& state = it->second;
+        ++state->connect_gen;
+        if (state->conn && !state->conn->is_terminated()) {
+            state->conn->async_shutdown();
+        }
         state->is_connecting = false;
         reset_conn_state(*state, false);
         state->next_connect_retry_at = std::chrono::steady_clock::now();
@@ -269,7 +274,12 @@ private:
             leader->is_valid = false;
             leader->is_onflight = false;
         }
-        invalidate_leader_transport(stack_ptr->leader_osd_key);
+        // NOT_LEADER means the cached identity is stale; the QP may still be
+        // fine. Only tear the transport down when the link itself is dead.
+        if (state == -ENOLINK || state == err::RAFT_ERR_NO_CONNECTED ||
+            state == err::OSD_DOWN) {
+            invalidate_leader_transport(stack_ptr->leader_osd_key);
+        }
 
         stack_ptr->stub = nullptr;
         stack_ptr->is_responsed = false;
@@ -281,17 +291,34 @@ private:
 
     void on_connection_ready(
       const uint64_t conn_id,
+      const uint64_t connect_gen,
       const bool is_connected,
       std::shared_ptr<msg::rdma::client::connection> conn) {
         auto it = _osd_conns.find(conn_id);
         if (it == _osd_conns.end()) {
+            if (conn && !conn->is_terminated()) {
+                conn->async_shutdown();
+            }
             return;
         }
 
         auto& state = it->second;
+        if (state->connect_gen != connect_gen) {
+            SPDK_NOTICELOG(
+              "drop superseded connect to %s:%u gen %lu (current %lu)\n",
+              state->addr.c_str(),
+              state->port,
+              connect_gen,
+              state->connect_gen);
+            if (conn && !conn->is_terminated()) {
+                conn->async_shutdown();
+            }
+            return;
+        }
+
         if (is_connected && conn && has_live_connection(state) && state->conn.get() != conn.get()) {
             SPDK_NOTICELOG(
-              "drop stale reconnected transport to %s:%u\n",
+              "drop extra connect to %s:%u, keep existing live transport\n",
               state->addr.c_str(),
               state->port);
             conn->async_shutdown();
@@ -329,13 +356,16 @@ private:
         }
 
         state->is_connecting = true;
+        ++state->connect_gen;
+        const auto connect_gen = state->connect_gen;
         reset_conn_state(*state, false);
         _stubs.erase(conn_id);
         _rpc_client->emplace_connection(
           addr,
           static_cast<uint16_t>(port),
-          [this, conn_id](bool is_connected, std::shared_ptr<msg::rdma::client::connection> conn) {
-              on_connection_ready(conn_id, is_connected, std::move(conn));
+          [this, conn_id, connect_gen](
+            bool is_connected, std::shared_ptr<msg::rdma::client::connection> conn) {
+              on_connection_ready(conn_id, connect_gen, is_connected, std::move(conn));
           });
     }
 
@@ -422,19 +452,17 @@ private:
 
         auto* mon_osd_info = _mon_cli->get_osd_info(info->leader_id);
         if (mon_osd_info and mon_osd_info->isin and mon_osd_info->isup) {
-            // Ensure sticky home still has a port on the current map.
+            // OSD still up is not proof it is still the Raft leader.
+            // Only invalidate here; get_leader is what sets is_valid.
             const auto ports = fb_client_route::to_shard_port_map(mon_osd_info->sharded_ports);
             if (!fb_client_route::port_for_home_shard(ports, info->home_shard).has_value()) {
                 info->is_valid = false;
-                return;
             }
-            info->is_valid = true;
             return;
         }
 
         auto last_osd_at = _mon_cli->last_cluster_map_at();
         if (info->epoch > last_osd_at) {
-            info->is_valid = true;
             return;
         }
 
@@ -480,7 +508,6 @@ private:
 
         if (!result.changed) {
             info->epoch = _mon_cli->last_cluster_map_at();
-            info->is_valid = true;
             return;
         }
 
@@ -490,7 +517,8 @@ private:
         }
 
         SPDK_NOTICELOG(
-          "refresh leader transport for osd %d home_shard %u from %s:%d to %s:%d\n",
+          "refresh leader transport for osd %d home_shard %u from %s:%d to %s:%d, "
+          "re-query leader\n",
           info->leader_id,
           info->home_shard,
           info->addr.c_str(),
@@ -500,7 +528,8 @@ private:
         info->addr = result.new_addr;
         info->port = result.new_port;
         info->epoch = _mon_cli->last_cluster_map_at();
-        info->is_valid = true;
+        // Replacement boot: same osd id, new process. It is not the old leader.
+        info->is_valid = false;
     }
 
     int send_request(
@@ -683,10 +712,13 @@ public:
           req_stk->leader_osd_key, should_acquire_leader);
 
         if (should_acquire_leader) {
-            _leader_osd.emplace(req_stk->leader_osd_key, std::make_unique<leader_osd_info>());
+            auto [info_it, inserted] = _leader_osd.emplace(
+              req_stk->leader_osd_key, std::make_unique<leader_osd_info>());
             SPDK_DEBUGLOG(libblk, "_leader_osd emplaced %lu\n", req_stk->leader_osd_key);
             auto struct_key = from_leader_key(req_stk->leader_osd_key);
-            if(enqueue_leader_request(struct_key.pool_id, struct_key.pg_id) == err::ERR_NOT_FOUND_POOL){
+            if (info_it->second->is_onflight && !inserted) {
+                // already querying
+            } else if(enqueue_leader_request(struct_key.pool_id, struct_key.pg_id) == err::ERR_NOT_FOUND_POOL){
                 SPDK_ERRLOG("pool %d does not exist.\n", struct_key.pool_id);
 
                 auto cb_handler = utils::overload {
@@ -714,6 +746,8 @@ public:
                 _leader_osd.erase(req_stk->leader_osd_key);
                 delete req_stk;
                 return;
+            } else {
+                info_it->second->is_onflight = true;
             }
         } else if (it->second and not it->second->is_onflight) {
             req_stk->stub = get_stub(it->second->leader_id, it->second->addr, it->second->port);
@@ -876,6 +910,9 @@ public:
         update_leader_state(osd_info_it->second.get());
         if (not osd_info_it->second->is_valid or osd_info_it->second->is_onflight) {
             auto* struct_key = reinterpret_cast<leader_key_type*>(&(head->leader_osd_key));
+            if (osd_info_it->second->is_onflight) {
+                return SPDK_POLLER_BUSY;
+            }
             if(enqueue_leader_request(struct_key->pool_id, struct_key->pg_id) == err::ERR_NOT_FOUND_POOL){
                 SPDK_ERRLOG("pool %d does not exist.\n", struct_key->pool_id);
 
@@ -900,6 +937,8 @@ public:
                 };
                 std::visit(cb_handler, head->resp_cb);
                 _requests.pop_front();
+            } else {
+                osd_info_it->second->is_onflight = true;
             }
 
             return SPDK_POLLER_BUSY;
@@ -1063,8 +1102,9 @@ private:
             return;
         }
 
-        update_leader_state(info_it->second.get());
-        if (not info_it->second->is_valid) {
+        auto* mon_osd = _mon_cli->get_osd_info(osd_info->leader_id);
+        if (!mon_osd || !mon_osd->isin || !mon_osd->isup) {
+            osd_info->is_valid = false;
             SPDK_NOTICELOG(
               "Got a invalid leader osd(%s:%d) with id %d, will retry\n",
               resp->leader_addr().c_str(),
@@ -1081,6 +1121,7 @@ private:
             return;
         }
 
+        osd_info->is_valid = true;
         it->second->ctrlr->Reset();
         _on_flight_leader_requests.erase(it);
     }
