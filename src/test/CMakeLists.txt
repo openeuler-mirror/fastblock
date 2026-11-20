@@ -63,6 +63,15 @@ target_include_directories(rdma_numeric_addr_test
     ${CMAKE_SOURCE_DIR}/src/include)
 add_test(NAME rdma_numeric_addr_test COMMAND rdma_numeric_addr_test)
 
+add_executable(op_type_excl_lock_test
+  op_type_excl_lock_test.cc
+)
+target_include_directories(op_type_excl_lock_test
+  PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/include)
+add_test(NAME op_type_excl_lock_test COMMAND op_type_excl_lock_test)
+
 add_executable(fail_soft_test
   fail_soft_test.cc
 )
