@@ -2773,11 +2773,41 @@ void test_pg_store_drop_pending_isolated_name() {
   EXPECT_EQ(r.err, 0);
   EXPECT_TRUE(store.object_exists("ghost"));
   const uint64_t nid = store.next_object_id();
+  const uint64_t nobj = store.object_count();
   EXPECT_TRUE(nid > 1);
+  EXPECT_TRUE(nobj >= 1);
 
   store.drop_pending_from(3);
   EXPECT_TRUE(!store.object_exists("ghost"));
   EXPECT_EQ(store.next_object_id(), nid);
+  EXPECT_EQ(store.object_count(), nobj - 1);
+
+  // Erase (not mark-deleted): same name must allocate a fresh id.
+  r = {};
+  store.append_uncommitted("ghost", 0, data.data(), data.size(), 4, 1, 0,
+                           on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_EQ(store.next_object_id(), nid + 1);
+  EXPECT_TRUE(store.object_exists("ghost"));
+  store.drop_pending_from(4);
+  EXPECT_TRUE(!store.object_exists("ghost"));
+
+  // Remaining pending ref on the same name keeps the create.
+  r = {};
+  store.append_uncommitted("pair", 0, data.data(), data.size(), 10, 1, 0,
+                           on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  store.append_uncommitted("pair", 4096, data.data(), data.size(), 11, 1, 0,
+                           on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  const uint64_t npair = store.object_count();
+  store.drop_pending_from(11);
+  EXPECT_TRUE(store.object_exists("pair"));
+  EXPECT_EQ(store.object_count(), npair);
+  store.drop_pending_from(10);
+  EXPECT_TRUE(!store.object_exists("pair"));
+  EXPECT_EQ(store.object_count(), npair - 1);
 
   // Committed names are not dropped with later unpublished suffix.
   r = {};
@@ -2789,6 +2819,141 @@ void test_pg_store_drop_pending_isolated_name() {
   EXPECT_EQ(r.err, 0);
   store.drop_pending_from(20);
   EXPECT_TRUE(store.object_exists("keep"));
+}
+
+void test_pg_store_drop_keeps_discarded_committed() {
+  mem_device_backend dev(32 * 1024 * 1024);
+  pg_id id{1, 0, 1};
+  std::vector<char> data(4096, 'D');
+  {
+    pg_store store(&dev, id);
+    sync_result r;
+    store.write("hole", 0, data.data(), data.size(), 1, 0, on_done, &r);
+    EXPECT_EQ(r.err, 0);
+    r = {};
+    store.discard("hole", 0, 4096, 2, 0, on_done, &r);
+    EXPECT_EQ(r.err, 0);
+    r = {};
+    store.checkpoint(on_done, &r);
+    EXPECT_EQ(r.err, 0);
+  }
+
+  pg_store store2(&dev, id);
+  sync_result rr;
+  store2.recover(on_done, &rr);
+  EXPECT_EQ(rr.err, 0);
+  EXPECT_TRUE(store2.object_exists("hole"));
+  const uint64_t nobj = store2.object_count();
+  const uint64_t nid = store2.next_object_id();
+
+  rr = {};
+  store2.append_uncommitted("hole", 0, data.data(), data.size(), 30, 1, 0,
+                            on_done, &rr);
+  EXPECT_EQ(rr.err, 0);
+  store2.drop_pending_from(30);
+  EXPECT_TRUE(store2.object_exists("hole"));
+  EXPECT_EQ(store2.object_count(), nobj);
+  EXPECT_EQ(store2.next_object_id(), nid);
+}
+
+class defer_flush_backend final : public device_backend {
+public:
+  explicit defer_flush_backend(uint64_t cap) : inner_(cap) {}
+
+  uint32_t block_size() const override { return inner_.block_size(); }
+  uint64_t write_pointer() const override { return inner_.write_pointer(); }
+  void set_write_pointer(uint64_t bytes) override {
+    inner_.set_write_pointer(bytes);
+  }
+  uint64_t capacity() const override { return inner_.capacity(); }
+
+  void append(void* data, uint64_t nbytes, append_complete cb,
+              void* arg) override {
+    inner_.append(data, nbytes, std::move(cb), arg);
+  }
+  void write_at(uint64_t phys_offset, void* data, uint64_t nbytes,
+                append_complete cb, void* arg) override {
+    inner_.write_at(phys_offset, data, nbytes, std::move(cb), arg);
+  }
+  void read(uint64_t phys_offset, void* data, uint64_t nbytes, op_complete cb,
+            void* arg) override {
+    inner_.read(phys_offset, data, nbytes, std::move(cb), arg);
+  }
+  void flush(op_complete cb, void* arg) override {
+    flush_cb_ = std::move(cb);
+    flush_arg_ = arg;
+    has_flush_ = true;
+  }
+
+  bool has_deferred_flush() const { return has_flush_; }
+  void fire_flush(int err = 0) {
+    if (!has_flush_) {
+      return;
+    }
+    has_flush_ = false;
+    auto cb = std::move(flush_cb_);
+    void* a = flush_arg_;
+    flush_arg_ = nullptr;
+    if (cb) {
+      cb(a, err);
+    }
+  }
+
+private:
+  mem_device_backend inner_;
+  op_complete flush_cb_;
+  void* flush_arg_{nullptr};
+  bool has_flush_{false};
+};
+
+void test_pg_store_drop_inflight_uncommitted() {
+  defer_flush_backend dev(32 * 1024 * 1024);
+  pg_store store(&dev, pg_id{1, 0, 1});
+  std::vector<char> data(4096, 'R');
+  sync_result r;
+  store.append_uncommitted("race", 0, data.data(), data.size(), 7, 1, 0,
+                           on_done, &r);
+  EXPECT_TRUE(!r.done);
+  EXPECT_TRUE(store.busy());
+  EXPECT_TRUE(dev.has_deferred_flush());
+  EXPECT_TRUE(store.object_exists("race"));
+  const uint64_t nid = store.next_object_id();
+
+  store.drop_pending_from(7);
+  EXPECT_TRUE(!store.object_exists("race"));
+  EXPECT_EQ(store.object_count(), 0u);
+  EXPECT_EQ(store.next_object_id(), nid);
+
+  dev.fire_flush();
+  EXPECT_TRUE(r.done);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(!store.object_exists("race"));
+  EXPECT_EQ(store.object_count(), 0u);
+
+  uint64_t live = 0;
+  store.for_each_live_extent([&](uint64_t /*phys*/, uint64_t len) {
+    if (len == 4096) {
+      ++live;
+    }
+  });
+  EXPECT_EQ(live, 0u);
+
+  // Same index after truncate is a new generation and may publish.
+  r = {};
+  store.append_uncommitted("reused", 0, data.data(), data.size(), 7, 2, 0,
+                           on_done, &r);
+  EXPECT_TRUE(dev.has_deferred_flush());
+  dev.fire_flush();
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(store.object_exists("reused"));
+  r = {};
+  store.publish_commit(7, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  std::vector<char> out(4096, 0);
+  r = {};
+  store.read("reused", 0, out.data(), out.size(), on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(out == data);
 }
 
 void test_pg_store_write_still_immediately_readable() {
@@ -2900,6 +3065,8 @@ int main() {
   test_pg_store_append_uncommitted_not_readable();
   test_pg_store_publish_commit_readable();
   test_pg_store_drop_pending_isolated_name();
+  test_pg_store_drop_keeps_discarded_committed();
+  test_pg_store_drop_inflight_uncommitted();
   test_pg_store_write_still_immediately_readable();
   test_pg_store_write_phys_uses_header_len();
 
