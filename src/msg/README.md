@@ -28,7 +28,7 @@ ninja sock_frame_test && ./src/test/sock_frame_test
 ./src/msg/demo/sock_client -C src/msg/demo/sock_client.json
 ```
 
-CMake 开关：`FASTBLOCK_WITH_RDMA`（默认随是否找到 mlx5）。`OFF` 时跳过 osd/raft/client/bdev/tools，仍可编 `sock_*` 与 `sock_frame_test`。
+CMake 开关：`FASTBLOCK_WITH_RDMA`（默认随是否找到 mlx5）。`OFF` 时不链 mlx5，OSD / nvmf / Raft 走 sock；RDMA demo 与 `rpc_bench` 跳过。
 
 ## 模块配置
 
