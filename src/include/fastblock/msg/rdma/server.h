@@ -153,6 +153,10 @@ public:
         size_t data_memory_pool_capacity{16384};
         size_t data_memory_pool_element_size{8192};
         size_t per_post_recv_num{512};
+        size_t pool_low_watermark{0};
+        size_t pool_high_watermark{0};
+        size_t reserved_per_connection{0};
+        size_t reserved_priority{0};
         std::chrono::system_clock::duration rpc_timeout{
           std::chrono::microseconds{default_rpc_timeout_us}};
         std::chrono::system_clock::duration shutdown_timeout{std::chrono::microseconds{0}};
@@ -167,6 +171,10 @@ public:
             fb_rpc_server_print(data_memory_pool_capacity, o, os);
             fb_rpc_server_print(data_memory_pool_element_size, o, os);
             fb_rpc_server_print(per_post_recv_num, o, os);
+            fb_rpc_server_print(pool_low_watermark, o, os);
+            fb_rpc_server_print(pool_high_watermark, o, os);
+            fb_rpc_server_print(reserved_per_connection, o, os);
+            fb_rpc_server_print(reserved_priority, o, os);
 
             auto rpc_timeout_interval = std::chrono::duration_cast<std::chrono::microseconds>(o.rpc_timeout).count();
             fb_rpc_server_print_suf(rpc_timeout_us, rpc_timeout_interval, "us", os);
@@ -192,6 +200,10 @@ public:
         conf_or_server(conf, opts, data_memory_pool_capacity);
         conf_or_server(conf, opts, data_memory_pool_element_size);
         conf_or_server(conf, opts, per_post_recv_num);
+        conf_or_server(conf, opts, pool_low_watermark);
+        conf_or_server(conf, opts, pool_high_watermark);
+        conf_or_server(conf, opts, reserved_per_connection);
+        conf_or_server(conf, opts, reserved_priority);
 
         if (conf.count("msg_server_rpc_timeout_us") != 0) {
             auto timeout_us = conf.get_child("msg_server_rpc_timeout_us").get_value<int64_t>();
@@ -246,6 +258,13 @@ public:
         _pd->value(), "srv_data",
         _opts->data_memory_pool_capacity,
         _opts->data_memory_pool_element_size, 0, _sock_id)} {
+        pool_quota q{};
+        q.low_watermark = _opts->pool_low_watermark;
+        q.high_watermark = _opts->pool_high_watermark;
+        q.reserved_per_connection = _opts->reserved_per_connection;
+        q.reserved_priority = _opts->reserved_priority;
+        _meta_pool->configure_quota(q);
+        _data_pool->configure_quota(q);
         if (_opts->bind_address.empty()) {
             auto ipv4_address = _dev->get_ipv4(_opts->ep->device_name);
 
@@ -354,6 +373,8 @@ private:
     }
 
     void close_connection(connection_record* conn) {
+        _meta_pool->remove_connection();
+        _data_pool->remove_connection();
         conn->recv_pool->put_bulk(std::move(conn->recv_ctx), _opts->per_post_recv_num);
         auto* sock_cm_id = conn->sock->id();
         auto dis_id = conn->dispatch_id.dispatch_id();
@@ -455,6 +476,8 @@ private:
             _opts->per_post_recv_num,
             _opts->metadata_memory_pool_element_size, 0, _sock_id));
         per_post_recv(conn.get());
+        _meta_pool->add_connection();
+        _data_pool->add_connection();
 
         _connections.emplace(conn->sock->id(), conn);
         _cqe_dispatch_map.emplace(conn->dispatch_id.dispatch_id(), conn);
