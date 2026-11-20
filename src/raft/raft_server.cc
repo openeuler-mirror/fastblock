@@ -31,6 +31,7 @@
 #include "utils/md5.h"
 
 #include "fastblock/monclient/client.h"
+#include "fastblock/msg/channel.h"
 
 constexpr long recovery_max_entry_num = 100;
 
@@ -1686,15 +1687,45 @@ int raft_server_t::raft_send_requestvote(std::shared_ptr<raft_node> node)
     return 0;
 }
 
+namespace {
+
+size_t entry_oob_bytes(const raft_entry_t& entry) {
+    return entry.data().size();
+}
+
+template<typename Entry>
+bool pack_entry_with_budget(msg_appendentries_t* ae, Entry&& entry, size_t budget, size_t& used) {
+    const size_t sz = entry_oob_bytes(entry);
+    if (ae->entries_size() > 0 && used + sz > budget) {
+        return false;
+    }
+    *ae->add_entries() = std::forward<Entry>(entry);
+    used += sz;
+    return true;
+}
+
+} // namespace
+
 void raft_server_t::_raft_get_entries_from_idx(raft_index_t start_index, raft_index_t end_index, msg_appendentries_t* ae)
 {
     std::vector<std::shared_ptr<raft_entry_t>> entrys;
     int num = end_index - start_index + 1;
     raft_get_log()->log_get_from_idx(start_index, num, entrys);
+    const size_t budget = msg::ae_oob_budget();
+    size_t used = 0;
     SPDK_INFOLOG(pg_group, "at [%ld, %ld] get %lu entry\n", start_index, end_index, entrys.size());
     for(auto entry : entrys){
-        auto entry_ptr = ae->add_entries();
-        *entry_ptr = *entry;
+        if (!pack_entry_with_budget(ae, *entry, budget, used)) {
+            SPDK_INFOLOG(
+              pg_group,
+              "sock AE budget %zu cut after %d entries (%zu bytes) in [%ld, %ld]\n",
+              budget,
+              ae->entries_size(),
+              used,
+              start_index,
+              end_index);
+            break;
+        }
     }
 }
 
@@ -2876,9 +2907,12 @@ void raft_server_t::do_recovery(std::shared_ptr<raft_node> node){
             return;
         }
         msg_appendentries_t*ae = create_appendentries(node, node->raft_node_get_next_idx());
+        const size_t budget = msg::ae_oob_budget();
+        size_t used = 0;
         for(auto &entry : entries){
-            auto entry_ptr = ae->add_entries();
-            *entry_ptr = std::move(entry);
+            if (!pack_entry_with_budget(ae, std::move(entry), budget, used)) {
+                break;
+            }
         }
         if(_client.send_appendentries(this, node->raft_node_get_id(), ae) != err::E_SUCCESS){
             delete ae;
@@ -2894,9 +2928,12 @@ void raft_server_t::do_recovery(std::shared_ptr<raft_node> node){
         msg_appendentries_t*ae = create_appendentries(node, next_idx);
         SPDK_DEBUGLOG(pg_group, "read %ld entry first: %ld from cache for recovery to node %d. entry_num: %ld\n",
                 entries.size(), next_idx, node->raft_node_get_id(), entry_num);
+        const size_t budget = msg::ae_oob_budget();
+        size_t used = 0;
         for(auto entry : entries){
-            auto entry_ptr = ae->add_entries();
-            *entry_ptr = *entry;
+            if (!pack_entry_with_budget(ae, *entry, budget, used)) {
+                break;
+            }
         }
         if(_client.send_appendentries(this, node->raft_node_get_id(), ae) != err::E_SUCCESS){
             delete ae;
