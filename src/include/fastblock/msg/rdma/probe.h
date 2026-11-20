@@ -11,11 +11,14 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 #include "fastblock/utils/fmt.h"
 
 namespace msg {
 namespace rdma {
+
+static constexpr int64_t default_rpc_stats_dump_interval_s{10};
 
 class probe {
 
@@ -54,10 +57,18 @@ public:
         received_sent_wc += n;
     }
 
-    std::string fmt() {
+    std::string fmt() const {
         return FB_FMT_6(
           "{posted_send_wr: %1%, posted_receive_wr: %2%, send_queue_depth: %3%, receive_queue_depth: %4%, received_cqe: %5%, received_sent_wc: %6%}",
           posted_send_wr, posted_receive_wr, send_queue_depth, receive_queue_depth, received_cqe, received_sent_wc);
+    }
+
+    std::string fmt_rpc() const {
+        return FB_FMT_7(
+          "exhausted=%1% unknown_key=%2% timeout=%3% too_large=%4% ok=%5% fail=%6% qp_teardown=%7%",
+          rpc_pool_exhausted, rpc_unknown_key, rpc_timeout, rpc_pool_too_large,
+          rpc_complete_ok, rpc_complete_fail, rpc_qp_teardown) +
+          FB_FMT_1(" double=%1%", rpc_closure_double);
     }
 
 public:
@@ -68,6 +79,15 @@ public:
     int64_t receive_queue_depth{0};
     int64_t received_cqe{0};
     int64_t received_sent_wc{0};
+
+    uint64_t rpc_pool_exhausted{0};
+    uint64_t rpc_unknown_key{0};
+    uint64_t rpc_timeout{0};
+    uint64_t rpc_pool_too_large{0};
+    uint64_t rpc_complete_ok{0};
+    uint64_t rpc_complete_fail{0};
+    uint64_t rpc_qp_teardown{0};
+    uint64_t rpc_closure_double{0};
 };
 
 } // namespace rdma
