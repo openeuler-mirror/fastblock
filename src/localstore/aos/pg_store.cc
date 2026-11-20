@@ -503,6 +503,17 @@ bool pg_store::object_exists(const std::string& name) const {
   return !oit->second.deleted;
 }
 
+int pg_store::name_of(uint64_t object_id, std::string* name) const {
+  auto it = objects_.find(object_id);
+  if (it == objects_.end() || it->second.name.empty()) {
+    return -ENOENT;
+  }
+  if (name != nullptr) {
+    *name = it->second.name;
+  }
+  return 0;
+}
+
 void pg_store::apply_rewrite_phys(uint64_t object_id, uint64_t logical_offset,
                                   uint64_t len, uint64_t new_data_phys) {
   auto oit = objects_.find(object_id);
