@@ -19,8 +19,10 @@
 
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <numeric>
 #include <memory>
+#include <string_view>
 #include <vector>
 
 namespace msg {
@@ -101,20 +103,11 @@ public:
     transport_data& operator=(transport_data&&) = delete;
 
     ~transport_data() noexcept {
-        if (_meta_pool) {
-            for (auto* mr : _metas) {
-                _meta_pool->put(mr);
-            }
-        }
-
-        for (auto* mr : _datas) {
-            _data_pool->put(mr);
-        }
-
+        release_allocated();
         SPDK_DEBUGLOG(
           msg,
           "data pool size: %lu, meta pool size: %ld\n",
-          _data_pool->size(),
+          _data_pool ? _data_pool->size() : 0,
           _meta_pool ? _meta_pool->size() : -1);
     }
 
@@ -182,35 +175,30 @@ public:
         return _is_inlined;
     }
 
+    bool prepared() const noexcept { return _prepared; }
+
+    bool too_large() const noexcept { return _too_large; }
+
     bool is_ready() noexcept {
-        bool is_ready{false};
-
         if (not _is_inlined) {
-            is_ready = (_metas.size() == _meta_count) and (_datas.size() == _data_count);
-        } else {
-            is_ready = not _metas.empty();
+            return _prepared and (_metas.size() == _meta_count) and
+                   (_datas.size() == _data_count);
         }
+        return _prepared and not _metas.empty();
+    }
 
-        if (is_ready) {
-            return true;
-        }
-
-        if (not has_enough_memory()) {
-            SPDK_DEBUGLOG(
-              msg,
-              "no enough memory, _data_count: %ld, _data_pool size: %ld, _meta_count: %ld, _meta_pool size: %ld\n",
-              _data_count, _data_pool->size(), _meta_count,
-              _meta_pool ? _meta_pool->size() : -1);
-            return false;
-        }
-
-        alloc_request_data();
-
-        return true;
+    std::vector<memory_pool<::ibv_send_wr>::net_context*> release_data_contexts() {
+        std::vector<memory_pool<::ibv_send_wr>::net_context*> out;
+        out.swap(_datas);
+        return out;
     }
 
     [[gnu::always_inline]] char* serialized_buf() noexcept {
         return _serialized_buf.get();
+    }
+
+    [[gnu::always_inline]] char* data_head() noexcept {
+        return _data_head;
     }
 
     [[gnu::always_inline]] size_t serilaized_size() noexcept {
@@ -271,32 +259,57 @@ public:
             ++_last_rm_info_index;
         }
 
-        if (data->serial_no + 1 == data->metadata_count) {
+        if (data->serial_no < 64) {
+            _seen_serials |= (1ull << data->serial_no);
+        }
+        _expected_serials = data->metadata_count;
+        const uint64_t need =
+          _expected_serials >= 64
+            ? ~uint64_t{0}
+            : ((_expected_serials == 0)
+                 ? 0
+                 : ((uint64_t{1} << _expected_serials) - 1));
+        if (_expected_serials > 0 && _expected_serials <= 64 &&
+            (_seen_serials & need) == need) {
             _is_metadata_complete = true;
             _serialized_size = _transport_size - 2 * _rdma_read_tag_length;
-            if (has_enough_memory()) {
-                alloc_reply_data();
+            if (exceeds_pool_capacity()) {
+                _too_large = true;
+                _prepared = false;
+            } else if (not alloc_reply_data()) {
+                _prepared = false;
+                SPDK_NOTICELOG(
+                  "Not enough memory for reply transport, need data element is %ld, but has %ld\n",
+                  _data_count, _data_pool ? _data_pool->size() : 0);
             }
         }
     }
 
-    void serialize_data(void* meta_src, const size_t meta_size, const google::protobuf::Message* request) {
+    void serialize_data(void* meta_src, const size_t meta_size,
+                        const google::protobuf::Message* request,
+                        std::string_view payload = {}) {
         std::ptrdiff_t off{0};
         if (meta_src) {
-            off = meta_size;
+            off = static_cast<std::ptrdiff_t>(meta_size);
         }
 
         auto ser_size = request->ByteSizeLong();
+        const size_t body_size = ser_size + payload.size();
         if (_is_inlined) {
             auto* data = reinterpret_cast<inline_data*>(_metas[0]->mr->addr);
             auto* content = reinterpret_cast<char*>(data) + inline_data_header_size;
             if (meta_src) {
                 std::memcpy(content, meta_src, meta_size);
             }
-            request->SerializeToArray(content + off, ser_size);
+            request->SerializeToArray(content + off, static_cast<int>(ser_size));
+            if (!payload.empty()) {
+                std::memcpy(content + off + static_cast<std::ptrdiff_t>(ser_size),
+                            payload.data(), payload.size());
+            }
             data->io_length = static_cast<uint32_t>(ser_size);
-            SPDK_DEBUGLOG(msg, "serialized size is %lu + %d\n", meta_size, data->io_length);
-
+            SPDK_DEBUGLOG(msg, "serialized size is %lu + %lu + payload %lu\n",
+                          meta_size, ser_size, payload.size());
+            (void)body_size;
             return;
         }
 
@@ -304,7 +317,13 @@ public:
         if (meta_src) {
             std::memcpy(_serialized_buf.get(), meta_src, meta_size);
         }
-        request->SerializeToArray(_serialized_buf.get() + off, ser_size);
+        request->SerializeToArray(_serialized_buf.get() + off,
+                                  static_cast<int>(ser_size));
+        if (!payload.empty()) {
+            std::memcpy(_serialized_buf.get() + off +
+                          static_cast<std::ptrdiff_t>(ser_size),
+                        payload.data(), payload.size());
+        }
 
         fill_rdma_read_tag(&_complete_tag);
         std::ptrdiff_t cpy_off{_rdma_read_tag_length};
@@ -330,37 +349,51 @@ public:
         std::memcpy(content, meta, reply_meta_size);
     }
 
-    bool unserialize_data(google::protobuf::Message* m, const std::ptrdiff_t start_off = 0) {
+    bool unserialize_data(google::protobuf::Message* m,
+                          const std::ptrdiff_t start_off = 0,
+                          size_t envelope_size = 0,
+                          std::string_view* payload = nullptr) {
+        const char* body = nullptr;
+        size_t body_len = 0;
         if (_data_count == 1) {
-            return m->ParseFromArray(
-              _data_head + start_off,
-              _serialized_size - start_off);
-        }
+            body = _data_head + start_off;
+            body_len = _serialized_size - static_cast<size_t>(start_off);
+        } else {
+            _serialized_buf = std::make_unique<char[]>(_serialized_size);
+            auto cpy_off = start_off + _rdma_read_tag_length;
 
-        _serialized_buf = std::make_unique<char[]>(_serialized_size);
-        auto cpy_off = start_off + _rdma_read_tag_length;
+            size_t copied{0};
+            size_t cpy_len{_data_chunk_size - cpy_off};
+            for (size_t i{0}; i < _data_count - 1; ++i) {
+                std::memcpy(
+                  _serialized_buf.get() + copied,
+                  reinterpret_cast<char*>(_datas[i]->mr->addr) + cpy_off,
+                  cpy_len);
 
-        size_t copied{0};
-        size_t cpy_len{_data_chunk_size - cpy_off};
-        for (size_t i{0}; i < _data_count - 1; ++i) {
+                copied += cpy_len;
+                cpy_off = 0;
+                cpy_len = std::min(_data_chunk_size - cpy_off,
+                                   _serialized_size - start_off - copied);
+            }
+
+            auto last_cpy_length = _serialized_size - copied;
             std::memcpy(
               _serialized_buf.get() + copied,
-              reinterpret_cast<char*>(_datas[i]->mr->addr) + cpy_off,
-              cpy_len);
-
-            copied += cpy_len;
-            cpy_off = 0;
-            cpy_len = std::min(_data_chunk_size - cpy_off, _serialized_size - start_off - copied);
+              _datas[_data_count - 1]->mr->addr,
+              last_cpy_length);
+            body = _serialized_buf.get();
+            body_len = _serialized_size - static_cast<size_t>(start_off);
         }
 
-        // handle last chunk
-        auto last_cpy_length = _serialized_size - copied;
-        std::memcpy(
-          _serialized_buf.get() + copied,
-          _datas[_data_count - 1]->mr->addr,
-          last_cpy_length);
-
-        return m->ParseFromArray(_serialized_buf.get(), _serialized_size - start_off);
+        if (envelope_size == 0 || envelope_size > body_len) {
+            envelope_size = body_len;
+        }
+        if (payload != nullptr && body_len > envelope_size) {
+            *payload = std::string_view(body + envelope_size, body_len - envelope_size);
+        } else if (payload != nullptr) {
+            *payload = {};
+        }
+        return m->ParseFromArray(body, static_cast<int>(envelope_size));
     }
 
     bool mark_bad_read(::ibv_send_wr* bad) noexcept {
@@ -496,7 +529,7 @@ private:
 
     bool has_enough_memory() noexcept {
         if (not _is_inlined) {
-            auto ret = _data_count <= _data_pool->size();
+            auto ret = _data_pool and _data_count <= _data_pool->size();
             if (_meta_pool) {
                 ret &= _meta_count <= _meta_pool->size();
             }
@@ -504,7 +537,40 @@ private:
             return ret;
         }
 
-        return _meta_count <= _meta_pool->size();
+        return _meta_pool and _meta_count <= _meta_pool->size();
+    }
+
+    bool exceeds_pool_capacity() const noexcept {
+        if (_data_pool and _data_count > _data_pool->capacity()) {
+            return true;
+        }
+        if (_meta_pool and _meta_count > _meta_pool->capacity()) {
+            return true;
+        }
+        return false;
+    }
+
+    void release_allocated() noexcept {
+        if (_meta_pool) {
+            for (auto* mr : _metas) {
+                if (mr) {
+                    _meta_pool->put(mr);
+                }
+            }
+        }
+        if (_data_pool) {
+            for (auto* mr : _datas) {
+                if (mr) {
+                    _data_pool->put(mr);
+                }
+            }
+        }
+        _metas.clear();
+        _datas.clear();
+        _head_tag = nullptr;
+        _tail_tag = nullptr;
+        _data_head = nullptr;
+        _prepared = false;
     }
 
     [[gnu::always_inline]] void fill_rdma_read_tag(const rdma_read_tag_type* tag_val) noexcept {
@@ -537,7 +603,6 @@ private:
     }
 
     void init_inlined_metadata() noexcept {
-        _metas[0] = _meta_pool->get();
         auto* m = reinterpret_cast<inline_data*>(_metas[0]->mr->addr);
         m->is_inlined = _inline_tag;
         m->io_length = static_cast<uint32_t>(_transport_size);
@@ -570,33 +635,54 @@ private:
           _correlation_index, 0);
     }
 
-    void alloc_reply_data() {
-        _datas.resize(_data_count);
+    bool alloc_reply_data() {
+        release_allocated();
+        _datas.resize(_data_count, nullptr);
         for (size_t i{0}; i < _data_count; ++i) {
             _datas[i] = _data_pool->get();
+            if (_datas[i] == nullptr) {
+                release_allocated();
+                return false;
+            }
         }
         set_rdma_read_tag();
         fill_rdma_read_tag(&_un_complete_tag);
+        _prepared = true;
         SPDK_DEBUGLOG(msg, "_head_tag is %p, _tail_tag is %p\n", _head_tag, _tail_tag);
+        return true;
     }
 
-    void alloc_request_data() {
+    bool alloc_request_data() {
+        release_allocated();
         if (_is_inlined) {
-            _metas.resize(1);
+            _metas.resize(1, nullptr);
+            _metas[0] = _meta_pool->get();
+            if (_metas[0] == nullptr) {
+                release_allocated();
+                return false;
+            }
             init_inlined_metadata();
-
-            return;
+            _prepared = true;
+            return true;
         }
 
-        _metas.resize(_meta_count);
-        _datas.resize(_data_count);
+        _metas.resize(_meta_count, nullptr);
+        _datas.resize(_data_count, nullptr);
 
         for (size_t i{0}; i < _meta_count; ++i) {
             _metas[i] = _meta_pool->get();
+            if (_metas[i] == nullptr) {
+                release_allocated();
+                return false;
+            }
         }
 
         for (size_t i{0}; i < _data_count; ++i) {
             _datas[i] = _data_pool->get();
+            if (_datas[i] == nullptr) {
+                release_allocated();
+                return false;
+            }
         }
 
         set_rdma_read_tag();
@@ -672,6 +758,8 @@ private:
               _correlation_index, meta_ptr->io_count, meta_ptr->io_length, rm_info_counter + 1, meta_ptr->serial_no,
               max_rm_info, _metas.size(), _meta_count - 1);
         }
+        _prepared = true;
+        return true;
     }
 
     void init() noexcept {
@@ -708,14 +796,23 @@ private:
           "transport size: %ld, _is_inlined: %d, _meta_count: %ld, _data_count: %ld\n",
           _transport_size, _is_inlined, _meta_count, _data_count);
 
-        if (not has_enough_memory()) {
+        if (exceeds_pool_capacity()) {
+            _too_large = true;
+            _prepared = false;
             SPDK_NOTICELOG(
-              "Not enough memory for transport, need meta element is %ld, but has %ld; need data element is %ld, but has %ld\n",
-              _meta_count, _meta_pool->size(), _data_count, _data_pool->size());
+              "RPC too large for transport pool, need meta element is %ld, capacity %ld; need data element is %ld, capacity %ld\n",
+              _meta_count, _meta_pool ? _meta_pool->capacity() : 0,
+              _data_count, _data_pool ? _data_pool->capacity() : 0);
             return;
         }
 
-        alloc_request_data();
+        if (not alloc_request_data()) {
+            _prepared = false;
+            SPDK_NOTICELOG(
+              "Not enough memory for transport, need meta element is %ld, but has %ld; need data element is %ld, but has %ld\n",
+              _meta_count, _meta_pool ? _meta_pool->size() : 0,
+              _data_count, _data_pool ? _data_pool->size() : 0);
+        }
     }
 
 private:
@@ -737,6 +834,10 @@ private:
     std::unique_ptr<remote_info[]> _rm_infos{nullptr};
     uint32_t _last_rm_info_index{0};
     bool _is_metadata_complete{false};
+    bool _prepared{false};
+    bool _too_large{false};
+    uint64_t _seen_serials{0};
+    uint32_t _expected_serials{0};
 
     rdma_read_tag_type* _head_tag{nullptr};
     rdma_read_tag_type* _tail_tag{nullptr};
