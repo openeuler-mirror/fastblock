@@ -70,6 +70,15 @@ int g_failures = 0;
 
 using namespace fastblock::aos;
 
+struct unified_log_guard {
+  bool prev_;
+  explicit unified_log_guard(bool on) {
+    prev_ = unified_log_enabled();
+    set_unified_log_enabled(on);
+  }
+  ~unified_log_guard() { set_unified_log_enabled(prev_); }
+};
+
 void test_crc32_smoke() {
   const char* s = "123456789";
   // ISO-HDLC CRC-32 of "123456789" is 0xCBF43926
@@ -89,7 +98,7 @@ void test_record_roundtrip() {
   in.image_snap_seq = 0;
   in.payload.assign(4096, 'A');
 
-  auto bytes = encode_record(in);
+  auto bytes = encode_record(in, kFormatVersion);
   EXPECT_EQ(bytes.size(), static_cast<size_t>(kRecordHeaderLenV1 + 4096));
 
   data_record out;
@@ -148,15 +157,18 @@ void test_record_default_encode_v2() {
   in.raft_term = 99;
   in.payload.assign(128, 'B');
 
+  // Explicit v2 still encodes; default encode is v3 (log=STM).
+  auto v2 = encode_record(in, kFormatVersion);
+  EXPECT_EQ(v2.size(), static_cast<size_t>(kRecordHeaderLenV1 + 128));
   auto bytes = encode_record(in);
-  EXPECT_EQ(bytes.size(), static_cast<size_t>(kRecordHeaderLenV1 + 128));
+  EXPECT_EQ(bytes.size(), static_cast<size_t>(kRecordHeaderLenV3 + 128));
 
   data_record out;
   size_t consumed = 0;
   auto st = decode_record(bytes.data(), bytes.size(), &out, &consumed);
   EXPECT_TRUE(st == decode_status::ok);
-  EXPECT_EQ(out.header_len, kRecordHeaderLenV1);
-  EXPECT_EQ(out.raft_term, 0u);
+  EXPECT_EQ(out.header_len, kRecordHeaderLenV3);
+  EXPECT_EQ(out.raft_term, 99u);
 }
 
 void test_record_illegal_version_and_header_len() {
@@ -1249,6 +1261,8 @@ void test_pg_store_rewrite_extent() {
 }
 
 void test_osd_store_gc_rewrite_once() {
+  // write() publishes immediately; recover of that path is flag=0.
+  unified_log_guard off(false);
   // Small segments force early seal; survivors stay on sealed segment 0.
   const uint64_t seg = 32 * 1024;
   mem_device_backend dev(8 * 1024 * 1024);
@@ -1371,6 +1385,7 @@ void test_superblock_manifest_codec() {
 }
 
 void test_osd_store_multi_pg_shared_allocator() {
+  unified_log_guard off(false);
   const uint64_t seg = 256 * 1024;
   mem_device_backend dev(8 * 1024 * 1024);
   osd_store osd(&dev, buffer_mode::heap, seg);
@@ -2290,6 +2305,7 @@ void test_osd_store_empty_recover_then_append() {
 }
 
 void test_osd_store_recover_keeps_existing_epoch_512() {
+  unified_log_guard off(false);
   // Live vstart aio bdev is 512-byte blocks; recover must apply 512-aligned
   // object + kv + log records into the same serving epoch.
   mem_device_backend dev(16 * 1024 * 1024, 512);
@@ -2402,6 +2418,7 @@ void test_osd_store_recover_keeps_kv_across_pad_hole() {
 }
 
 void test_osd_store_recover_skips_nonzero_pad_hole() {
+  unified_log_guard off(false);
   // Production recover used to jump to the next 64MiB segment on the first
   // bad_magic. A 0x55 pad hole after early kv records then hid all later
   // object/log records (vstart restart-verify mismatch).
@@ -2490,6 +2507,7 @@ void test_osd_store_recover_vstart_image_if_present() {
 }
 
 void test_osd_store_recover_keeps_existing_epoch() {
+  unified_log_guard off(false);
   mem_device_backend dev(16 * 1024 * 1024);
   osd_store osd(&dev, buffer_mode::heap, 1024 * 1024);
   sync_result r;
@@ -2709,6 +2727,7 @@ void test_log_store_checkpoint_rebuild() {
 }
 
 void test_osd_checkpoint_pass_then_recover() {
+  unified_log_guard off(false);
   const uint64_t seg = 256 * 1024;
   mem_device_backend dev(4 * 1024 * 1024);
   osd_store osd(&dev, buffer_mode::heap, seg);
@@ -3673,11 +3692,6 @@ void test_pg_store_write_phys_uses_header_len() {
   EXPECT_EQ(live_phys, rec_start + hlen);
   EXPECT_EQ(live_phys, payload_phys(rec_start, hlen));
 }
-
-struct unified_log_guard {
-  explicit unified_log_guard(bool on) { set_unified_log_enabled(on); }
-  ~unified_log_guard() { set_unified_log_enabled(false); }
-};
 
 void persist_lapply(kv_engine* kv, uint64_t pool, uint64_t pg, uint64_t lapply) {
   kv->put(std::to_string(pool) + "." + std::to_string(pg) + ".lapply_idx",
