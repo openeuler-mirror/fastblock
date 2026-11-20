@@ -461,6 +461,12 @@ void pg_store::for_each_live_extent(
       }
     }
   }
+  // Latest ObjectMap checkpoint holds names. Without this pin, gc_once can
+  // free that segment after data rewrite, and recover loses object names.
+  if (last_checkpoint_phys_ != 0 &&
+      last_checkpoint_end_ > last_checkpoint_phys_) {
+    fn(last_checkpoint_phys_, last_checkpoint_end_ - last_checkpoint_phys_);
+  }
   // Unpublished appends are not on head; GC must still pin their payload.
   for (const auto& kv : pending_) {
     const pending_op& op = kv.second;
@@ -532,18 +538,19 @@ void pg_store::for_each_snapshot_object(
 }
 
 void pg_store::list_live_object_names(std::vector<std::string>* out) const {
+  list_live_object_names_at(/*raft_idx=*/0, /*image_seq=*/0, out);
+}
+
+void pg_store::list_live_object_names_at(uint64_t raft_idx, uint64_t image_seq,
+                                         std::vector<std::string>* out) const {
   if (out == nullptr) {
     return;
   }
   out->clear();
   out->reserve(objects_.size());
-  for (const auto& kv : objects_) {
-    const object_state& obj = kv.second;
-    if (obj.deleted || obj.name.empty()) {
-      continue;
-    }
-    out->push_back(obj.name);
-  }
+  for_each_snapshot_object(
+      raft_idx, image_seq,
+      [out](const std::string& name, const extent_map&) { out->push_back(name); });
 }
 
 bool pg_store::object_exists(const std::string& name) const {
@@ -1672,6 +1679,50 @@ void pg_store::rewrite_after_read(void* arg, int err) {
     return;
   }
 
+  // Re-emit object_name: GC only pins data extents, so reclaim of the
+  // original name+data segment would otherwise orphan the name on recover.
+  // Keep stage alive until the gc_rewrite payload is copied below.
+  if (!req->name.empty()) {
+    data_record name_rec;
+    name_rec.type = record_type::object_name;
+    name_rec.pool_id = self->id_.pool_id;
+    name_rec.pg_id = self->id_.pg_id;
+    name_rec.store_epoch = self->id_.store_epoch;
+    name_rec.object_id = req->object_id;
+    name_rec.raft_apply_index = req->raft_apply_index;
+    name_rec.image_snap_seq = req->image_snap_seq;
+    name_rec.payload = req->name;
+
+    const uint64_t need =
+        self->seg_.align_up(encode_header_len() + name_rec.payload.size());
+    self->ensure_scratch(need);
+    if (self->scratch_ptr_ == nullptr) {
+      self->free_buf(req->stage);
+      auto cb = std::move(req->cb);
+      void* a = req->arg;
+      delete req;
+      self->finish_op(std::move(cb), a, -ENOMEM);
+      return;
+    }
+    self->seg_.append_record(name_rec, self->scratch_ptr_, self->scratch_cap_,
+                             rewrite_after_name, req);
+    return;
+  }
+  rewrite_after_name(req, 0, 0);
+}
+
+void pg_store::rewrite_after_name(void* arg, uint64_t /*phys*/, int err) {
+  auto* req = static_cast<rewrite_req*>(arg);
+  pg_store* self = req->self;
+  if (err != 0) {
+    self->free_buf(req->stage);
+    auto cb = std::move(req->cb);
+    void* a = req->arg;
+    delete req;
+    self->finish_op(std::move(cb), a, err);
+    return;
+  }
+
   const auto* payload =
       static_cast<const uint8_t*>(req->stage) + req->stage_pad;
   data_record rec;
@@ -1707,6 +1758,8 @@ void pg_store::rewrite_after_append(void* arg, uint64_t phys, int err) {
   auto* req = static_cast<rewrite_req*>(arg);
   pg_store* self = req->self;
   if (err != 0) {
+    self->free_buf(req->stage);
+    self->free_buf(req->data_buf);
     auto cb = std::move(req->cb);
     void* a = req->arg;
     delete req;
