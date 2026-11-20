@@ -79,6 +79,13 @@ void osd_stm::attach_aos(fastblock::aos::osd_store* store, uint64_t pool_id,
 bool osd_stm::uses_aos_objects() const { return _aos != nullptr; }
 
 std::vector<std::string> osd_stm::list_live_objects() {
+    if (_recovery_pinned && _recovery_snap_index != 0) {
+        return list_live_objects_at(_recovery_snap_index);
+    }
+    return list_live_objects_at(/*raft_idx=*/0);
+}
+
+std::vector<std::string> osd_stm::list_live_objects_at(uint64_t raft_idx) {
     std::vector<std::string> names;
     if (_aos == nullptr) {
         return names;
@@ -90,11 +97,11 @@ std::vector<std::string> osd_stm::list_live_objects() {
                        _aos->serving_epoch(_pool_id, _pg_id));
         return names;
     }
-    pg->list_live_object_names(&names);
+    pg->list_live_object_names_at(raft_idx, /*image_seq=*/0, &names);
     SPDK_NOTICELOG(
-        "pg %lu.%lu list_live_objects n=%zu epoch=%lu serving=%lu latest=%lu "
-        "objects=%lu\n",
-        _pool_id, _pg_id, names.size(), pg->id().store_epoch,
+        "pg %lu.%lu list_live_objects n=%zu raft_idx=%lu epoch=%lu "
+        "serving=%lu latest=%lu objects=%lu\n",
+        _pool_id, _pg_id, names.size(), raft_idx, pg->id().store_epoch,
         _aos->serving_epoch(_pool_id, _pg_id),
         _aos->latest_epoch(_pool_id, _pg_id),
         static_cast<unsigned long>(pg->object_count()));
@@ -105,7 +112,7 @@ bool osd_stm::object_exists(const std::string& name) {
     if (_aos == nullptr) {
         return false;
     }
-    auto* pg = _aos->get_active_pg(_pool_id, _pg_id);
+    auto* pg = recovery_pg(_aos, _pool_id, _pg_id);
     return pg != nullptr && pg->object_exists(name);
 }
 
