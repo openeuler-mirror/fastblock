@@ -51,7 +51,9 @@ public:
                   _target_node_id,
                   _shard_id,
                   ctrlr.ErrorText().c_str());
-                result = ctrlr.is_soft_failure() ? -ENOMEM : err::RAFT_ERR_NO_CONNECTED;
+                result = ctrlr.is_soft_failure() ? -ENOMEM
+                  : (ctrlr.is_connection_failure() ? err::RAFT_ERR_NO_CONNECTED
+                                                   : -EAGAIN);
             }
             if (_cb) {
                 _cb(result);
@@ -81,12 +83,14 @@ void heartbeat_source::process_response(){
       [this](){
         auto beat_num = _request->heartbeats_size();
         if (ctrlr.Failed()){
-            const bool soft = ctrlr.is_soft_failure();
-            if (soft) {
-                SPDK_INFOLOG(pg_group, "heartbeat to %d soft-failed: %s\n",
-                             _target_node_id, ctrlr.ErrorText().c_str());
-            } else {
+            const bool tear = ctrlr.is_connection_failure();
+            if (tear) {
                 SPDK_INFOLOG(pg_group, "the network connection to %d is disconnected\n", _target_node_id);
+            } else {
+                SPDK_INFOLOG(pg_group, "heartbeat to %d failed class=%d: %s\n",
+                             _target_node_id,
+                             static_cast<int>(ctrlr.error_class()),
+                             ctrlr.ErrorText().c_str());
             }
             for(int i = 0; i < beat_num; i++){
                 const heartbeat_metadata& meta = _request->heartbeats(i);
@@ -99,7 +103,7 @@ void heartbeat_source::process_response(){
                     node->raft_set_suppress_heartbeats(false);
                 }
             }
-            if (not soft) {
+            if (tear) {
                 _rcp->remove_connect(_shard_id, _target_node_id, [](void *, int ){});
             }
             delete this;
@@ -135,17 +139,12 @@ void process_disconnect_rpc(raft_client_protocol* rcp, raft_server_t *raft, uint
 void process_appendentries_response(raft_server_t *raft, msg_appendentries_response_t* response, 
         msg::rdma::rpc_controller *clr, int32_t target_node_id, raft_client_protocol* rcp, uint32_t shard_id){
     if (clr->Failed()){
-        if (clr->is_soft_failure()) {
-            auto node = raft->raft_get_cfg_node(target_node_id);
-            if(node){
-                node->raft_set_suppress_heartbeats(false);
-            }
-            return;
-        }
-        process_disconnect_rpc(rcp, raft, shard_id, target_node_id);
         auto node = raft->raft_get_cfg_node(target_node_id);
         if(node){
             node->raft_set_suppress_heartbeats(false);
+        }
+        if (clr->is_connection_failure()) {
+            process_disconnect_rpc(rcp, raft, shard_id, target_node_id);
         }
         return;
     }
@@ -155,7 +154,7 @@ void process_appendentries_response(raft_server_t *raft, msg_appendentries_respo
 void process_requestvote_response(raft_server_t *raft, msg_requestvote_response_t* response, 
         msg::rdma::rpc_controller *clr, int32_t target_node_id, raft_client_protocol* rcp, uint32_t shard_id){
     if (clr->Failed()){
-        if (not clr->is_soft_failure()) {
+        if (clr->is_connection_failure()) {
             process_disconnect_rpc(rcp, raft, shard_id, target_node_id);
         }
         return;
@@ -166,7 +165,7 @@ void process_requestvote_response(raft_server_t *raft, msg_requestvote_response_
 void process_timeout_now_response(raft_server_t *raft, timeout_now_response* response, 
         msg::rdma::rpc_controller *clr, int32_t target_node_id, raft_client_protocol* rcp, uint32_t shard_id){
     if (clr->Failed()){
-        if (not clr->is_soft_failure()) {
+        if (clr->is_connection_failure()) {
             process_disconnect_rpc(rcp, raft, shard_id, target_node_id);
         }
         return;
@@ -177,7 +176,7 @@ void process_timeout_now_response(raft_server_t *raft, timeout_now_response* res
 void process_snapshot_check_response(raft_server_t *raft, snapshot_check_response* response, 
         msg::rdma::rpc_controller *clr, int32_t target_node_id, raft_client_protocol* rcp, uint32_t shard_id){
     if (clr->Failed()){
-        if (not clr->is_soft_failure()) {
+        if (clr->is_connection_failure()) {
             process_disconnect_rpc(rcp, raft, shard_id, target_node_id);
         }
         return;
@@ -188,7 +187,7 @@ void process_snapshot_check_response(raft_server_t *raft, snapshot_check_respons
 void process_installsnapshot_response(raft_server_t *raft, installsnapshot_response* response, 
         msg::rdma::rpc_controller *clr, int32_t target_node_id, raft_client_protocol* rcp, uint32_t shard_id){
     if (clr->Failed()){
-        if (not clr->is_soft_failure()) {
+        if (clr->is_connection_failure()) {
             process_disconnect_rpc(rcp, raft, shard_id, target_node_id);
         }
         return;
