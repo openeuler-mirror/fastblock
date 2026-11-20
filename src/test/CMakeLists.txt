@@ -45,6 +45,31 @@ target_link_libraries(disk_log_trim_test
 )
 add_test(NAME disk_log_trim_test COMMAND disk_log_trim_test)
 
+add_executable(fail_soft_test
+  fail_soft_test.cc
+)
+target_include_directories(fail_soft_test
+  PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/include)
+target_link_libraries(fail_soft_test
+  PRIVATE
+    spdk::spdk)
+add_test(NAME fail_soft_test COMMAND fail_soft_test)
+
+add_executable(oob_payload_test
+  oob_payload_test.cc
+)
+target_include_directories(oob_payload_test
+  PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/include)
+target_link_libraries(oob_payload_test
+  PRIVATE
+    osd_msg
+    raft_msg)
+add_test(NAME oob_payload_test COMMAND oob_payload_test)
+
 add_executable(raft_contract_test
   raft_contract_test.cc
 )
