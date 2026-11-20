@@ -20,8 +20,10 @@
 #include "raft/raft_service.h"
 #include "osd/osd_service.h"
 #include "fastblock/msg/channel.h"
+#ifdef FASTBLOCK_WITH_RDMA
 #include "fastblock/msg/rdma/client.h"
-#include "rpc/server.h"
+#include "fastblock/msg/rdma/server.h"
+#endif
 #include "localstore/blob_manager.h"
 #include "localstore/storage_manager.h"
 #include "localstore/aos/aos_runtime.h"
@@ -398,11 +400,13 @@ static void send_osd_boot_request(server_t* ctx) {
 
     std::stringstream ss{};
     ss << "msg_transport: " << msg::transport_name(msg::active_transport()) << "\n";
+#ifdef FASTBLOCK_WITH_RDMA
     if (msg::active_transport() == msg::transport_kind::rdma) {
         auto srv_opt = msg::rdma::server::make_options(ctx->pt);
         auto cli_opt = msg::rdma::client::make_options(ctx->pt);
         ss << *srv_opt << *cli_opt;
     }
+#endif
 
     g_monitor_client->emplace_osd_boot_request(
       ctx->node_id,
