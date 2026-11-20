@@ -4,7 +4,7 @@
 #pragma once
 
 #include "fastblock/msg/channel.h"
-#include "fastblock/msg/rdma/completed_key_ring.h"
+#include "fastblock/msg/completed_key_ring.h"
 #include "fastblock/msg/rpc_controller.h"
 #include "fastblock/msg/sock/frame.h"
 #include "fastblock/msg/sock/options.h"
