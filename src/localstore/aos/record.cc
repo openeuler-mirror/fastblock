@@ -110,8 +110,8 @@ decode_status decode_record(const uint8_t* buf, size_t len, data_record* out,
     return decode_status::bad_magic;
   }
   const uint16_t ver = get_u16(buf + 4);
-  // Accept v1 (object-only era) and v2 (platform log/kv types).
-  if (ver != 1 && ver != 2) {
+  // v1 object-only, v2 platform log/kv, v3 adds raft_term in the fixed header.
+  if (ver != 1 && ver != 2 && ver != 3) {
     return decode_status::bad_version;
   }
 
@@ -120,8 +120,12 @@ decode_status decode_record(const uint8_t* buf, size_t len, data_record* out,
   const uint16_t header_len = get_u16(buf + 8);
   const uint32_t payload_len = get_u32(buf + 10);
 
-  if (header_len != kRecordHeaderLenV1) {
+  if (header_len != kRecordHeaderLenV1 && header_len != kRecordHeaderLenV3) {
     return decode_status::bad_header_len;
+  }
+  // Declared header may be 86; first gate only guaranteed 78 bytes.
+  if (len < static_cast<size_t>(header_len)) {
+    return decode_status::need_more;
   }
   if (len < static_cast<size_t>(header_len) + payload_len) {
     return decode_status::need_more;
@@ -176,6 +180,7 @@ decode_status decode_record(const uint8_t* buf, size_t len, data_record* out,
   if (out) {
     out->type = type;
     out->flags = flags;
+    out->header_len = header_len;
     out->pool_id = get_u64(buf + 14);
     out->pg_id = get_u64(buf + 22);
     out->store_epoch = get_u64(buf + 30);
@@ -183,6 +188,9 @@ decode_status decode_record(const uint8_t* buf, size_t len, data_record* out,
     out->object_offset = get_u64(buf + 46);
     out->raft_apply_index = get_u64(buf + 54);
     out->image_snap_seq = get_u64(buf + 62);
+    // 78B headers have no term slot; 86B stores it after image_snap_seq.
+    out->raft_term =
+        (header_len == kRecordHeaderLenV3) ? get_u64(buf + 70) : 0;
     out->payload.assign(reinterpret_cast<const char*>(payload), payload_len);
   }
 
