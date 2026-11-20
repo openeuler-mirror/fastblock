@@ -502,6 +502,13 @@ public:
 
         void complete_rpc(rpc_request* req, rpc_fail why, const char* detail = nullptr) {
             if (not req or req->completed) {
+                if (req and req->completed) {
+                    ++rdma_probe.rpc_closure_double;
+                    SPDK_INFOLOG(
+                      msg, "rpc %u complete_rpc double, why=%d double=%lu\n",
+                      req->request_key, static_cast<int>(why),
+                      rdma_probe.rpc_closure_double);
+                }
                 return;
             }
             req->completed = true;
@@ -510,29 +517,34 @@ public:
             case rpc_fail::ok:
                 break;
             case rpc_fail::resource_exhausted:
-                ++rpc_pool_exhausted;
+                ++rdma_probe.rpc_pool_exhausted;
                 fail_rpc(req->ctrlr, "resource_exhausted",
                          rpc_error_class::resource_exhausted);
-                SPDK_NOTICELOG(
-                  "rpc %u resource_exhausted, pool_exhausted=%lu\n",
-                  req->request_key, rpc_pool_exhausted);
+                SPDK_WARNLOG(
+                  "rpc %u resource_exhausted method=%s data_free=%zu data_inuse=%zu pool_exhausted=%lu\n",
+                  req->request_key,
+                  req->method ? req->method->name().c_str() : "?",
+                  _data_pool ? _data_pool->size() : 0,
+                  _data_pool ? _data_pool->inuse() : 0,
+                  rdma_probe.rpc_pool_exhausted);
                 break;
             case rpc_fail::timeout:
-                ++rpc_timeout;
+                ++rdma_probe.rpc_timeout;
                 fail_rpc(req->ctrlr, "timeout", rpc_error_class::timeout);
                 SPDK_NOTICELOG(
                   "rpc %u timeout, rpc_timeout=%lu\n",
-                  req->request_key, rpc_timeout);
+                  req->request_key, rdma_probe.rpc_timeout);
                 break;
             case rpc_fail::request_timeout:
-                ++rpc_timeout;
+                ++rdma_probe.rpc_timeout;
                 fail_rpc(req->ctrlr, "request_timeout",
                          rpc_error_class::request_timeout);
                 SPDK_NOTICELOG(
                   "rpc %u request_timeout, rpc_timeout=%lu\n",
-                  req->request_key, rpc_timeout);
+                  req->request_key, rdma_probe.rpc_timeout);
                 break;
             case rpc_fail::too_large:
+                ++rdma_probe.rpc_pool_too_large;
                 fail_rpc(req->ctrlr, "too_large", rpc_error_class::too_large);
                 SPDK_ERRLOG("rpc %u too_large for memory pool\n", req->request_key);
                 break;
@@ -553,6 +565,12 @@ public:
                   detail ? detail : "rpc error",
                   detail ? classify_rpc_error(detail) : rpc_error_class::application);
                 break;
+            }
+
+            if (why == rpc_fail::ok) {
+                ++rdma_probe.rpc_complete_ok;
+            } else {
+                ++rdma_probe.rpc_complete_fail;
             }
 
             if (req->closure) {
@@ -681,6 +699,8 @@ public:
                 return SPDK_POLLER_IDLE;
             }
 
+            maybe_dump_rpc_stats();
+
             auto is_busy = process_control_op();
             auto is_shutdown = process_shutdown();
             if (is_shutdown) {
@@ -716,6 +736,27 @@ public:
             is_busy |= process_free_server();
 
             return is_busy ? SPDK_POLLER_BUSY : SPDK_POLLER_IDLE;
+        }
+
+        void maybe_dump_rpc_stats() {
+            auto now = std::chrono::steady_clock::now();
+            if (now < _next_stats_dump) {
+                return;
+            }
+            _next_stats_dump = now + std::chrono::seconds{default_rpc_stats_dump_interval_s};
+            SPDK_NOTICELOG(
+              "rpc stats peer=%s inflight=%ld data_inuse=%zu data_free=%zu data_wm=%lu "
+              "meta_inuse=%zu meta_free=%zu meta_wm=%lu %s %s\n",
+              fd().peer_address().c_str(),
+              _onflight_rpc_task_size,
+              _data_pool ? _data_pool->inuse() : 0,
+              _data_pool ? _data_pool->size() : 0,
+              _data_pool ? _data_pool->watermark_hits() : 0,
+              _meta_pool ? _meta_pool->inuse() : 0,
+              _meta_pool ? _meta_pool->size() : 0,
+              _meta_pool ? _meta_pool->watermark_hits() : 0,
+              rdma_probe.fmt_rpc().c_str(),
+              rdma_probe.fmt().c_str());
         }
 
         static int connection_poller(void* arg) {
@@ -1105,10 +1146,11 @@ read_done:
                 auto req_key = transport_data::read_correlation_index(recv_ctx);
                 auto req_it = _unresponsed_requests.find(req_key);
                 if (req_it == _unresponsed_requests.end()) {
-                    ++rpc_unknown_key;
-                    SPDK_NOTICELOG(
-                      "unknown rpc key %d, drop and keep QP, unknown_key=%lu\n",
-                      req_key, rpc_unknown_key);
+                    ++rdma_probe.rpc_unknown_key;
+                    SPDK_INFOLOG(
+                      msg,
+                      "unknown rpc key %d wr_id=%lu, drop and keep QP, unknown_key=%lu\n",
+                      req_key, cqe->wr_id, rdma_probe.rpc_unknown_key);
                     post_recv_ctx(recv_ctx, it->first);
                     return true;
                 }
@@ -1414,6 +1456,12 @@ read_done:
     public:
 
         void handle_async_shutdown(const state shutdown_state) {
+            ++rdma_probe.rpc_qp_teardown;
+            SPDK_ERRLOG(
+              "qp teardown %s state=%d qp_teardown=%lu (not unknown_key)\n",
+              fd().peer_address().c_str(),
+              static_cast<int>(shutdown_state),
+              rdma_probe.rpc_qp_teardown);
             FASTBLOCK_DUR_MAP_PRINT(_enqueue_dur_map);
             FASTBLOCK_DUR_MAP_PRINT(_proc_rpc_map);
             _ctrl_ops.push_back(std::make_unique<control_operation>(shutdown_state));
@@ -1524,15 +1572,14 @@ read_done:
         bool _resources_freed{false};
         bool _quota_held{false};
         std::list<quarantined_mr> _mr_quarantine{};
+        std::chrono::steady_clock::time_point _next_stats_dump{
+          std::chrono::steady_clock::now()};
 
         FASTBLOCK_DUR_MAP_CREATE(rpc_request::key_type, _enqueue_dur_map, "enqueue_request");
         FASTBLOCK_DUR_MAP_CREATE(rpc_request::key_type, _proc_rpc_map, "process_rpc_request");
 
     public:
 
-        uint64_t rpc_pool_exhausted{0};
-        uint64_t rpc_unknown_key{0};
-        uint64_t rpc_timeout{0};
         probe rdma_probe{};
         std::list<std::unique_ptr<::ibv_wc>> cqe_list{};
     };
