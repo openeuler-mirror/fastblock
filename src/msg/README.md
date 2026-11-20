@@ -57,7 +57,8 @@
 - *per_post_recv_num*  
     每个连接建立时，均会预先通过 [`ibv_post_recv()`](https://man7.org/linux/man-pages/man3/ibv_post_recv.3.html) *post* *per_post_recv_num* 个 *Recvive WR*  
 - *rpc_timeout_us*  
-    一次 *RPC* 请求的超时时间  
+    一次 *RPC* 请求的超时时间。client / server **代码默认都是 1s**（`1000000`），与本 README 示例一致；json 省略该键即用此默认。  
+    `600s`（`600000000`）只用于长回归 / 等 snapshot，必须在 json 里显式写出。`vstart.sh` 开发默认也是 1s，长回归设 `FASTBLOCK_RPC_TIMEOUT_US=600000000`。
 - *rpc_batch_size*  
     用于限制客户端同时最多发送的 *RPC* 请求数量  
 - *listen_backlog*  
