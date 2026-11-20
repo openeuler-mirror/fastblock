@@ -153,6 +153,11 @@ kv_engine::kv_engine(device_backend* backend,
     , alloc_(std::move(alloc))
     , writer_(backend, alloc_.get(), mode) {}
 
+void kv_engine::rebind_allocator(std::shared_ptr<segment_allocator> alloc) {
+  alloc_ = std::move(alloc);
+  writer_.set_allocator(alloc_.get());
+}
+
 kv_engine::~kv_engine() {
   if (poller_) {
     spdk_poller_unregister(&poller_);
