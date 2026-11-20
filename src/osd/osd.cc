@@ -19,6 +19,8 @@
 #include "osd/partition_manager.h"
 #include "raft/raft_service.h"
 #include "osd/osd_service.h"
+#include "fastblock/msg/channel.h"
+#include "fastblock/msg/rdma/client.h"
 #include "rpc/server.h"
 #include "localstore/blob_manager.h"
 #include "localstore/storage_manager.h"
@@ -67,7 +69,7 @@ typedef struct
 	std::string osd_addr;
 	std::string osd_uuid;
     std::vector<monitor::client::endpoint> monitors{};
-    std::vector<std::unique_ptr<msg::rdma::server>> rpc_servers{};
+    std::vector<std::shared_ptr<msg::server>> rpc_servers{};
     std::function<void(bool)> rpc_servers_started_cb{};
     bool is_server_error{false};
     size_t server_control_counter{0};
@@ -281,17 +283,19 @@ static void on_rpc_server_started(void* arg1, void* arg2) {
 static void create_rpc_server(void* arg1, void* arg2) {
     auto* server = reinterpret_cast<server_t*>(arg1);
     auto shard_id = core_sharded::get_core_sharded().this_shard_id();
-    auto opts = msg::rdma::server::make_options(server->pt);
+    auto kind = msg::parse_transport(server->pt);
     auto saved_port = get_rpc_port(shard_id);
-    opts->port = saved_port.value_or(utils::get_random_port());
+    uint16_t port = saved_port.value_or(utils::get_random_port());
     SPDK_NOTICELOG(
       "Starting rpc server on core %d, shard id %d, listen port is %d\n",
-      ::spdk_env_get_current_core(), shard_id, opts->port);
+      ::spdk_env_get_current_core(), shard_id, port);
 
-    msg::rdma::server* rpc_srv{nullptr};
+    msg::server* rpc_srv{nullptr};
     bool is_ok = false;
     try {
-        server->rpc_servers.at(shard_id) = std::make_unique<msg::rdma::server>(core_sharded::get_thread(shard_id), opts);
+        server->rpc_servers.at(shard_id) = msg::make_server(kind, msg::server_ctor{
+          .thread = core_sharded::get_thread(shard_id),
+          .conf = &server->pt});
         rpc_srv = server->rpc_servers.at(shard_id).get();
         SPDK_NOTICELOG("Created rpc server on core %d\n", shard_id);
     } catch (const std::exception& e) {
@@ -306,21 +310,21 @@ static void create_rpc_server(void* arg1, void* arg2) {
 
     while (1) {
         try {
-            rpc_srv->create_listener(opts->port);
+            rpc_srv->create_listener(port);
             rpc_srv->start();
             SPDK_NOTICELOG("Started rpc server on core %d\n", shard_id);
-            if(save_rpc_port(shard_id, opts->port) != 0){
-                SPDK_WARNLOG("Save rpc port %u for shard %u failed\n", opts->port, shard_id);
+            if(save_rpc_port(shard_id, port) != 0){
+                SPDK_WARNLOG("Save rpc port %u for shard %u failed\n", port, shard_id);
             }
             break;
-        } catch (const msg::rdma::bindException& ) {
-            if(saved_port.has_value() && opts->port == saved_port.value()){
+        } catch (const msg::bind_error& ) {
+            if(saved_port.has_value() && port == saved_port.value()){
                 SPDK_WARNLOG(
                   "Saved rpc port %u for shard %u is unavailable, fallback to random port\n",
-                  opts->port, shard_id);
+                  port, shard_id);
                 saved_port.reset();
             }
-            opts->port = utils::get_random_port();
+            port = utils::get_random_port();
             continue;
         } catch (const std::exception& e) {
             SPDK_ERRLOG("ERROR: Create rpc server failed, %s\n", e.what());
@@ -329,7 +333,7 @@ static void create_rpc_server(void* arg1, void* arg2) {
     }
 
     is_ok = true;
-    server->osd_addr = opts->bind_address;
+    server->osd_addr = rpc_srv->listen_address();
     server->rpc_servers.at(shard_id)->add_service(global_raft_service.get());
     server->rpc_servers.at(shard_id)->add_service(global_osd_service.get());
 
@@ -393,9 +397,12 @@ static void send_osd_boot_request(server_t* ctx) {
     }
 
     std::stringstream ss{};
-    auto srv_opt = msg::rdma::server::make_options(ctx->pt);
-    auto cli_opt = msg::rdma::client::make_options(ctx->pt);
-    ss << *srv_opt << *cli_opt;
+    ss << "msg_transport: " << msg::transport_name(msg::active_transport()) << "\n";
+    if (msg::active_transport() == msg::transport_kind::rdma) {
+        auto srv_opt = msg::rdma::server::make_options(ctx->pt);
+        auto cli_opt = msg::rdma::client::make_options(ctx->pt);
+        ss << *srv_opt << *cli_opt;
+    }
 
     g_monitor_client->emplace_osd_boot_request(
       ctx->node_id,
@@ -443,10 +450,8 @@ static void pm_init(void *arg){
     auto core_no = core_sharded::system::last_core();
     auto cpumask = core_sharded::make_cpumake(core_no);
     auto sockid = ::spdk_env_get_socket_id(core_no);
-    auto opts = msg::rdma::client::make_options(server->pt);
-
     SPDK_NOTICELOG("Start rpc client on core %d\n", core_no);
-    global_conn_cache = std::make_shared<::connect_cache>(cpumask.get(), opts, sockid);
+    global_conn_cache = std::make_shared<::connect_cache>(cpumask.get(), server->pt, sockid);
     global_pm = std::make_shared<partition_manager>(server->node_id, global_conn_cache,
       server->raft_heartbeat_period_time_msec, server->raft_lease_time_msec, server->raft_election_timeout_msec);
       
@@ -824,9 +829,6 @@ static int from_configuration(server_t* server) {
     }
     auto current_osd_id = std::to_string(g_id);
     server->node_id = g_id;
-
-    std::string rdma_device_name = pt.get_child("rdma_device_name").get_value<std::string>();
-    (void)rdma_device_name;
 
     server->bdev_disk = g_bdev_type + current_osd_id;
     server->bdev_type = g_bdev_type;
@@ -1211,10 +1213,14 @@ main(int argc, char *argv[])
 
     try {
         boost::property_tree::read_json(std::string(g_json_conf), osd_server.pt);
+        msg::resolve_transport(osd_server.pt);
     } catch (const std::logic_error& e) {
         std::string err_reason{e.what()};
         std::cerr << "ERROR: Parse json configuration file error, reason is " << err_reason << std::endl;
         block_usage();
+        return -EINVAL;
+    } catch (const std::exception& e) {
+        std::cerr << "ERROR: " << e.what() << std::endl;
         return -EINVAL;
     }
 
