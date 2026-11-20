@@ -65,6 +65,10 @@ public:
         size_t data_memory_pool_capacity{1024};
         size_t data_memory_pool_element_size{8192};
         size_t per_post_recv_num{512};
+        size_t pool_low_watermark{0};
+        size_t pool_high_watermark{0};
+        size_t reserved_per_connection{0};
+        size_t reserved_priority{0};
         std::chrono::system_clock::duration rpc_timeout{
           std::chrono::microseconds{default_rpc_timeout_us}};
         int64_t rpc_batch_size{1024};
@@ -82,6 +86,10 @@ public:
             fb_rpc_client_print(data_memory_pool_capacity, o, os);
             fb_rpc_client_print(data_memory_pool_element_size, o, os);
             fb_rpc_client_print(per_post_recv_num, o, os);
+            fb_rpc_client_print(pool_low_watermark, o, os);
+            fb_rpc_client_print(pool_high_watermark, o, os);
+            fb_rpc_client_print(reserved_per_connection, o, os);
+            fb_rpc_client_print(reserved_priority, o, os);
             fb_rpc_client_print(rpc_batch_size, o, os);
             fb_rpc_client_print(connect_max_retry, o, os);
 
@@ -111,6 +119,10 @@ public:
         conf_or_client(conf, opts, data_memory_pool_capacity);
         conf_or_client(conf, opts, data_memory_pool_element_size);
         conf_or_client(conf, opts, per_post_recv_num);
+        conf_or_client(conf, opts, pool_low_watermark);
+        conf_or_client(conf, opts, pool_high_watermark);
+        conf_or_client(conf, opts, reserved_per_connection);
+        conf_or_client(conf, opts, reserved_priority);
         conf_or_client(conf, opts, rpc_batch_size);
         conf_or_client(conf, opts, connect_max_retry);
 
@@ -424,7 +436,8 @@ public:
               req->request_key,
               req->request->ByteSizeLong() + request_meta_size +
                 req->payload.size(),
-              _meta_pool, _data_pool);
+              _meta_pool, _data_pool,
+              priority_req ? alloc_class::priority : alloc_class::reserved);
             if (not req->request_data->prepared()) {
                 if (req->request_data->too_large()) {
                     complete_rpc(req.get(), rpc_fail::too_large);
@@ -707,6 +720,13 @@ public:
               _opts->metadata_memory_pool_element_size, 0, _sock_id);
             _recv_ctx = std::make_unique<memory_pool<::ibv_recv_wr>::net_context*[]>(
               _opts->per_post_recv_num);
+            if (_meta_pool) {
+                _meta_pool->add_connection();
+            }
+            if (_data_pool) {
+                _data_pool->add_connection();
+            }
+            _quota_held = true;
             _poller.register_poller(connection_poller, this, 0, "rpc_cli_conn");
         }
 
@@ -1303,6 +1323,15 @@ read_done:
                 return;
             }
             _resources_freed = true;
+            if (_quota_held) {
+                if (_meta_pool) {
+                    _meta_pool->remove_connection();
+                }
+                if (_data_pool) {
+                    _data_pool->remove_connection();
+                }
+                _quota_held = false;
+            }
             _poller.unregister_poller();
             SPDK_INFOLOG(msg, "The poller of the connection has been unregistered\n");
 
@@ -1477,6 +1506,7 @@ read_done:
         std::chrono::system_clock::time_point _shutdown_timeout{};
         std::unordered_map<uint64_t, external_send_context> _external_send_ctx{};
         bool _resources_freed{false};
+        bool _quota_held{false};
         std::list<quarantined_mr> _mr_quarantine{};
 
         FASTBLOCK_DUR_MAP_CREATE(rpc_request::key_type, _enqueue_dur_map, "enqueue_request");
@@ -1556,7 +1586,15 @@ public:
       , _data_pool{std::make_shared<memory_pool<::ibv_send_wr>>(
         _pd->value(), FB_FMT_1("%1%_d", name),
         _opts->data_memory_pool_capacity,
-        _opts->data_memory_pool_element_size, 0, _sock_id)} {}
+        _opts->data_memory_pool_element_size, 0, _sock_id)} {
+        pool_quota q{};
+        q.low_watermark = _opts->pool_low_watermark;
+        q.high_watermark = _opts->pool_high_watermark;
+        q.reserved_per_connection = _opts->reserved_per_connection;
+        q.reserved_priority = _opts->reserved_priority;
+        _meta_pool->configure_quota(q);
+        _data_pool->configure_quota(q);
+    }
 
     client(const client&) = delete;
 
