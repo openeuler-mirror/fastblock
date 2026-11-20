@@ -101,6 +101,10 @@ public:
   size_t table_size() const { return table_.size(); }
   size_t pending_ops() const { return op_log_.size(); }
   uint64_t last_checkpoint_phys() const { return last_checkpoint_.phys_offset; }
+  segment_allocator* allocator() const { return alloc_.get(); }
+
+  /** recover() may replace osd_store's allocator; keep writer on the live one. */
+  void rebind_allocator(std::shared_ptr<segment_allocator> alloc);
 
   static constexpr uint64_t kKvPoolId = 0;
   static constexpr uint64_t kKvPgId = 0;
