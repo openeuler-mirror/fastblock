@@ -102,8 +102,94 @@ void test_record_roundtrip() {
   EXPECT_EQ(out.object_offset, 4096u);
   EXPECT_EQ(out.raft_apply_index, 100u);
   EXPECT_EQ(out.image_snap_seq, 0u);
+  EXPECT_EQ(out.header_len, kRecordHeaderLenV1);
+  EXPECT_EQ(out.raft_term, 0u);
   EXPECT_EQ(out.payload.size(), 4096u);
   EXPECT_TRUE(out.payload == in.payload);
+}
+
+void test_record_v3_roundtrip() {
+  data_record in;
+  in.type = record_type::data;
+  in.flags = 0;
+  in.pool_id = 1;
+  in.pg_id = 7;
+  in.store_epoch = 3;
+  in.object_id = 42;
+  in.object_offset = 4096;
+  in.raft_apply_index = 100;
+  in.image_snap_seq = 5;
+  in.raft_term = 17;
+  in.payload.assign(4096, 'A');
+
+  auto bytes = encode_record(in, kFormatVersionV3);
+  EXPECT_EQ(bytes.size(), static_cast<size_t>(kRecordHeaderLenV3 + 4096));
+  EXPECT_TRUE(std::equal(bytes.begin() + kRecordHeaderLenV3, bytes.end(),
+                         in.payload.begin()));
+
+  data_record out;
+  size_t consumed = 0;
+  auto st = decode_record(bytes.data(), bytes.size(), &out, &consumed);
+  EXPECT_TRUE(st == decode_status::ok);
+  EXPECT_EQ(consumed, bytes.size());
+  EXPECT_EQ(out.header_len, kRecordHeaderLenV3);
+  EXPECT_EQ(out.raft_term, 17u);
+  EXPECT_EQ(out.image_snap_seq, 5u);
+  EXPECT_EQ(out.payload.size(), 4096u);
+  EXPECT_TRUE(out.payload == in.payload);
+}
+
+void test_record_default_encode_v2() {
+  data_record in;
+  in.type = record_type::data;
+  in.raft_term = 99;
+  in.payload.assign(128, 'B');
+
+  auto bytes = encode_record(in);
+  EXPECT_EQ(bytes.size(), static_cast<size_t>(kRecordHeaderLenV1 + 128));
+
+  data_record out;
+  size_t consumed = 0;
+  auto st = decode_record(bytes.data(), bytes.size(), &out, &consumed);
+  EXPECT_TRUE(st == decode_status::ok);
+  EXPECT_EQ(out.header_len, kRecordHeaderLenV1);
+  EXPECT_EQ(out.raft_term, 0u);
+}
+
+void test_record_illegal_version_and_header_len() {
+  data_record in;
+  in.type = record_type::data;
+  in.payload = "x";
+  auto bytes = encode_record(in);
+
+  // format_version at offset 4
+  bytes[4] = 99;
+  bytes[5] = 0;
+  data_record out;
+  size_t consumed = 0;
+  auto st = decode_record(bytes.data(), bytes.size(), &out, &consumed);
+  EXPECT_TRUE(st == decode_status::bad_version);
+
+  bytes = encode_record(in);
+  // header_len at offset 8; 70 is neither 78 nor 86
+  bytes[8] = 70;
+  bytes[9] = 0;
+  st = decode_record(bytes.data(), bytes.size(), &out, &consumed);
+  EXPECT_TRUE(st == decode_status::bad_header_len);
+}
+
+void test_record_v3_short_header_need_more() {
+  data_record in;
+  in.type = record_type::data;
+  in.raft_term = 3;
+  in.payload.assign(4096, 'C');
+  auto bytes = encode_record(in, kFormatVersionV3);
+  EXPECT_TRUE(bytes.size() > 80);
+
+  data_record out;
+  size_t consumed = 0;
+  auto st = decode_record(bytes.data(), 80, &out, &consumed);
+  EXPECT_TRUE(st == decode_status::need_more);
 }
 
 void test_record_need_more() {
@@ -2686,6 +2772,10 @@ void test_format_zeros_leftover_then_recover_empty() {
 int main() {
   test_crc32_smoke();
   test_record_roundtrip();
+  test_record_v3_roundtrip();
+  test_record_default_encode_v2();
+  test_record_illegal_version_and_header_len();
+  test_record_v3_short_header_need_more();
   test_record_need_more();
   test_record_bad_payload_crc();
   test_record_bad_magic();
