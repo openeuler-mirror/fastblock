@@ -11,8 +11,8 @@
 #pragma once
 
 #include "fastblock/msg/rdma/pd.h"
+#include "fastblock/msg/rdma/pool_quota.h"
 #include "fastblock/utils/fmt.h"
-
 
 #include <spdk/env.h>
 #include <spdk/string.h>
@@ -21,8 +21,6 @@
 #include <list>
 #include <memory>
 #include <string>
-#include <unordered_set>
-#include <unordered_map>
 
 namespace msg {
 namespace rdma {
@@ -123,6 +121,7 @@ public:
 
         auto* ret = _net_context_list.front();
         _net_context_list.pop_front();
+        on_free_changed();
         return ret;
     }
 
@@ -131,26 +130,67 @@ public:
             return;
         }
         _net_context_list.push_back(ctx);
+        on_free_changed();
     }
 
     std::unique_ptr<net_context*[]> get_bulk(const size_t n) noexcept {
-        if (n > _capacity) {
-            return nullptr;
+        auto ctxs = freelist_take(_net_context_list, n);
+        if (ctxs) {
+            on_free_changed();
         }
-
-        auto ctxs = std::make_unique<net_context*[]>(n);
-        auto it = _net_context_list.begin();
-        for (size_t i{0}; i < _net_context_list.size(); ++i) {
-            ctxs[i] = *it;
-            ++it;
-        }
-
         return ctxs;
     }
 
     void put_bulk(std::unique_ptr<net_context*[]> ctxs, const size_t n) noexcept {
-        return;
+        if (not ctxs) {
+            return;
+        }
+        freelist_put(_net_context_list, ctxs.get(), n);
+        on_free_changed();
     }
+
+    void configure_quota(pool_quota q) noexcept {
+        apply_default_pool_quota(q, _capacity);
+        _quota = q;
+        _bulk_allowed = true;
+        on_free_changed();
+    }
+
+    const pool_quota& quota() const noexcept { return _quota; }
+
+    void add_connection() noexcept {
+        ++_quota.n_connections;
+    }
+
+    void remove_connection() noexcept {
+        if (_quota.n_connections > 0) {
+            --_quota.n_connections;
+        }
+    }
+
+    std::unique_ptr<net_context*[]> try_get(const size_t n, const alloc_class cls) noexcept {
+        if (not can_alloc(_net_context_list.size(), n, cls, _quota, _bulk_allowed)) {
+            ++_exhausted_total;
+            on_free_changed();
+            return nullptr;
+        }
+        auto ctxs = freelist_take(_net_context_list, n);
+        if (not ctxs) {
+            ++_exhausted_total;
+            return nullptr;
+        }
+        on_free_changed();
+        return ctxs;
+    }
+
+    uint64_t exhausted_total() const noexcept { return _exhausted_total; }
+    uint64_t watermark_hits() const noexcept { return _watermark_hits; }
+    size_t inuse() const noexcept {
+        return _capacity > _net_context_list.size()
+          ? _capacity - _net_context_list.size()
+          : 0;
+    }
+    bool bulk_allowed() const noexcept { return _bulk_allowed; }
 
     size_t size() noexcept {
         return _net_context_list.size();
@@ -188,6 +228,11 @@ public:
 
 private:
 
+    void on_free_changed() noexcept {
+        update_bulk_gate(
+          _net_context_list.size(), _quota, &_bulk_allowed, &_watermark_hits);
+    }
+
     size_t _capacity{0};
     size_t _element_size{0};
     std::string _name{};
@@ -195,6 +240,10 @@ private:
     void* _data_ptr{nullptr};
     net_context* _net_ctx_ptr{nullptr};
     std::list<net_context*> _net_context_list{};
+    pool_quota _quota{};
+    bool _bulk_allowed{true};
+    uint64_t _exhausted_total{0};
+    uint64_t _watermark_hits{0};
 };
 
 } // namespace rdma
