@@ -243,6 +243,19 @@ public:
               uint64_t raft_write_index, uint64_t image_snap_seq, op_complete cb,
               void* arg);
 
+  /**
+   * Raft disk_append entry (flag=1). One entry; caller walks a batch in
+   * index order. WRITE/DELETE → data/tomb via append_uncommitted (pending
+   * only). CONFIG / SNAPSHOT_BASE / NOOP → type=14 on the same writer.
+   */
+  void append_as_log(uint64_t pool_id, uint64_t pg_id, const log_entry& e,
+                     op_complete cb, void* arg);
+
+  void publish_commit(uint64_t pool_id, uint64_t pg_id, uint64_t index,
+                      op_complete cb, void* arg);
+  void truncate_log_and_pending(uint64_t pool_id, uint64_t pg_id,
+                                uint64_t from_index, op_complete cb, void* arg);
+
 private:
   using pg_key = std::tuple<uint64_t, uint64_t, uint64_t>; // pool, pg, epoch
 
@@ -267,6 +280,8 @@ private:
   uint64_t recover_lapply_of(uint64_t pool_id, uint64_t pg_id) const;
   void checkpoint_pass_continue(void* arg, int err);
   void apply_manifest_allocator(const manifest& m);
+  void append_type14(pg_store* pg, log_store* lg, const log_entry& e,
+                     op_complete cb, void* arg);
 
   struct ckpt_pass_req;
 
