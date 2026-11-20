@@ -15,5 +15,8 @@ namespace rdma {
 
 SPDK_LOG_REGISTER_COMPONENT(msg)
 
+// Periodic rpc stats dumps use SPDK_NOTICELOG (always on, 10s).
+// Unknown-key chatter is INFO on this component so it can be quieted.
+
 }
 }
