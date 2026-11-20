@@ -13,6 +13,7 @@
 #include "fastblock/msg/rdma/connection_id.h"
 #include "fastblock/msg/rdma/cq.h"
 #include "fastblock/msg/rdma/socket.h"
+#include "fastblock/msg/rdma/oob_payload.h"
 #include "fastblock/msg/rdma/transport_data.h"
 #include "fastblock/msg/rdma/work_request_id.h"
 #include "fastblock/msg/rpc_controller.h"
@@ -27,6 +28,8 @@
 
 #include <chrono>
 #include <memory>
+#include <string>
+#include <string_view>
 #include <unordered_map>
 
 #include <endian.h>
@@ -74,6 +77,7 @@ private:
         google::protobuf::Closure* done{nullptr};
         std::unique_ptr<transport_data> request_data{nullptr};
         std::unique_ptr<transport_data> response_data{nullptr};
+        std::string response_payload{};
         memory_pool<::ibv_recv_wr>::net_context* recv_ctx{nullptr};
         std::optional<status> reply_status{};
         std::chrono::system_clock::time_point start_at{std::chrono::system_clock::now()};
@@ -149,7 +153,8 @@ public:
         size_t data_memory_pool_capacity{16384};
         size_t data_memory_pool_element_size{8192};
         size_t per_post_recv_num{512};
-        std::chrono::system_clock::duration rpc_timeout{std::chrono::seconds{5}};
+        std::chrono::system_clock::duration rpc_timeout{
+          std::chrono::microseconds{default_rpc_timeout_us}};
         std::chrono::system_clock::duration shutdown_timeout{std::chrono::microseconds{0}};
         std::chrono::system_clock::duration slow_method{std::chrono::seconds{1}};
         std::unique_ptr<endpoint> ep{nullptr};
@@ -293,10 +298,59 @@ private:
 
     void handle_timeout_task(std::unique_ptr<rpc_task> task) {
         SPDK_ERRLOG("ERROR: Timeout on task %d\n", task->id);
-        task->reply_status = status::request_timeout;
-        make_response_data(task.get(), task->reply_status.value());
-        task->conn->rpc_tasks.erase(task->id);
+        ++rpc_timeout;
+        enqueue_reply(std::move(task), status::request_timeout);
+    }
+
+    void drop_rpc_task(std::unique_ptr<rpc_task> task) {
+        if (task and task->conn) {
+            task->conn->rpc_tasks.erase(task->id);
+        }
+    }
+
+    bool enqueue_reply(std::unique_ptr<rpc_task> task, status s) {
+        if (not make_response_data(task.get(), s) or
+            not task->response_data or
+            not task->response_data->prepared()) {
+            ++rpc_pool_exhausted;
+            SPDK_NOTICELOG(
+              "drop rpc task %d, cannot prepare reply status %s, pool_exhausted=%lu\n",
+              task->id, string_status(s), rpc_pool_exhausted);
+            drop_rpc_task(std::move(task));
+            return false;
+        }
+        if (task->conn) {
+            task->conn->rpc_tasks.erase(task->id);
+        }
         _reply_task_list.push_back(std::move(task));
+        return true;
+    }
+
+    void process_timeout_scan() {
+        auto expire_list = [this](std::list<std::unique_ptr<rpc_task>>& lst) {
+            for (auto it = lst.begin(); it != lst.end(); ) {
+                if (is_timeout(it->get())) {
+                    auto task = std::move(*it);
+                    it = lst.erase(it);
+                    handle_timeout_task(std::move(task));
+                } else {
+                    ++it;
+                }
+            }
+        };
+
+        expire_list(_task_list);
+        expire_list(_read_task_list);
+
+        for (auto it = _on_fligh_tasks.begin(); it != _on_fligh_tasks.end(); ) {
+            if (is_timeout(it->second.get())) {
+                auto task = std::move(it->second);
+                it = _on_fligh_tasks.erase(it);
+                handle_timeout_task(std::move(task));
+            } else {
+                ++it;
+            }
+        }
     }
 
     void close_connection(connection_record* conn) {
@@ -503,30 +557,48 @@ private:
     auto send_reply(rpc_task* task) {
         auto s = task->reply_status.value();
         SPDK_DEBUGLOG(msg, "send reply with status %s\n", string_status(s));
-        auto reply_status = std::make_unique<reply_meta>(
-          static_cast<std::underlying_type_t<status>>(s));
+        auto reply_status = std::make_unique<reply_meta>();
+        reply_status->reply_status = static_cast<std::underlying_type_t<status>>(s);
+        if (s == status::success && task->response_body) {
+            reply_status->data_size = static_cast<uint32_t>(
+              task->response_body->ByteSizeLong());
+            reply_status->payload_size =
+              static_cast<uint32_t>(task->response_payload.size());
+        }
         if (s != status::success) {
             task->response_data->serialize_data(reply_status.get());
         } else {
-            task->response_data->serialize_data(reply_status.get(), reply_meta_size, task->response_body.get());
+            task->response_data->serialize_data(
+              reply_status.get(), reply_meta_size, task->response_body.get(),
+              task->response_payload);
         }
 
         return send_metadata_request(task->conn.get(), task->response_data.get());;
     }
 
-    void make_response_data(rpc_task* task, status s) {
+    bool make_response_data(rpc_task* task, status s) {
         task->reply_status = s;
         if (s != status::success) {
             SPDK_DEBUGLOG(msg, "task id is %d, status is not success\n", task->id);
             task->response_data = std::make_unique<transport_data>(
               task->id, reply_meta_size, _meta_pool, _data_pool);
-            return;
+        } else {
+            peel_rpc_payload(*task->response_body, &task->response_payload);
+            auto env_size = task->response_body->ByteSizeLong();
+            auto response_size =
+              reply_meta_size + env_size + task->response_payload.size();
+            SPDK_DEBUGLOG(msg, "task id is %d, status is success\n", task->id);
+            task->response_data = std::make_unique<transport_data>(
+              task->id, response_size, _meta_pool, _data_pool);
         }
-
-        auto response_size = reply_meta_size + task->response_body->ByteSizeLong();
-        SPDK_DEBUGLOG(msg, "task id is %d, status is success\n", task->id);
-        task->response_data = std::make_unique<transport_data>(
-          task->id, response_size, _meta_pool, _data_pool);
+        if (not task->response_data or not task->response_data->prepared()) {
+            SPDK_NOTICELOG(
+              "failed to prepare response for task %d status %s\n",
+              task->id, string_status(s));
+            task->response_data.reset();
+            return false;
+        }
+        return true;
     }
 
     void on_response(rpc_task* task) {
@@ -601,8 +673,7 @@ private:
                 }
             }
             task->request_data.reset(nullptr);
-            make_response_data(task.get(), *err_status);
-            _reply_task_list.push_back(std::move(task));
+            enqueue_reply(std::move(task), *err_status);
             return;
         }
 
@@ -611,9 +682,18 @@ private:
         bool is_parsed{false};
         if (is_inlined) {
             auto* data = transport_data::read_inlined_content(task->recv_ctx);
-            auto data_size = transport_data::read_inlined_content_length(task->recv_ctx);
+            auto req_h = load_request_meta(data);
+            auto data_size = req_h.data_size != 0
+              ? req_h.data_size
+              : transport_data::read_inlined_content_length(task->recv_ctx);
             SPDK_DEBUGLOG(msg, "unserilaize inlined data, unserialized size is %d\n", data_size);
             is_parsed = task->request_body->ParseFromArray(data + request_meta_size, data_size);
+            if (is_parsed && req_h.payload_size > 0) {
+                is_parsed = attach_rpc_payload(
+                  *task->request_body,
+                  std::string_view(data + request_meta_size + data_size,
+                                   req_h.payload_size));
+            }
 
             auto rc = post_recv(task->conn.get(), task->recv_ctx);
             if (rc) {
@@ -622,7 +702,16 @@ private:
             }
         } else {
             SPDK_DEBUGLOG(msg, "unserilaize no inlined data\n");
-            is_parsed = task->request_data->unserialize_data(task->request_body.get(), request_meta_size);
+            std::string_view req_payload;
+            size_t env_sz = 0;
+            if (auto* head = task->request_data->data_head(); head != nullptr) {
+                env_sz = load_request_meta(head).data_size;
+            }
+            is_parsed = task->request_data->unserialize_data(
+              task->request_body.get(), request_meta_size, env_sz, &req_payload);
+            if (is_parsed && !req_payload.empty()) {
+                is_parsed = attach_rpc_payload(*task->request_body, req_payload);
+            }
         }
 
         task->request_data.reset(nullptr);
@@ -633,9 +722,7 @@ private:
         task->rpc_ctrlr->attach_peer_address(task->conn->sock->peer_address());
         if (not is_parsed) {
             SPDK_ERRLOG("ERROR: Unserialize request body failed\n");
-            make_response_data(task.get(), status::bad_request_body);
-            _reply_task_list.push_back(std::move(task));
-
+            enqueue_reply(std::move(task), status::bad_request_body);
             return;
         }
 
@@ -665,8 +752,14 @@ private:
         }
 
         SPDK_DEBUGLOG(msg, "task id is %d, task->response_data addr is %p\n", task->id, task->response_data.get());
-        if (not task->response_data->is_ready()) {
-            return SPDK_POLLER_IDLE;
+        if (not task->response_data or not task->response_data->prepared()) {
+            ++rpc_pool_exhausted;
+            SPDK_NOTICELOG(
+              "drop unprepared reply task %d, pool_exhausted=%lu\n",
+              task->id, rpc_pool_exhausted);
+            drop_rpc_task(std::move(task));
+            _reply_task_list.pop_front();
+            return SPDK_POLLER_BUSY;
         }
 
         auto err = send_reply(task.get());
@@ -724,25 +817,26 @@ private:
             return SPDK_POLLER_IDLE;
         }
 
+        process_timeout_scan();
+
         if (_task_list.empty()) {
             return SPDK_POLLER_IDLE;
         }
 
         auto& task = _task_list.front();
-        if (is_timeout(task.get())) {
-            handle_timeout_task(std::move(task));
-            _task_list.pop_front();
-            return SPDK_POLLER_BUSY;
-        }
-
         if (not task->request_data->is_metadata_complete()) {
             SPDK_DEBUGLOG(msg, "rpc task %d, metadata is not complete\n", task->id);
             return SPDK_POLLER_IDLE;
         }
 
-        if (not task->request_data->is_ready()) {
-            SPDK_DEBUGLOG(msg, "rpc task %d, transport data is not complete\n", task->id);
-            return SPDK_POLLER_IDLE;
+        if (not task->request_data->prepared()) {
+            SPDK_NOTICELOG(
+              "rpc task %d request transport not prepared, reply resource_exhausted\n",
+              task->id);
+            auto fail = std::move(task);
+            _task_list.pop_front();
+            enqueue_reply(std::move(fail), status::resource_exhausted);
+            return SPDK_POLLER_BUSY;
         }
 
         SPDK_DEBUGLOG(msg, "post read wr of task %d\n", task->id);
@@ -834,8 +928,7 @@ private:
                 task->this_server = this; // FIXME: The server pointed to by this may have been destructed at access time.
 
                 if (_is_terminated) {
-                    make_response_data(task.get(), status::terminating);
-                    _reply_task_list.push_back(std::move(task));
+                    enqueue_reply(std::move(task), status::terminating);
                     return true;
                 }
 
@@ -864,7 +957,10 @@ private:
                 task_it = it;
                 _task_list.push_back(std::move(task));
             } else if (task_it == conn->rpc_tasks.end()) {
-                SPDK_NOTICELOG("rpc task with id %d has been set to timeout state, going to skip this transferred data\n", task_id);
+                ++rpc_unknown_key;
+                SPDK_NOTICELOG(
+                  "unknown rpc task id %d, drop and keep QP, unknown_key=%lu\n",
+                  task_id, rpc_unknown_key);
                 auto rc = post_recv(conn.get(), recv_ctx);
                 if (rc) {
                     SPDK_ERRLOG("ERROR: Post receive wr error, '%s'\n", rc->message().c_str());
@@ -1027,20 +1123,20 @@ public:
             return;
         }
 
-        if (task->rpc_ctrlr->Failed()) {
-            SPDK_ERRLOG("ERROR: Exec rpc failed: %s\n", task->rpc_ctrlr->ErrorText().c_str());
-            make_response_data(task, status::server_error);
+        auto owned = std::move(it->second);
+        const auto task_id = owned->id;
+        _on_fligh_tasks.erase(it);
+        if (owned->rpc_ctrlr->Failed()) {
+            SPDK_ERRLOG("ERROR: Exec rpc failed: %s\n", owned->rpc_ctrlr->ErrorText().c_str());
+            enqueue_reply(std::move(owned), status::server_error);
         } else {
             SPDK_INFOLOG(
               msg,
               "Making rpc response body of request id %d\n",
-              task->id);
-            make_response_data(task, status::success);
+              task_id);
+            enqueue_reply(std::move(owned), status::success);
         }
-
-        _reply_task_list.push_back(std::move(it->second));
-        SPDK_DEBUGLOG(msg, "task id %d rpc exec done\n", task->id);
-        _on_fligh_tasks.erase(it);
+        SPDK_DEBUGLOG(msg, "task id %d rpc exec done\n", task_id);
     }
 
     int handle_ib_cm_event_poll() {
@@ -1303,6 +1399,11 @@ private:
     event_channel _channel{};
     rpc_task::server_id_type _task_id_gen{0};
     std::unique_ptr<stop_context> _stop_ctx{nullptr};
+
+public:
+    uint64_t rpc_pool_exhausted{0};
+    uint64_t rpc_unknown_key{0};
+    uint64_t rpc_timeout{0};
 };
 
 } // namespace rdma
