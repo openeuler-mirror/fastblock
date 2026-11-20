@@ -261,6 +261,10 @@ private:
   void recover_after_meta(recover_req* req);
   void recover_process(recover_req* req);
   void recover_load_checkpoints(recover_req* req);
+  void recover_rebuild_pending(recover_req* req);
+  void recover_rebuild_next(recover_req* req);
+  void recover_finish(recover_req* req);
+  uint64_t recover_lapply_of(uint64_t pool_id, uint64_t pg_id) const;
   void checkpoint_pass_continue(void* arg, int err);
   void apply_manifest_allocator(const manifest& m);
 
