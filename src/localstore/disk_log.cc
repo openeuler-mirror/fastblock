@@ -14,6 +14,7 @@
 #include "localstore/aos/types.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 
 SPDK_LOG_REGISTER_COMPONENT(disk_log)
@@ -201,5 +202,52 @@ void make_aos_disk_log(fastblock::aos::log_store* log,
   dlog->start();
   if (cb_fn) {
     cb_fn(arg, dlog, 0);
+  }
+}
+
+namespace {
+uint64_t env_u64(const char* name, uint64_t def) {
+  const char* e = std::getenv(name);
+  if (e == nullptr || e[0] == '\0') {
+    return def;
+  }
+  char* end = nullptr;
+  const unsigned long long v = std::strtoull(e, &end, 10);
+  if (end == e) {
+    return def;
+  }
+  return static_cast<uint64_t>(v);
+}
+}  // namespace
+
+void disk_log::advance_trim_index(uint64_t index) {
+  _trim_index = std::max(_trim_index, index);
+  if (_aos_log == nullptr) {
+    return;
+  }
+  // Production default matches the old hardcoded "index > 1000 then keep 1000".
+  // Cluster snapshot regression sets TRIGGER=128 KEEP=64 so a stopped follower
+  // can observe next_idx < log_get_base_index() without 1000+ writes.
+  static const uint64_t trigger =
+      env_u64("FASTBLOCK_RAFT_LOG_TRIM_TRIGGER_ENTRIES", 1000);
+  static const uint64_t keep =
+      env_u64("FASTBLOCK_RAFT_LOG_TRIM_KEEP_ENTRIES", 1000);
+  if (index <= trigger || keep == 0) {
+    return;
+  }
+  const uint64_t cut = index > keep ? index - keep : 0;
+  if (cut == 0) {
+    return;
+  }
+  const uint64_t old_base = get_lowest_index();
+  _aos_log->trim_to(cut);
+  const uint64_t new_base = get_lowest_index();
+  if (std::getenv("FASTBLOCK_RAFT_RECOVERY_TEST_LOGS") != nullptr &&
+      new_base != old_base) {
+    SPDK_NOTICELOG("raft log test trim [%lu, %lu] applied=%lu keep=%lu\n",
+                   static_cast<unsigned long>(old_base),
+                   static_cast<unsigned long>(new_base),
+                   static_cast<unsigned long>(index),
+                   static_cast<unsigned long>(keep));
   }
 }
