@@ -19,6 +19,7 @@
 #include "fastblock/msg/rdma/oob_payload.h"
 #include "fastblock/msg/rdma/transport_data.h"
 #include "fastblock/msg/rdma/types.h"
+#include "fastblock/msg/rpc_controller.h"
 #include "fastblock/utils/duration_map.h"
 #include "fastblock/utils/fmt.h"
 #include "fastblock/utils/utils.h"
@@ -286,13 +287,14 @@ public:
         void set_failed_msg(google::protobuf::RpcController* ctrlr) {
             switch (_state) {
             case state::peer_terminate:
-                ctrlr->SetFailed("peer terminating");
+                fail_rpc(ctrlr, "peer terminating", rpc_error_class::peer_terminating);
                 break;
             case state::shutdown:
-                ctrlr->SetFailed("connection terminated");
+                fail_rpc(ctrlr, "connection terminated", rpc_error_class::connection);
                 break;
             case state::bad_event:
-                ctrlr->SetFailed("bad ib/cm event");
+                fail_rpc(ctrlr, "bad ib/cm event", rpc_error_class::connection);
+                break;
             default:
                 break;
             }
@@ -509,40 +511,47 @@ public:
                 break;
             case rpc_fail::resource_exhausted:
                 ++rpc_pool_exhausted;
-                req->ctrlr->SetFailed("resource_exhausted");
+                fail_rpc(req->ctrlr, "resource_exhausted",
+                         rpc_error_class::resource_exhausted);
                 SPDK_NOTICELOG(
                   "rpc %u resource_exhausted, pool_exhausted=%lu\n",
                   req->request_key, rpc_pool_exhausted);
                 break;
             case rpc_fail::timeout:
                 ++rpc_timeout;
-                req->ctrlr->SetFailed("timeout");
+                fail_rpc(req->ctrlr, "timeout", rpc_error_class::timeout);
                 SPDK_NOTICELOG(
                   "rpc %u timeout, rpc_timeout=%lu\n",
                   req->request_key, rpc_timeout);
                 break;
             case rpc_fail::request_timeout:
                 ++rpc_timeout;
-                req->ctrlr->SetFailed("request_timeout");
+                fail_rpc(req->ctrlr, "request_timeout",
+                         rpc_error_class::request_timeout);
                 SPDK_NOTICELOG(
                   "rpc %u request_timeout, rpc_timeout=%lu\n",
                   req->request_key, rpc_timeout);
                 break;
             case rpc_fail::too_large:
-                req->ctrlr->SetFailed("too_large");
+                fail_rpc(req->ctrlr, "too_large", rpc_error_class::too_large);
                 SPDK_ERRLOG("rpc %u too_large for memory pool\n", req->request_key);
                 break;
             case rpc_fail::connection_dead:
                 set_failed_msg(req->ctrlr);
                 if (not req->ctrlr->Failed()) {
-                    req->ctrlr->SetFailed("connection terminated");
+                    fail_rpc(req->ctrlr, "connection terminated",
+                             rpc_error_class::connection);
                 }
                 break;
             case rpc_fail::unserialize:
-                req->ctrlr->SetFailed(detail ? detail : "unserialize error");
+                fail_rpc(req->ctrlr, detail ? detail : "unserialize error",
+                         rpc_error_class::application);
                 break;
             case rpc_fail::other:
-                req->ctrlr->SetFailed(detail ? detail : "rpc error");
+                fail_rpc(
+                  req->ctrlr,
+                  detail ? detail : "rpc error",
+                  detail ? classify_rpc_error(detail) : rpc_error_class::application);
                 break;
             }
 
@@ -753,7 +762,10 @@ public:
                 SPDK_ERRLOG(
                   "ERROR: RPC service name's length(%ld) is beyond the max size(%d)\n",
                   service_name.size(), max_rpc_meta_string_size);
-                ctrlr->SetFailed(FB_FMT_1("service name too long, should less than or equal to %1%", max_rpc_meta_string_size));
+                fail_rpc(
+                  ctrlr,
+                  FB_FMT_1("service name too long, should less than or equal to %1%", max_rpc_meta_string_size),
+                  rpc_error_class::application);
                 c->Run();
                 return;
             }
@@ -763,7 +775,10 @@ public:
                 SPDK_ERRLOG(
                   "ERROR: RPC method name's length(%ld) is beyond the max size(%d)\n",
                   method_name.size(), max_rpc_meta_string_size);
-                ctrlr->SetFailed(FB_FMT_1( "method name is too long, should less than or equal to %1%", max_rpc_meta_string_size));
+                fail_rpc(
+                  ctrlr,
+                  FB_FMT_1( "method name is too long, should less than or equal to %1%", max_rpc_meta_string_size),
+                  rpc_error_class::application);
                 c->Run();
                 return;
             }
