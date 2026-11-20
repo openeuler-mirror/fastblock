@@ -984,6 +984,7 @@ PR1 只要求上面三个计数器可在故障注入后读到（成员变量 + �
 - **依赖：** PR1（fail-soft 已在，改所有权不会再空对象入队）
 - **内容：** 修 `get_bulk`/`put_bulk`（client **与** server `per_post_recv`）；`try_get(n, class)`；low watermark 拒绝 bulk；heartbeat 走 priority 额度；文档写清 capacity 是上限不是「不卡保证」。
 - **验收：** 注入一个占 40% 池的大包，heartbeat / 4KiB RPC 仍成功；`get_bulk` 单测覆盖 `n < size`、`n > size`。
+- **落地：** `get_bulk` 按 `n` 弹出；`put_bulk` 还回去。`try_get(n, priority|reserved|bulk)` + 水位滞回；heartbeat 走 `priority`，inline 走 `reserved`，非 inline 走 `bulk`。capacity 文档改为实例上限。
 
 ### PR4 — Reactor 卫生：`rdma_getaddrinfo` 与禁止应用线程 exit
 
