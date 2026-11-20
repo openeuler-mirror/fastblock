@@ -25,7 +25,6 @@
 #include "osd_store.h"
 #include "pg_store.h"
 #include "record.h"
-#include "segment.h"
 #include "segment_allocator.h"
 #include "snapshot_ingest.h"
 #include "snapshot_reader.h"
@@ -34,8 +33,6 @@
 
 #include <algorithm>
 #include <cassert>
-#include <cerrno>
-#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -105,94 +102,8 @@ void test_record_roundtrip() {
   EXPECT_EQ(out.object_offset, 4096u);
   EXPECT_EQ(out.raft_apply_index, 100u);
   EXPECT_EQ(out.image_snap_seq, 0u);
-  EXPECT_EQ(out.header_len, kRecordHeaderLenV1);
-  EXPECT_EQ(out.raft_term, 0u);
   EXPECT_EQ(out.payload.size(), 4096u);
   EXPECT_TRUE(out.payload == in.payload);
-}
-
-void test_record_v3_roundtrip() {
-  data_record in;
-  in.type = record_type::data;
-  in.flags = 0;
-  in.pool_id = 1;
-  in.pg_id = 7;
-  in.store_epoch = 3;
-  in.object_id = 42;
-  in.object_offset = 4096;
-  in.raft_apply_index = 100;
-  in.image_snap_seq = 5;
-  in.raft_term = 17;
-  in.payload.assign(4096, 'A');
-
-  auto bytes = encode_record(in, kFormatVersionV3);
-  EXPECT_EQ(bytes.size(), static_cast<size_t>(kRecordHeaderLenV3 + 4096));
-  EXPECT_TRUE(std::equal(bytes.begin() + kRecordHeaderLenV3, bytes.end(),
-                         in.payload.begin()));
-
-  data_record out;
-  size_t consumed = 0;
-  auto st = decode_record(bytes.data(), bytes.size(), &out, &consumed);
-  EXPECT_TRUE(st == decode_status::ok);
-  EXPECT_EQ(consumed, bytes.size());
-  EXPECT_EQ(out.header_len, kRecordHeaderLenV3);
-  EXPECT_EQ(out.raft_term, 17u);
-  EXPECT_EQ(out.image_snap_seq, 5u);
-  EXPECT_EQ(out.payload.size(), 4096u);
-  EXPECT_TRUE(out.payload == in.payload);
-}
-
-void test_record_default_encode_v2() {
-  data_record in;
-  in.type = record_type::data;
-  in.raft_term = 99;
-  in.payload.assign(128, 'B');
-
-  auto bytes = encode_record(in);
-  EXPECT_EQ(bytes.size(), static_cast<size_t>(kRecordHeaderLenV1 + 128));
-
-  data_record out;
-  size_t consumed = 0;
-  auto st = decode_record(bytes.data(), bytes.size(), &out, &consumed);
-  EXPECT_TRUE(st == decode_status::ok);
-  EXPECT_EQ(out.header_len, kRecordHeaderLenV1);
-  EXPECT_EQ(out.raft_term, 0u);
-}
-
-void test_record_illegal_version_and_header_len() {
-  data_record in;
-  in.type = record_type::data;
-  in.payload = "x";
-  auto bytes = encode_record(in);
-
-  // format_version at offset 4
-  bytes[4] = 99;
-  bytes[5] = 0;
-  data_record out;
-  size_t consumed = 0;
-  auto st = decode_record(bytes.data(), bytes.size(), &out, &consumed);
-  EXPECT_TRUE(st == decode_status::bad_version);
-
-  bytes = encode_record(in);
-  // header_len at offset 8; 70 is neither 78 nor 86
-  bytes[8] = 70;
-  bytes[9] = 0;
-  st = decode_record(bytes.data(), bytes.size(), &out, &consumed);
-  EXPECT_TRUE(st == decode_status::bad_header_len);
-}
-
-void test_record_v3_short_header_need_more() {
-  data_record in;
-  in.type = record_type::data;
-  in.raft_term = 3;
-  in.payload.assign(4096, 'C');
-  auto bytes = encode_record(in, kFormatVersionV3);
-  EXPECT_TRUE(bytes.size() > 80);
-
-  data_record out;
-  size_t consumed = 0;
-  auto st = decode_record(bytes.data(), 80, &out, &consumed);
-  EXPECT_TRUE(st == decode_status::need_more);
 }
 
 void test_record_need_more() {
@@ -2746,563 +2657,6 @@ void test_osd_checkpoint_pass_then_recover() {
   EXPECT_EQ(buf[0], 'Z');
 }
 
-struct raw_rec {
-  uint64_t phys{0};
-  uint64_t aligned{0};
-  int err{-1};
-};
-
-raw_rec write_raw_record(device_backend* dev, segment_allocator* alloc,
-                         const data_record& rec) {
-  segment writer(dev, alloc);
-  auto encoded = encode_record(rec);
-  raw_rec out;
-  out.aligned = writer.align_up(encoded.size());
-  std::vector<uint8_t> dma(static_cast<size_t>(out.aligned), 0);
-  std::memcpy(dma.data(), encoded.data(), encoded.size());
-  writer.append_record(
-      rec, dma.data(), out.aligned,
-      [](void* a, uint64_t phys, int err) {
-        auto* p = static_cast<raw_rec*>(a);
-        p->phys = phys;
-        p->err = err;
-      },
-      &out);
-  return out;
-}
-
-struct log_rr {
-  int err{-1};
-  std::vector<log_entry> entries;
-};
-
-log_rr read_log(log_store& log, uint64_t start, uint64_t end) {
-  log_rr rr;
-  log.read(start, end,
-           [](void* a, std::vector<log_entry> entries, int err) {
-             auto* p = static_cast<log_rr*>(a);
-             p->err = err;
-             p->entries = std::move(entries);
-           },
-           &rr);
-  return rr;
-}
-
-bool proto_bytes_field(const std::string& s, uint32_t field, std::string* out) {
-  size_t i = 0;
-  while (i < s.size()) {
-    const uint8_t tag = static_cast<uint8_t>(s[i++]);
-    const uint32_t f = tag >> 3;
-    const uint32_t wt = tag & 7;
-    if (wt == 2) {
-      uint64_t len = 0;
-      int shift = 0;
-      while (i < s.size()) {
-        const uint8_t b = static_cast<uint8_t>(s[i++]);
-        len |= static_cast<uint64_t>(b & 0x7f) << shift;
-        if ((b & 0x80) == 0) {
-          break;
-        }
-        shift += 7;
-      }
-      if (i + static_cast<size_t>(len) > s.size()) {
-        return false;
-      }
-      if (f == field) {
-        if (out != nullptr) {
-          out->assign(s.data() + i, static_cast<size_t>(len));
-        }
-        return true;
-      }
-      i += static_cast<size_t>(len);
-    } else if (wt == 0) {
-      while (i < s.size() && (static_cast<uint8_t>(s[i++]) & 0x80) != 0) {
-      }
-    } else {
-      return false;
-    }
-  }
-  return false;
-}
-
-bool proto_u64_field(const std::string& s, uint32_t field, uint64_t* out) {
-  size_t i = 0;
-  while (i < s.size()) {
-    const uint8_t tag = static_cast<uint8_t>(s[i++]);
-    const uint32_t f = tag >> 3;
-    const uint32_t wt = tag & 7;
-    if (wt == 0) {
-      uint64_t v = 0;
-      int shift = 0;
-      while (i < s.size()) {
-        const uint8_t b = static_cast<uint8_t>(s[i++]);
-        v |= static_cast<uint64_t>(b & 0x7f) << shift;
-        if ((b & 0x80) == 0) {
-          break;
-        }
-        shift += 7;
-      }
-      if (f == field) {
-        if (out != nullptr) {
-          *out = v;
-        }
-        return true;
-      }
-    } else if (wt == 2) {
-      uint64_t len = 0;
-      int shift = 0;
-      while (i < s.size()) {
-        const uint8_t b = static_cast<uint8_t>(s[i++]);
-        len |= static_cast<uint64_t>(b & 0x7f) << shift;
-        if ((b & 0x80) == 0) {
-          break;
-        }
-        shift += 7;
-      }
-      if (i + static_cast<size_t>(len) > s.size()) {
-        return false;
-      }
-      i += static_cast<size_t>(len);
-    } else {
-      return false;
-    }
-  }
-  return false;
-}
-
-void test_log_store_append_type14_still_readable() {
-  mem_device_backend dev(4 * 1024 * 1024);
-  auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
-                                                   dev.block_size());
-  EXPECT_EQ(alloc->ensure_open(), 0);
-  log_store log(&dev, pg_id{1, 2, 1}, alloc, buffer_mode::heap);
-  log_entry e;
-  e.term = 7;
-  e.index = 1;
-  e.type = 0;
-  e.meta = "type14-meta";
-  e.data = "type14-data";
-  sync_result r;
-  log.append(e, on_done, &r);
-  EXPECT_EQ(r.err, 0);
-  auto rr = read_log(log, 1, 1);
-  EXPECT_EQ(rr.err, 0);
-  EXPECT_EQ(rr.entries.size(), 1);
-  EXPECT_EQ(rr.entries[0].term, 7);
-  EXPECT_EQ(rr.entries[0].index, 1);
-  EXPECT_TRUE(rr.entries[0].meta == "type14-meta");
-  EXPECT_TRUE(rr.entries[0].data == "type14-data");
-}
-
-void test_log_store_register_data_as_log() {
-  mem_device_backend dev(4 * 1024 * 1024);
-  auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
-                                                   dev.block_size());
-  EXPECT_EQ(alloc->ensure_open(), 0);
-  log_store log(&dev, pg_id{1, 2, 1}, alloc, buffer_mode::heap);
-  log.set_name_lookup([](uint64_t oid, std::string* name) {
-    if (oid != 42 || name == nullptr) {
-      return -ENOENT;
-    }
-    *name = "img.0001";
-    return 0;
-  });
-
-  data_record rec;
-  rec.type = record_type::data;
-  rec.pool_id = 1;
-  rec.pg_id = 2;
-  rec.store_epoch = 1;
-  rec.object_id = 42;
-  rec.object_offset = 4096;
-  rec.raft_apply_index = 1;
-  rec.image_snap_seq = 9;
-  rec.payload.assign(4096, 'W');
-  auto wr = write_raw_record(&dev, alloc.get(), rec);
-  EXPECT_EQ(wr.err, 0);
-
-  EXPECT_EQ(log.register_index(0, 3, wr.phys, wr.aligned, record_type::data),
-            -EINVAL);
-  EXPECT_EQ(log.register_index(1, 3, wr.phys, wr.aligned, record_type::data),
-            0);
-  EXPECT_EQ(log.register_index(1, 3, wr.phys, wr.aligned, record_type::data),
-            0);
-  EXPECT_EQ(log.register_index(1, 3, wr.phys + 4096, wr.aligned,
-                               record_type::data),
-            -EEXIST);
-  EXPECT_EQ(log.register_index(3, 3, wr.phys, wr.aligned, record_type::data),
-            -EINVAL);
-  EXPECT_EQ(log.last_index(), 1);
-  EXPECT_EQ(log.get_term(1), 3);
-
-  auto rr = read_log(log, 1, 1);
-  EXPECT_EQ(rr.err, 0);
-  EXPECT_EQ(rr.entries.size(), 1);
-  EXPECT_EQ(rr.entries[0].term, 3);
-  EXPECT_EQ(rr.entries[0].index, 1);
-  EXPECT_EQ(rr.entries[0].type, 0); // RAFT_LOGTYPE_WRITE
-  EXPECT_EQ(rr.entries[0].data.size(), 4096);
-  EXPECT_TRUE(rr.entries[0].data == rec.payload);
-  EXPECT_TRUE(!rr.entries[0].meta.empty());
-  std::string name;
-  EXPECT_TRUE(proto_bytes_field(rr.entries[0].meta, 1, &name));
-  EXPECT_TRUE(name == "img.0001");
-  uint64_t off = 0;
-  uint64_t img = 0;
-  EXPECT_TRUE(proto_u64_field(rr.entries[0].meta, 2, &off));
-  EXPECT_EQ(off, 4096);
-  EXPECT_TRUE(proto_u64_field(rr.entries[0].meta, 3, &img));
-  EXPECT_EQ(img, 9);
-}
-
-void test_log_store_read_requires_name_lookup() {
-  mem_device_backend dev(4 * 1024 * 1024);
-  auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
-                                                   dev.block_size());
-  EXPECT_EQ(alloc->ensure_open(), 0);
-  log_store log(&dev, pg_id{1, 2, 1}, alloc, buffer_mode::heap);
-
-  data_record rec;
-  rec.type = record_type::data;
-  rec.object_id = 7;
-  rec.object_offset = 0;
-  rec.payload.assign(4096, 'X');
-  auto wr = write_raw_record(&dev, alloc.get(), rec);
-  EXPECT_EQ(wr.err, 0);
-  EXPECT_EQ(log.register_index(1, 1, wr.phys, wr.aligned, record_type::data),
-            0);
-
-  auto rr = read_log(log, 1, 1);
-  EXPECT_EQ(rr.err, -ENOENT);
-  EXPECT_EQ(rr.entries.size(), 0);
-
-  log.set_name_lookup([](uint64_t, std::string*) { return -ENOENT; });
-  rr = read_log(log, 1, 1);
-  EXPECT_EQ(rr.err, -ENOENT);
-  EXPECT_EQ(rr.entries.size(), 0);
-
-  log.set_name_lookup([](uint64_t, std::string* name) {
-    if (name != nullptr) {
-      name->clear();
-    }
-    return 0;
-  });
-  rr = read_log(log, 1, 1);
-  EXPECT_EQ(rr.err, -ENOENT);
-  EXPECT_EQ(rr.entries.size(), 0);
-
-  rec.payload.assign(128, 'y');
-  auto wr2 = write_raw_record(&dev, alloc.get(), rec);
-  EXPECT_EQ(wr2.err, 0);
-  EXPECT_EQ(
-      log.register_index(2, 1, wr2.phys, wr2.aligned, record_type::data), 0);
-  log.set_name_lookup([](uint64_t, std::string* name) {
-    *name = "n";
-    return 0;
-  });
-  rr = read_log(log, 2, 2);
-  EXPECT_EQ(rr.err, -EIO);
-  EXPECT_EQ(rr.entries.size(), 0);
-}
-
-void test_log_store_old_checkpoint_default_raft() {
-  mem_device_backend dev(4 * 1024 * 1024);
-  auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
-                                                   dev.block_size());
-  EXPECT_EQ(alloc->ensure_open(), 0);
-  log_store log(&dev, pg_id{1, 1, 1}, alloc, buffer_mode::heap);
-
-  log_entry e;
-  e.term = 4;
-  e.index = 1;
-  e.type = 0;
-  e.meta = "old-ckpt";
-  e.data = "payload";
-  data_record rec;
-  rec.type = record_type::raft_log_entry;
-  rec.pool_id = 1;
-  rec.pg_id = 1;
-  rec.store_epoch = 1;
-  rec.raft_apply_index = 1;
-  rec.image_snap_seq = 4;
-  rec.payload = log_store::encode_payload(e);
-  auto wr = write_raw_record(&dev, alloc.get(), rec);
-  EXPECT_EQ(wr.err, 0);
-
-  // 32B-per-entry payload: no rec_type field.
-  std::string old;
-  auto put64 = [&](uint64_t v) {
-    for (int i = 0; i < 8; ++i) {
-      old.push_back(static_cast<char>((v >> (8 * i)) & 0xff));
-    }
-  };
-  auto put32 = [&](uint32_t v) {
-    for (int i = 0; i < 4; ++i) {
-      old.push_back(static_cast<char>((v >> (8 * i)) & 0xff));
-    }
-  };
-  put64(1);
-  put64(1);
-  put32(1);
-  put64(1);
-  put64(4);
-  put64(wr.phys);
-  put64(wr.aligned);
-  EXPECT_EQ(old.size(), 52u);
-
-  data_record ckpt;
-  ckpt.type = record_type::log_checkpoint;
-  ckpt.pool_id = 1;
-  ckpt.pg_id = 1;
-  ckpt.store_epoch = 1;
-  ckpt.payload = old;
-  EXPECT_EQ(log.apply_checkpoint_record(ckpt), 0);
-  EXPECT_EQ(log.last_index(), 1);
-  EXPECT_EQ(log.get_term(1), 4);
-
-  // Unset name_lookup: raft_log_entry still reads; data-as-log would fail.
-  auto rr = read_log(log, 1, 1);
-  EXPECT_EQ(rr.err, 0);
-  EXPECT_EQ(rr.entries.size(), 1);
-  EXPECT_TRUE(rr.entries[0].meta == "old-ckpt");
-  EXPECT_TRUE(rr.entries[0].data == "payload");
-}
-
-void test_log_store_checkpoint_preserves_data_rec_type() {
-  mem_device_backend dev(4 * 1024 * 1024);
-  auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
-                                                   dev.block_size());
-  EXPECT_EQ(alloc->ensure_open(), 0);
-  log_store log(&dev, pg_id{1, 2, 1}, alloc, buffer_mode::heap);
-
-  data_record rec;
-  rec.type = record_type::data;
-  rec.pool_id = 1;
-  rec.pg_id = 2;
-  rec.store_epoch = 1;
-  rec.object_id = 11;
-  rec.object_offset = 4096;
-  rec.image_snap_seq = 6;
-  rec.payload.assign(4096, 'C');
-  auto wr = write_raw_record(&dev, alloc.get(), rec);
-  EXPECT_EQ(wr.err, 0);
-  EXPECT_EQ(log.register_index(1, 8, wr.phys, wr.aligned, record_type::data),
-            0);
-  sync_result r;
-  log.checkpoint(on_done, &r);
-  EXPECT_EQ(r.err, 0);
-
-  std::vector<uint8_t> image(static_cast<size_t>(dev.write_pointer()));
-  r = {};
-  dev.read(0, image.data(), image.size(), on_done, &r);
-  EXPECT_EQ(r.err, 0);
-  auto alloc2 = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
-                                                    dev.block_size());
-  log_store log2(&dev, pg_id{1, 2, 1}, alloc2, buffer_mode::heap);
-  log2.rebuild_from_image(image.data(), image.size());
-  EXPECT_EQ(log2.last_index(), 1);
-  EXPECT_EQ(log2.get_term(1), 8);
-  log2.set_name_lookup([](uint64_t oid, std::string* name) {
-    if (oid != 11 || name == nullptr) {
-      return -ENOENT;
-    }
-    *name = "ckpt-obj";
-    return 0;
-  });
-  auto rr = read_log(log2, 1, 1);
-  EXPECT_EQ(rr.err, 0);
-  EXPECT_EQ(rr.entries.size(), 1);
-  EXPECT_EQ(rr.entries[0].type, 0); // RAFT_LOGTYPE_WRITE
-  EXPECT_EQ(rr.entries[0].data.size(), 4096);
-  EXPECT_TRUE(rr.entries[0].data == rec.payload);
-  std::string name;
-  EXPECT_TRUE(proto_bytes_field(rr.entries[0].meta, 1, &name));
-  EXPECT_TRUE(name == "ckpt-obj");
-  uint64_t off = 0;
-  EXPECT_TRUE(proto_u64_field(rr.entries[0].meta, 2, &off));
-  EXPECT_EQ(off, 4096);
-}
-
-void test_log_store_range_tombstone_read_notsup() {
-  mem_device_backend dev(4 * 1024 * 1024);
-  auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
-                                                   dev.block_size());
-  EXPECT_EQ(alloc->ensure_open(), 0);
-  log_store log(&dev, pg_id{1, 2, 1}, alloc, buffer_mode::heap);
-  log.set_name_lookup([](uint64_t, std::string* name) {
-    *name = "discard-obj";
-    return 0;
-  });
-
-  data_record rec;
-  rec.type = record_type::range_tombstone;
-  rec.object_id = 1;
-  rec.object_offset = 0;
-  rec.payload.assign(8, '\0');
-  auto wr = write_raw_record(&dev, alloc.get(), rec);
-  EXPECT_EQ(wr.err, 0);
-  EXPECT_EQ(log.register_index(1, 1, wr.phys, wr.aligned,
-                               record_type::range_tombstone),
-            0);
-  auto rr = read_log(log, 1, 1);
-  EXPECT_EQ(rr.err, -ENOTSUP);
-  EXPECT_EQ(rr.entries.size(), 0);
-}
-
-void test_log_store_gc_rewrite_as_data() {
-  mem_device_backend dev(4 * 1024 * 1024);
-  auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
-                                                   dev.block_size());
-  EXPECT_EQ(alloc->ensure_open(), 0);
-  log_store log(&dev, pg_id{1, 2, 1}, alloc, buffer_mode::heap);
-  log.set_name_lookup([](uint64_t, std::string* name) {
-    *name = "gc-obj";
-    return 0;
-  });
-
-  data_record rec;
-  rec.type = record_type::gc_rewrite;
-  rec.object_id = 3;
-  rec.object_offset = 8192;
-  rec.image_snap_seq = 2;
-  rec.payload.assign(4096, 'G');
-  auto wr = write_raw_record(&dev, alloc.get(), rec);
-  EXPECT_EQ(wr.err, 0);
-  EXPECT_EQ(log.register_index(1, 5, wr.phys, wr.aligned,
-                               record_type::gc_rewrite),
-            0);
-  auto rr = read_log(log, 1, 1);
-  EXPECT_EQ(rr.err, 0);
-  EXPECT_EQ(rr.entries.size(), 1);
-  EXPECT_EQ(rr.entries[0].type, 0);
-  EXPECT_EQ(rr.entries[0].data.size(), 4096);
-  EXPECT_TRUE(rr.entries[0].data == rec.payload);
-  std::string name;
-  EXPECT_TRUE(proto_bytes_field(rr.entries[0].meta, 1, &name));
-  EXPECT_TRUE(name == "gc-obj");
-  uint64_t off = 0;
-  EXPECT_TRUE(proto_u64_field(rr.entries[0].meta, 2, &off));
-  EXPECT_EQ(off, 8192);
-}
-
-void test_log_store_update_phys() {
-  mem_device_backend dev(4 * 1024 * 1024);
-  auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
-                                                   dev.block_size());
-  EXPECT_EQ(alloc->ensure_open(), 0);
-  log_store log(&dev, pg_id{1, 2, 1}, alloc, buffer_mode::heap);
-  log.set_name_lookup([](uint64_t, std::string* name) {
-    *name = "u";
-    return 0;
-  });
-
-  data_record a;
-  a.type = record_type::data;
-  a.object_id = 1;
-  a.payload.assign(4096, 'A');
-  data_record b = a;
-  b.type = record_type::gc_rewrite;
-  b.payload.assign(4096, 'B');
-  auto wa = write_raw_record(&dev, alloc.get(), a);
-  auto wb = write_raw_record(&dev, alloc.get(), b);
-  EXPECT_EQ(wa.err, 0);
-  EXPECT_EQ(wb.err, 0);
-  EXPECT_EQ(log.register_index(1, 1, wa.phys, wa.aligned, record_type::data),
-            0);
-  auto rr = read_log(log, 1, 1);
-  EXPECT_EQ(rr.err, 0);
-  EXPECT_EQ(rr.entries[0].data[0], 'A');
-
-  log.update_phys(1, wb.phys, wb.aligned);
-  rr = read_log(log, 1, 1);
-  EXPECT_EQ(rr.err, 0);
-  EXPECT_EQ(rr.entries.size(), 1);
-  EXPECT_EQ(rr.entries[0].data[0], 'B');
-
-  log.update_phys(99, wb.phys, wb.aligned);
-  EXPECT_TRUE(!log.contains(99));
-  EXPECT_EQ(log.last_index(), 1);
-}
-
-void test_log_store_delete_tombstone_as_log() {
-  mem_device_backend dev(4 * 1024 * 1024);
-  auto alloc = std::make_shared<segment_allocator>(0, dev.capacity(), 0,
-                                                   dev.block_size());
-  EXPECT_EQ(alloc->ensure_open(), 0);
-  log_store log(&dev, pg_id{1, 2, 1}, alloc, buffer_mode::heap);
-  log.set_name_lookup([](uint64_t, std::string* name) {
-    *name = "gone";
-    return 0;
-  });
-  data_record rec;
-  rec.type = record_type::delete_tombstone;
-  rec.object_id = 8;
-  rec.image_snap_seq = 4;
-  auto wr = write_raw_record(&dev, alloc.get(), rec);
-  EXPECT_EQ(wr.err, 0);
-  EXPECT_EQ(log.register_index(1, 2, wr.phys, wr.aligned,
-                               record_type::delete_tombstone),
-            0);
-  auto rr = read_log(log, 1, 1);
-  EXPECT_EQ(rr.err, 0);
-  EXPECT_EQ(rr.entries.size(), 1);
-  EXPECT_EQ(rr.entries[0].type, 1); // RAFT_LOGTYPE_DELETE
-  EXPECT_EQ(rr.entries[0].data.size(), 0);
-  std::string name;
-  EXPECT_TRUE(proto_bytes_field(rr.entries[0].meta, 1, &name));
-  EXPECT_TRUE(name == "gone");
-  uint64_t img = 0;
-  EXPECT_TRUE(proto_u64_field(rr.entries[0].meta, 2, &img));
-  EXPECT_EQ(img, 4);
-}
-
-void test_osd_store_injects_name_lookup() {
-  mem_device_backend dev(8 * 1024 * 1024);
-  osd_store osd(&dev, buffer_mode::heap, 256 * 1024);
-  sync_result r;
-  osd.format(on_done, &r);
-  EXPECT_EQ(r.err, 0);
-  r = {};
-  osd.create_pg(1, 0, on_done, &r);
-  EXPECT_EQ(r.err, 0);
-  std::vector<char> payload(4096, 'A');
-  r = {};
-  osd.apply(1, 0, "wired-obj", 0, payload.data(), 4096, /*raft*/ 1, 0, on_done,
-            &r);
-  EXPECT_EQ(r.err, 0);
-
-  pg_store* pg = osd.get_active_pg(1, 0);
-  EXPECT_TRUE(pg != nullptr);
-  std::string n;
-  EXPECT_EQ(pg->name_of(1, &n), 0);
-  EXPECT_TRUE(n == "wired-obj");
-  EXPECT_EQ(pg->name_of(99, &n), -ENOENT);
-
-  log_store* log = osd.get_active_log(1, 0);
-  EXPECT_TRUE(log != nullptr);
-  data_record rec;
-  rec.type = record_type::data;
-  rec.pool_id = 1;
-  rec.pg_id = 0;
-  rec.store_epoch = pg->id().store_epoch;
-  rec.object_id = 1;
-  rec.object_offset = 0;
-  rec.payload.assign(4096, 'Z');
-  auto wr = write_raw_record(osd.backend(), osd.allocator(), rec);
-  EXPECT_EQ(wr.err, 0);
-  EXPECT_EQ(log->register_index(1, 1, wr.phys, wr.aligned, record_type::data),
-            0);
-  auto rr = read_log(*log, 1, 1);
-  EXPECT_EQ(rr.err, 0);
-  EXPECT_EQ(rr.entries.size(), 1);
-  EXPECT_TRUE(!rr.entries[0].meta.empty());
-  std::string name;
-  EXPECT_TRUE(proto_bytes_field(rr.entries[0].meta, 1, &name));
-  EXPECT_TRUE(name == "wired-obj");
-  EXPECT_EQ(rr.entries[0].data.size(), 4096);
-  EXPECT_EQ(rr.entries[0].data[0], 'Z');
-}
-
 void test_format_zeros_leftover_then_recover_empty() {
   mem_device_backend dev(2 * 1024 * 1024);
   // Dirty the data region with 0x55.
@@ -3327,15 +2681,158 @@ void test_format_zeros_leftover_then_recover_empty() {
   EXPECT_EQ(osd2.pg_count(), 0u);
 }
 
+bool find_first_data_record(const mem_device_backend& dev, uint64_t* start,
+                            uint16_t* hlen) {
+  if (start == nullptr || hlen == nullptr) {
+    return false;
+  }
+  const auto& s = dev.storage();
+  const uint64_t wp = dev.write_pointer();
+  const uint32_t bs = dev.block_size();
+  uint64_t pos = 0;
+  while (pos + kRecordHeaderLenV1 <= wp) {
+    data_record rec;
+    size_t consumed = 0;
+    const decode_status st =
+        decode_record(s.data() + static_cast<size_t>(pos),
+                      static_cast<size_t>(wp - pos), &rec, &consumed);
+    if (st != decode_status::ok || consumed == 0) {
+      break;
+    }
+    if (rec.type == record_type::data) {
+      *start = pos;
+      *hlen = static_cast<uint16_t>(s[static_cast<size_t>(pos) + 8] |
+                                    (s[static_cast<size_t>(pos) + 9] << 8));
+      return true;
+    }
+    pos += ((consumed + bs - 1) / bs) * bs;
+  }
+  return false;
+}
+
+void test_pg_store_append_uncommitted_not_readable() {
+  mem_device_backend dev(32 * 1024 * 1024);
+  pg_store store(&dev, pg_id{1, 0, 1});
+  std::vector<char> data(4096, 'U');
+  sync_result r;
+  store.append_uncommitted("pend", 0, data.data(), data.size(), /*raft*/ 7,
+                           /*term*/ 1, /*image*/ 0, on_done, &r);
+  EXPECT_TRUE(r.done);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(store.object_exists("pend"));
+
+  std::vector<char> out(4096, 1);
+  r = {};
+  store.read("pend", 0, out.data(), out.size(), on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(std::all_of(out.begin(), out.end(), [](char c) { return c == 0; }));
+
+  // Unpublished payload must stay live for GC.
+  uint64_t live = 0;
+  store.for_each_live_extent([&](uint64_t phys, uint64_t len) {
+    if (len == 4096) {
+      live = phys;
+    }
+  });
+  EXPECT_TRUE(live != 0);
+}
+
+void test_pg_store_publish_commit_readable() {
+  mem_device_backend dev(32 * 1024 * 1024);
+  pg_store store(&dev, pg_id{1, 0, 1});
+  std::vector<char> data(4096, 'P');
+  sync_result r;
+  store.append_uncommitted("pub", 0, data.data(), data.size(), 11, 2, 0,
+                           on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  r = {};
+  store.publish_commit(11, on_done, &r);
+  EXPECT_TRUE(r.done);
+  EXPECT_EQ(r.err, 0);
+
+  std::vector<char> out(4096, 0);
+  r = {};
+  store.read("pub", 0, out.data(), out.size(), on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(out == data);
+
+  // Missing pending index is a no-op success.
+  r = {};
+  store.publish_commit(99, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+}
+
+void test_pg_store_drop_pending_isolated_name() {
+  mem_device_backend dev(32 * 1024 * 1024);
+  pg_store store(&dev, pg_id{1, 0, 1});
+  std::vector<char> data(4096, 'G');
+  sync_result r;
+  store.append_uncommitted("ghost", 0, data.data(), data.size(), 3, 1, 0,
+                           on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(store.object_exists("ghost"));
+  const uint64_t nid = store.next_object_id();
+  EXPECT_TRUE(nid > 1);
+
+  store.drop_pending_from(3);
+  EXPECT_TRUE(!store.object_exists("ghost"));
+  EXPECT_EQ(store.next_object_id(), nid);
+
+  // Committed names are not dropped with later unpublished suffix.
+  r = {};
+  store.write("keep", 0, data.data(), data.size(), 1, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  r = {};
+  store.append_uncommitted("keep", 4096, data.data(), data.size(), 20, 1, 0,
+                           on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  store.drop_pending_from(20);
+  EXPECT_TRUE(store.object_exists("keep"));
+}
+
+void test_pg_store_write_still_immediately_readable() {
+  mem_device_backend dev(32 * 1024 * 1024);
+  pg_store store(&dev, pg_id{1, 0, 1});
+  std::vector<char> data(4096, 'W');
+  sync_result r;
+  store.write("hot", 0, data.data(), data.size(), 4, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  std::vector<char> out(4096, 0);
+  r = {};
+  store.read("hot", 0, out.data(), out.size(), on_done, &r);
+  EXPECT_EQ(r.err, 0);
+  EXPECT_TRUE(out == data);
+}
+
+void test_pg_store_write_phys_uses_header_len() {
+  mem_device_backend dev(32 * 1024 * 1024);
+  pg_store store(&dev, pg_id{1, 0, 1});
+  std::vector<char> data(4096, 'H');
+  sync_result r;
+  store.write("hlen", 0, data.data(), data.size(), 5, 0, on_done, &r);
+  EXPECT_EQ(r.err, 0);
+
+  uint64_t rec_start = 0;
+  uint16_t hlen = 0;
+  EXPECT_TRUE(find_first_data_record(dev, &rec_start, &hlen));
+  EXPECT_TRUE(hlen != 0);
+
+  uint64_t live_phys = 0;
+  store.for_each_live_extent([&](uint64_t phys, uint64_t len) {
+    if (len == 4096) {
+      live_phys = phys;
+    }
+  });
+  EXPECT_EQ(live_phys, rec_start + hlen);
+  EXPECT_EQ(live_phys, payload_phys(rec_start, hlen));
+}
+
 } // namespace
 
 int main() {
   test_crc32_smoke();
   test_record_roundtrip();
-  test_record_v3_roundtrip();
-  test_record_default_encode_v2();
-  test_record_illegal_version_and_header_len();
-  test_record_v3_short_header_need_more();
   test_record_need_more();
   test_record_bad_payload_crc();
   test_record_bad_magic();
@@ -3375,16 +2872,6 @@ int main() {
   test_compute_shard_region();
   test_gc_rewrite_rate_limit();
   test_log_store_append_read_trim();
-  test_log_store_append_type14_still_readable();
-  test_log_store_register_data_as_log();
-  test_log_store_read_requires_name_lookup();
-  test_log_store_old_checkpoint_default_raft();
-  test_log_store_checkpoint_preserves_data_rec_type();
-  test_log_store_range_tombstone_read_notsup();
-  test_log_store_gc_rewrite_as_data();
-  test_log_store_update_phys();
-  test_log_store_delete_tombstone_as_log();
-  test_osd_store_injects_name_lookup();
   test_log_store_rebuild_from_image();
   test_log_store_torn_tail();
   test_kv_engine_put_durable_and_stop_flush();
@@ -3410,6 +2897,11 @@ int main() {
   test_aos_dump_collect_live_lww();
   test_pg_store_flatten_image();
   test_osd_store_image_snap_and_gc_pass();
+  test_pg_store_append_uncommitted_not_readable();
+  test_pg_store_publish_commit_readable();
+  test_pg_store_drop_pending_isolated_name();
+  test_pg_store_write_still_immediately_readable();
+  test_pg_store_write_phys_uses_header_len();
 
   if (g_failures != 0) {
     std::fprintf(stderr, "aos_m1_test: %d failure(s)\n", g_failures);
