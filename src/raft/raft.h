@@ -1007,10 +1007,15 @@ typedef enum {
 
     /** Durable log base after install-snapshot; STM does not apply. */
     RAFT_LOGTYPE_SNAPSHOT_BASE,
+
+    /** Current-term fence after become_leader (aos_unified_log P6). */
+    RAFT_LOGTYPE_NOOP,
 } raft_logtype_e;
 
 static_assert(RAFT_LOGTYPE_SNAPSHOT_BASE == 4,
               "must match aos::kRaftLogTypeSnapshotBase");
+static_assert(RAFT_LOGTYPE_NOOP == 5,
+              "must match aos::kRaftLogTypeNoop");
 
 /** Initialise a new Raft server.
  *
