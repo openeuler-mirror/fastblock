@@ -30,6 +30,7 @@ message raft_entry_t
     int32 type = 3;
     bytes meta = 4;
     bytes data = 5;
+    uint32 data_len = 6;
 }
 
 /** Appendentries message.
@@ -220,6 +221,7 @@ message snapshot_check_response {
 message object_data_info {
     bytes obj_name = 1;
     bytes data = 2;
+    uint32 data_len = 3;
 }
 
 message installsnapshot_request {
