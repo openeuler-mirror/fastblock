@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cctype>
+#include <cstdlib>
 #include <cstring>
 
 namespace fastblock::aos {
@@ -293,6 +294,28 @@ const char* object_engine_mode_name(object_engine_mode m) {
   default:
     return "blob";
   }
+}
+
+namespace {
+bool g_unified_log = false;
+bool g_unified_log_inited = false;
+}
+
+bool unified_log_enabled() {
+  if (!g_unified_log_inited) {
+    g_unified_log_inited = true;
+    const char* e = std::getenv("FASTBLOCK_AOS_UNIFIED_LOG");
+    // Production default stays 0; only an explicit "1" enables.
+    if (e != nullptr && e[0] == '1' && e[1] == '\0') {
+      g_unified_log = true;
+    }
+  }
+  return g_unified_log;
+}
+
+void set_unified_log_enabled(bool on) {
+  g_unified_log = on;
+  g_unified_log_inited = true;
 }
 
 bool compute_shard_region(uint64_t capacity_bytes, uint32_t shard_count,
