@@ -62,7 +62,7 @@ public:
 
   /**
    * Append one entry (must be last_index+1, or first entry if empty).
-   * Completes after write_at + flush. Still writes type=14.
+   * Completes after write_at + flush.
    */
   void append(const log_entry& entry, op_complete cb, void* arg);
 
