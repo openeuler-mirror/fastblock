@@ -293,7 +293,12 @@ static void create_rpc_server(void* arg1, void* arg2) {
         rpc_srv = server->rpc_servers.at(shard_id).get();
         SPDK_NOTICELOG("Created rpc server on core %d\n", shard_id);
     } catch (const std::exception& e) {
-        SPDK_ERRLOG("ERROR: Create rpc server on core %d failed, %s\n", ::spdk_env_get_current_core(), e.what());
+        // ibv_reg_mr / listen / bind fail here as exceptions, not SIGABRT.
+        // on_rpc_server_started(false) -> service_init cb -> SIGINT; mon is
+        // never contacted because start_monitor is after a successful start.
+        SPDK_ERRLOG(
+          "ERROR: Create rpc server on core %d failed, %s (shard will not boot to mon)\n",
+          ::spdk_env_get_current_core(), e.what());
         goto run_cb;
     }
 
@@ -537,7 +542,7 @@ struct pm_load_context : public utils::context{
         osd_load_ctx* ctx = (osd_load_ctx* )arg;
         service_init(ctx->pm, ctx->server, [ctx] (bool is_ok) {
             if (not is_ok) {
-                SPDK_ERRLOG("service init failed\n");
+                SPDK_ERRLOG("service init failed (rpc server construct/listen); not contacting mon\n");
                 osd_exit_code = err::E_INVAL;
                 delete ctx;
                 std::raise(SIGINT);
