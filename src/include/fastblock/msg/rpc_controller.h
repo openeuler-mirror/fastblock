@@ -10,7 +10,7 @@
  */
 #pragma once
 
-#include "fastblock/msg/rdma/types.h"
+#include "fastblock/msg/types.h"
 
 #include <string>
 
