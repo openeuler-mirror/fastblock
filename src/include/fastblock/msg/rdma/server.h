@@ -10,6 +10,7 @@
  */
 #pragma once
 
+#include "fastblock/msg/rdma/completed_key_ring.h"
 #include "fastblock/msg/rdma/connection_id.h"
 #include "fastblock/msg/rdma/cq.h"
 #include "fastblock/msg/rdma/probe.h"
@@ -60,7 +61,8 @@ private:
         std::unique_ptr<memory_pool<::ibv_recv_wr>> recv_pool{nullptr};
         std::unique_ptr<memory_pool<::ibv_recv_wr>::net_context*[]> recv_ctx{nullptr};
         std::unordered_map<work_request_id::value_type, memory_pool<::ibv_recv_wr>::net_context*> recv_ctx_map{};
-        std::unordered_map<transport_data::correlation_index_type, rpc_task*> rpc_tasks{};
+        std::unordered_map<uint32_t, rpc_task*> rpc_tasks{};
+        completed_key_ring done_keys{};
         std::list<std::unique_ptr<::ibv_wc>> cqe_list{};
         bool should_signal{false};
         int32_t onflight_send_wr{0};
@@ -68,6 +70,12 @@ private:
 
     struct rpc_task {
         using server_id_type = uint64_t;
+
+        rpc_task(
+          server_id_type sid,
+          transport_data::correlation_index_type cid,
+          std::shared_ptr<connection_record> c)
+          : server_id{sid}, id{cid}, conn{std::move(c)} {}
 
         server_id_type server_id{0};
         transport_data::correlation_index_type id{0};
@@ -320,15 +328,24 @@ private:
     }
 
     void handle_timeout_task(std::unique_ptr<rpc_task> task) {
-        SPDK_ERRLOG("ERROR: Timeout on task %d\n", task->id);
+        SPDK_ERRLOG("ERROR: Timeout on task %lu\n", task->id);
         ++rdma_probe.rpc_timeout;
         ++rdma_probe.rpc_complete_fail;
         enqueue_reply(std::move(task), status::request_timeout);
     }
 
+    void forget_rpc_task(
+      connection_record* conn, transport_data::correlation_index_type full) {
+        if (not conn) {
+            return;
+        }
+        conn->done_keys.remember(full);
+        conn->rpc_tasks.erase(transport_data::correlation_index_lo(full));
+    }
+
     void drop_rpc_task(std::unique_ptr<rpc_task> task) {
         if (task and task->conn) {
-            task->conn->rpc_tasks.erase(task->id);
+            forget_rpc_task(task->conn.get(), task->id);
         }
     }
 
@@ -339,7 +356,7 @@ private:
             ++rdma_probe.rpc_pool_exhausted;
             ++rdma_probe.rpc_complete_fail;
             SPDK_WARNLOG(
-              "drop rpc task %d, cannot prepare reply status %s, data_free=%zu pool_exhausted=%lu\n",
+              "drop rpc task %lu, cannot prepare reply status %s, data_free=%zu pool_exhausted=%lu\n",
               task->id, string_status(s),
               _data_pool ? _data_pool->size() : 0,
               rdma_probe.rpc_pool_exhausted);
@@ -347,7 +364,7 @@ private:
             return false;
         }
         if (task->conn) {
-            task->conn->rpc_tasks.erase(task->id);
+            forget_rpc_task(task->conn.get(), task->id);
         }
         _reply_task_list.push_back(std::move(task));
         return true;
@@ -614,7 +631,7 @@ private:
     bool make_response_data(rpc_task* task, status s) {
         task->reply_status = s;
         if (s != status::success) {
-            SPDK_DEBUGLOG(msg, "task id is %d, status is not success\n", task->id);
+            SPDK_DEBUGLOG(msg, "task id is %lu, status is not success\n", task->id);
             task->response_data = std::make_unique<transport_data>(
               task->id, reply_meta_size, _meta_pool, _data_pool);
         } else {
@@ -622,13 +639,13 @@ private:
             auto env_size = task->response_body->ByteSizeLong();
             auto response_size =
               reply_meta_size + env_size + task->response_payload.size();
-            SPDK_DEBUGLOG(msg, "task id is %d, status is success\n", task->id);
+            SPDK_DEBUGLOG(msg, "task id is %lu, status is success\n", task->id);
             task->response_data = std::make_unique<transport_data>(
               task->id, response_size, _meta_pool, _data_pool);
         }
         if (not task->response_data or not task->response_data->prepared()) {
             SPDK_NOTICELOG(
-              "failed to prepare response for task %d status %s\n",
+              "failed to prepare response for task %lu status %s\n",
               task->id, string_status(s));
             task->response_data.reset();
             return false;
@@ -640,7 +657,7 @@ private:
         auto dur = std::chrono::system_clock::now() - task->start_at;
         if (dur >= _opts->slow_method) {
             SPDK_WARNLOG(
-              "slow rpc method detected, task id is %d, dur is %ldms\n",
+              "slow rpc method detected, task id is %lu, dur is %ldms\n",
               task->id, dur.count() / 1000 / 1000);
         }
 
@@ -649,7 +666,7 @@ private:
             SPDK_DEBUGLOG(msg, "current thread %lu, thread %lu\n", spdk_thread_get_id(cur_thread), spdk_thread_get_id(_thread));
             auto rc = ::spdk_thread_send_msg(_thread, on_rpc_done, task);
             if (rc != 0) {
-                SPDK_ERRLOG("send msg failed, rc is %d, task id is %d\n", rc, task->id);
+                SPDK_ERRLOG("send msg failed, rc is %d, task id is %lu\n", rc, task->id);
                 throw std::runtime_error{"send msg failed"};
             }
         } else {
@@ -689,7 +706,7 @@ private:
 
         SPDK_DEBUGLOG(
           msg,
-          "request id %d, found service name: '%.*s', method name: '%.*s', %s => %s\n",
+          "request id %lu, found service name: '%.*s', method name: '%.*s', %s => %s\n",
           task->id,
           meta.service_name_size,
           meta.service_name,
@@ -786,12 +803,12 @@ private:
             return SPDK_POLLER_IDLE;
         }
 
-        SPDK_DEBUGLOG(msg, "task id is %d, task->response_data addr is %p\n", task->id, task->response_data.get());
+        SPDK_DEBUGLOG(msg, "task id is %lu, task->response_data addr is %p\n", task->id, task->response_data.get());
         if (not task->response_data or not task->response_data->prepared()) {
             ++rdma_probe.rpc_pool_exhausted;
             ++rdma_probe.rpc_complete_fail;
             SPDK_WARNLOG(
-              "drop unprepared reply task %d, data_free=%zu pool_exhausted=%lu\n",
+              "drop unprepared reply task %lu, data_free=%zu pool_exhausted=%lu\n",
               task->id,
               _data_pool ? _data_pool->size() : 0,
               rdma_probe.rpc_pool_exhausted);
@@ -804,20 +821,20 @@ private:
         if (err) {
             if (err->err.value() == ENOMEM) {
                 SPDK_NOTICELOG(
-                  "Post the reply wr of request %u return enomem\n",
+                  "Post the reply wr of request %lu return enomem\n",
                   task->id);
                 return SPDK_POLLER_IDLE;
             }
 
             SPDK_ERRLOG(
-             "ERROR: Send reply of task '%d' error '%s'\n",
+             "ERROR: Send reply of task '%lu' error '%s'\n",
               task->id, err->err.message().c_str());
             close_connection(task->conn.get());
 
             return SPDK_POLLER_BUSY;
         }
         ++rdma_probe.rpc_complete_ok;
-        SPDK_INFOLOG(msg, "send reply of rpc task %d\n", task->id);
+        SPDK_INFOLOG(msg, "send reply of rpc task %lu\n", task->id);
         _reply_task_list.pop_front();
 
         return SPDK_POLLER_BUSY;
@@ -843,7 +860,7 @@ private:
             return SPDK_POLLER_IDLE;
         }
 
-        SPDK_DEBUGLOG(msg, "exec rpc of id %d\n", task->id);
+        SPDK_DEBUGLOG(msg, "exec rpc of id %lu\n", task->id);
         auto req_meta = task->request_data->read_request_meta();
         dispatch_method(req_meta, std::move(task));
         _read_task_list.pop_front();
@@ -887,13 +904,13 @@ private:
 
         auto& task = _task_list.front();
         if (not task->request_data->is_metadata_complete()) {
-            SPDK_DEBUGLOG(msg, "rpc task %d, metadata is not complete\n", task->id);
+            SPDK_DEBUGLOG(msg, "rpc task %lu, metadata is not complete\n", task->id);
             return SPDK_POLLER_IDLE;
         }
 
         if (not task->request_data->prepared()) {
             SPDK_NOTICELOG(
-              "rpc task %d request transport not prepared, reply resource_exhausted\n",
+              "rpc task %lu request transport not prepared, reply resource_exhausted\n",
               task->id);
             auto fail = std::move(task);
             _task_list.pop_front();
@@ -901,18 +918,18 @@ private:
             return SPDK_POLLER_BUSY;
         }
 
-        SPDK_DEBUGLOG(msg, "post read wr of task %d\n", task->id);
+        SPDK_DEBUGLOG(msg, "post read wr of task %lu\n", task->id);
         auto rc = send_read_request(task->conn.get(), task->request_data.get());
         if (rc and rc->err.value() == ENOMEM) {
             SPDK_NOTICELOG(
-              "Post the read wr of request %d return enomem\n",
+              "Post the read wr of request %lu return enomem\n",
               task->id);
             return SPDK_POLLER_IDLE;
         }
 
         if (rc) {
             SPDK_ERRLOG(
-              "ERROR: Post read request of rpc task '%d' error, '%s'\n",
+              "ERROR: Post read request of rpc task '%lu' error, '%s'\n",
               task->id, rc->err.message().c_str());
             close_connection(task->conn.get());
         }
@@ -956,7 +973,8 @@ private:
             }
 
             auto recv_ctx = it->second;
-            auto task_id = transport_data::read_correlation_index(recv_ctx);
+            auto task_full = transport_data::read_correlation_index(recv_ctx);
+            auto task_id = transport_data::correlation_index_lo(task_full);
             bool is_new_task = transport_data::is_new(recv_ctx);
             bool is_inlined = transport_data::is_inlined(recv_ctx);
             bool is_no_content = transport_data::is_no_content(recv_ctx);
@@ -970,8 +988,8 @@ private:
 
             if (is_no_content) {
                 task_id = ::be32toh(cqe->imm_data);
-                SPDK_DEBUGLOG(msg, "free message cqe on task id %d\n", task_id);
-                SPDK_INFOLOG(msg, "RPC task of id %d done\n", task_id);
+                SPDK_DEBUGLOG(msg, "free message cqe on task id %u\n", task_id);
+                SPDK_INFOLOG(msg, "RPC task of id %u done\n", task_id);
                 auto rc = post_recv(conn.get(), recv_ctx);
                 if (rc) {
                     SPDK_ERRLOG("ERROR: Post receive wr error, '%s'\n", rc->message().c_str());
@@ -981,13 +999,13 @@ private:
                 return true;
             }
 
-            SPDK_DEBUGLOG(msg, "cqe on task id %d\n", task_id);
+            SPDK_DEBUGLOG(msg, "cqe on task id %lu\n", task_full);
             auto task_it = conn->rpc_tasks.find(task_id);
 
             if (is_new_task or is_inlined) {
-                SPDK_DEBUGLOG(msg, "new rpc task with correlation index %d\n", task_id);
-                auto task = std::make_unique<rpc_task>(_task_id_gen++, task_id, conn);
-                task->this_server = this; // FIXME: The server pointed to by this may have been destructed at access time.
+                SPDK_DEBUGLOG(msg, "new rpc task with correlation index %lu\n", task_full);
+                auto task = std::make_unique<rpc_task>(_task_id_gen++, task_full, conn);
+                task->this_server = this; // FIXME: 这里 this 指向的 server 可能已经析构了，在访问时。
 
                 if (_is_terminated) {
                     enqueue_reply(std::move(task), status::terminating);
@@ -999,7 +1017,7 @@ private:
                     auto meta = load_request_meta(inlined_data);
                     SPDK_DEBUGLOG(
                       msg,
-                      "[%d] parsed rpc meta, task id is %d, service name is %.*s, method name is %.*s\n",
+                      "[%d] parsed rpc meta, task id is %lu, service name is %.*s, method name is %.*s\n",
                       ::spdk_env_get_current_core(),
                       task->id,
                       meta.service_name_size,
@@ -1013,17 +1031,26 @@ private:
                     return true;
                 }
 
-                SPDK_DEBUGLOG(msg, "created request_data for task id %d\n", task->id);
+                SPDK_DEBUGLOG(msg, "created request_data for task id %lu\n", task->id);
                 task->request_data = std::make_unique<transport_data>(_data_pool);
                 auto [it, _] = conn->rpc_tasks.emplace(task_id, task.get());
                 task_it = it;
                 _task_list.push_back(std::move(task));
-            } else if (task_it == conn->rpc_tasks.end()) {
+            } else if (task_it == conn->rpc_tasks.end() or
+                       task_it->second->id != task_full) {
+                if (conn->done_keys.contains(task_full)) {
+                    auto rc = post_recv(conn.get(), recv_ctx);
+                    if (rc) {
+                        SPDK_ERRLOG("ERROR: Post receive wr error, '%s'\n", rc->message().c_str());
+                        close_connection(conn.get());
+                    }
+                    return true;
+                }
                 ++rdma_probe.rpc_unknown_key;
                 SPDK_INFOLOG(
                   msg,
-                  "unknown rpc task id %d, drop and keep QP, unknown_key=%lu\n",
-                  task_id, rdma_probe.rpc_unknown_key);
+                  "unknown rpc task id %lu, drop and keep QP, unknown_key=%lu\n",
+                  task_full, rdma_probe.rpc_unknown_key);
                 auto rc = post_recv(conn.get(), recv_ctx);
                 if (rc) {
                     SPDK_ERRLOG("ERROR: Post receive wr error, '%s'\n", rc->message().c_str());
@@ -1033,7 +1060,7 @@ private:
                 return true;
             }
 
-            SPDK_DEBUGLOG(msg, "handle rpc task with id %d, _task_list size is %lu\n", task_id, _task_list.size());
+            SPDK_DEBUGLOG(msg, "handle rpc task with id %u, _task_list size is %lu\n", task_id, _task_list.size());
             auto* task = task_it->second;
             task->request_data->from_net_context(recv_ctx);
 
@@ -1204,11 +1231,11 @@ public:
         } else {
             SPDK_INFOLOG(
               msg,
-              "Making rpc response body of request id %d\n",
+              "Making rpc response body of request id %lu\n",
               task_id);
             enqueue_reply(std::move(owned), status::success);
         }
-        SPDK_DEBUGLOG(msg, "task id %d rpc exec done\n", task_id);
+        SPDK_DEBUGLOG(msg, "task id %lu rpc exec done\n", task_id);
     }
 
     int handle_ib_cm_event_poll() {
