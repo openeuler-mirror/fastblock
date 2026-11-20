@@ -87,6 +87,30 @@ public:
              op_complete cb, void* arg);
 
   /**
+   * Append a data record and flush, but do not publish head. The name is
+   * registered (empty head) before flush so checkpoint can see the create.
+   * Reads / view_at do not observe the payload until publish_commit.
+   */
+  void append_uncommitted(const std::string& object_name, uint64_t offset,
+                          const void* data, uint64_t len, uint64_t raft_index,
+                          uint64_t raft_term, uint64_t image_snap_seq,
+                          op_complete cb, void* arg);
+  void append_uncommitted_remove(const std::string& object_name,
+                                 uint64_t raft_index, uint64_t raft_term,
+                                 uint64_t image_snap_seq, op_complete cb,
+                                 void* arg);
+  void append_uncommitted_discard(const std::string& object_name,
+                                  uint64_t offset, uint64_t len,
+                                  uint64_t raft_index, uint64_t raft_term,
+                                  uint64_t image_snap_seq, op_complete cb,
+                                  void* arg);
+
+  // In-memory: pending[index] -> head + version log. Missing index is 0.
+  void publish_commit(uint64_t raft_index, op_complete cb, void* arg);
+  // Drop pending >= from_index. Isolated unpublished creates lose their name.
+  void drop_pending_from(uint64_t from_index);
+
+  /**
    * Read object view. Missing ranges are zero-filled.
    * raft_read_index == 0 && image_read_seq == 0: head.
    * raft_read_index > 0: raft snapshot view at that index (M3).
@@ -237,11 +261,12 @@ public:
   uint64_t rebuild_from_image(const uint8_t* image, size_t len);
 
   uint64_t object_count() const { return objects_.size(); }
+  uint64_t next_object_id() const { return next_object_id_; }
   bool busy() const { return busy_; }
 
   /**
-   * Visit every live physical extent. Head always; if any raft/image snapshot
-   * pin is held, also all historical put extents (conservative pin for GC).
+   * Visit every live physical extent. Head always; unpublished pending puts;
+   * if any raft/image snapshot pin is held, also all historical put extents.
    */
   void for_each_live_extent(
       const std::function<void(uint64_t phys_offset, uint64_t length)>& fn)
@@ -271,9 +296,6 @@ public:
 
   bool object_exists(const std::string& name) const;
 
-  /** object_id → name for AE name_lookup. Missing or empty → -ENOENT. */
-  int name_of(uint64_t object_id, std::string* name) const;
-
 private:
   // In-memory version log for snapshot reads (M3).
   struct version_op {
@@ -295,6 +317,19 @@ private:
     std::map<std::pair<uint64_t, uint64_t>, uint64_t> applied_writes;
     std::map<std::pair<uint64_t, uint64_t>, uint64_t> applied_discards;
     uint64_t delete_raft_index{0};
+  };
+
+  struct pending_op {
+    version_op::kind k{version_op::kind::put};
+    uint64_t raft_index{0};
+    uint64_t raft_term{0};
+    uint64_t image_seq{0};
+    uint64_t object_id{0};
+    uint64_t offset{0};
+    uint64_t len{0};
+    std::string object_name;
+    uint64_t record_start{0};
+    uint16_t header_len{0};
   };
 
   struct write_req;
@@ -323,6 +358,8 @@ private:
                               uint64_t raft_index, uint64_t image_seq);
   void record_version_remove(object_state* obj, uint64_t raft_index,
                              uint64_t image_seq);
+  void apply_pending_op(const pending_op& op);
+  void erase_isolated_create(const pending_op& op);
 
   void pin_snapshot_index(std::map<uint64_t, uint32_t>* pins,
                           uint32_t* total, uint64_t index);
@@ -384,6 +421,7 @@ private:
 
   std::unordered_map<std::string, uint64_t> name_to_id_;
   std::unordered_map<uint64_t, object_state> objects_;
+  std::map<uint64_t, pending_op> pending_;
 
   // raft_apply_index -> pin count
   std::map<uint64_t, uint32_t> snapshot_pins_;
