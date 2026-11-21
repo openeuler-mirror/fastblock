@@ -241,8 +241,16 @@ public:
     // int config_cache_flush();
     int entry_queue_flush();
 
+    bool has_queued_entries() const { return !_entry_queue.empty(); }
+
     std::shared_ptr<raft_entry_t> get_entry(raft_index_t idx){
         return _entries.get(idx);
+    }
+
+    // Drop in-memory entries at idx and after; next append reuses idx.
+    void drop_cache_from(raft_index_t idx, int result) {
+        _entries.drop_from(idx, result);
+        set_next_idx(idx);
     }
 
     void set_next_idx(raft_index_t next_idx){
