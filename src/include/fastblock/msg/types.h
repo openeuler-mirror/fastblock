@@ -11,6 +11,7 @@
 #pragma once
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -58,9 +59,30 @@ enum class iterate_tag {
 static constexpr uint8_t max_rpc_meta_string_size{31};
 
 // Documented development default for msg_{client,server}_rpc_timeout_us
-// when the json key is omitted. Long regression / snapshot-wait must set
-// the json key (vstart: FASTBLOCK_RPC_TIMEOUT_US=600000000).
+// when the json key is omitted. Data-path RPCs stay on this deadline.
 static constexpr int64_t default_rpc_timeout_us{1'000'000};
+
+// Membership change and image-snap wait for raft catch-up. They must not
+// share the 1s data-path deadline: the server used to reply request_timeout
+// and drop the real completion (client exit 109 / RAFT_ERR_NO_CONNECTED).
+static constexpr int64_t long_running_rpc_timeout_us{600'000'000};
+
+inline bool rpc_method_is_long_running(std::string_view method) noexcept {
+    return method == "process_change_nodes" ||
+           method == "process_add_node" ||
+           method == "process_remove_node" ||
+           method == "process_image_snap";
+}
+
+inline std::chrono::microseconds rpc_timeout_for_method(
+        std::string_view method,
+        std::chrono::microseconds configured) noexcept {
+    const auto floor = std::chrono::microseconds{long_running_rpc_timeout_us};
+    if (rpc_method_is_long_running(method) && configured < floor) {
+        return floor;
+    }
+    return configured;
+}
 
 enum class status : uint8_t {
     success = 1,
