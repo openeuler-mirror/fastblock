@@ -23,6 +23,7 @@
 #include <spdk/bdev_module.h>
 #include <spdk/log.h>
 #include <algorithm>
+#include <cerrno>
 #include <cstring>
 
 #include "bdev_fastblock.h"
@@ -37,6 +38,8 @@ static uint64_t future_id = 0;
 
 static int bdev_fastblock_count = 0;
 
+struct bdev_fastblock_io;
+
 struct bdev_fastblock
 {
 	struct spdk_bdev disk;
@@ -50,8 +53,8 @@ struct bdev_fastblock
 	// fastblock_image_info_t info;
 	TAILQ_ENTRY(bdev_fastblock)
 	tailq;
-	struct spdk_poller *reset_timer;
 	struct spdk_bdev_io *reset_bdev_io;
+	TAILQ_HEAD(bdev_fastblock_io_head, bdev_fastblock_io) outstanding;
 };
 
 struct bdev_fastblock_group_channel
@@ -66,6 +69,7 @@ struct bdev_fastblock_io_channel
 	// fastblock_image_t image;
 	struct bdev_fastblock *disk;
 	struct bdev_fastblock_group_channel *group_ch;
+	struct spdk_poller *io_watchdog;
 };
 
 struct bdev_fastblock_io
@@ -73,6 +77,11 @@ struct bdev_fastblock_io
 	size_t total_len;
 	uint64_t wz_off;
 	uint64_t wz_left;
+	TAILQ_ENTRY(bdev_fastblock_io) link;
+	bool in_flight;
+	bool completed;
+	uint64_t submit_ticks;
+	enum spdk_bdev_io_status complete_status;
 };
 
 static constexpr size_t k_write_zeroes_chunk = 128 * 1024;
@@ -214,26 +223,151 @@ struct spdk_bdev_module fastblock_if = {
 };
 SPDK_BDEV_MODULE_REGISTER(fastblock, &fastblock_if)
 
-static int
-bdev_fastblock_reset_timer(void *arg)
+static struct bdev_fastblock_io *
+bdev_fastblock_io_ctx(struct spdk_bdev_io *bdev_io)
 {
-	struct bdev_fastblock *disk = (struct bdev_fastblock *)arg;
+	return reinterpret_cast<struct bdev_fastblock_io *>(bdev_io->driver_ctx);
+}
 
-	spdk_bdev_io_complete(disk->reset_bdev_io, SPDK_BDEV_IO_STATUS_SUCCESS);
-	spdk_poller_unregister(&disk->reset_timer);
-	disk->reset_bdev_io = NULL;
+static void bdev_fastblock_maybe_finish_reset(struct bdev_fastblock *disk);
 
-	return SPDK_POLLER_BUSY;
+static void
+bdev_fastblock_track_io(struct bdev_fastblock *disk, struct spdk_bdev_io *bdev_io)
+{
+	auto *ctx = bdev_fastblock_io_ctx(bdev_io);
+	if (ctx->in_flight) {
+		return;
+	}
+	ctx->completed = false;
+	ctx->in_flight = true;
+	ctx->submit_ticks = spdk_get_ticks();
+	TAILQ_INSERT_TAIL(&disk->outstanding, ctx, link);
+}
+
+static void bdev_fastblock_complete_io_msg(void *arg);
+
+static void
+bdev_fastblock_complete_io(struct spdk_bdev_io *bdev_io, enum spdk_bdev_io_status status)
+{
+	auto *ctx = bdev_fastblock_io_ctx(bdev_io);
+	if (ctx->completed) {
+		return;
+	}
+	struct spdk_thread *want = spdk_bdev_io_get_thread(bdev_io);
+	struct spdk_thread *cur = spdk_get_thread();
+	if (want != nullptr && cur != want) {
+		ctx->complete_status = status;
+		if (spdk_thread_send_msg(want, bdev_fastblock_complete_io_msg, bdev_io) == 0) {
+			return;
+		}
+		SPDK_ERRLOG("bdev_fastblock: failed to hop complete onto submit thread\n");
+	}
+	ctx->completed = true;
+	auto *disk = (struct bdev_fastblock *)bdev_io->bdev->ctxt;
+	if (ctx->in_flight) {
+		TAILQ_REMOVE(&disk->outstanding, ctx, link);
+		ctx->in_flight = false;
+	}
+	spdk_bdev_io_complete(bdev_io, status);
+	bdev_fastblock_maybe_finish_reset(disk);
+}
+
+static void
+bdev_fastblock_complete_io_msg(void *arg)
+{
+	auto *bdev_io = static_cast<struct spdk_bdev_io *>(arg);
+	bdev_fastblock_complete_io(bdev_io, bdev_fastblock_io_ctx(bdev_io)->complete_status);
+}
+
+static void
+bdev_fastblock_maybe_finish_reset(struct bdev_fastblock *disk)
+{
+	if (!disk->reset_bdev_io || !TAILQ_EMPTY(&disk->outstanding)) {
+		return;
+	}
+	auto *reset_io = disk->reset_bdev_io;
+	disk->reset_bdev_io = nullptr;
+	bdev_fastblock_complete_io(reset_io, SPDK_BDEV_IO_STATUS_SUCCESS);
+}
+
+static std::shared_ptr<libblk_client> bdev_fastblock_blk_cli();
+static void bdev_fastblock_cancel_io(struct bdev_fastblock *disk, struct spdk_bdev_io *bdev_io);
+
+static int
+bdev_fastblock_io_watchdog(void *arg)
+{
+	auto *ch = static_cast<struct bdev_fastblock_io_channel *>(arg);
+	auto *disk = ch->disk;
+	if (!disk) {
+		return SPDK_POLLER_IDLE;
+	}
+	struct spdk_thread *cur = spdk_get_thread();
+	const uint64_t now = spdk_get_ticks();
+	const uint64_t limit = spdk_get_ticks_hz() * 6;
+	struct bdev_fastblock_io *ctx, *tmp;
+	TAILQ_FOREACH_SAFE(ctx, &disk->outstanding, link, tmp) {
+		auto *bdev_io = spdk_bdev_io_from_ctx(ctx);
+		if (spdk_bdev_io_get_thread(bdev_io) != cur) {
+			continue;
+		}
+		if (now - ctx->submit_ticks < limit) {
+			continue;
+		}
+		SPDK_NOTICELOG("bdev_fastblock watchdog: aborting I/O older than 6s\n");
+		bdev_fastblock_cancel_io(disk, bdev_io);
+	}
+	return SPDK_POLLER_IDLE;
+}
+
+static void
+bdev_fastblock_cancel_io(struct bdev_fastblock *disk, struct spdk_bdev_io *bdev_io)
+{
+	auto *ctx = bdev_fastblock_io_ctx(bdev_io);
+	if (ctx->completed) {
+		return;
+	}
+	auto blk_cli = bdev_fastblock_blk_cli();
+	if (blk_cli) {
+		blk_cli->cancel(bdev_io);
+	}
+	if (!ctx->completed) {
+		bdev_fastblock_complete_io(bdev_io, SPDK_BDEV_IO_STATUS_ABORTED);
+	}
 }
 
 static int
 bdev_fastblock_reset(struct bdev_fastblock *disk, struct spdk_bdev_io *bdev_io)
 {
-	assert(disk->reset_bdev_io == NULL);
+	if (disk->reset_bdev_io != nullptr) {
+		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
+		return 0;
+	}
 	disk->reset_bdev_io = bdev_io;
-	disk->reset_timer = SPDK_POLLER_REGISTER(bdev_fastblock_reset_timer, disk, 1 * 1000 * 1000);
-
+	SPDK_NOTICELOG("bdev_fastblock reset: draining outstanding I/O\n");
+	struct bdev_fastblock_io *ctx, *tmp;
+	TAILQ_FOREACH_SAFE(ctx, &disk->outstanding, link, tmp) {
+		bdev_fastblock_cancel_io(disk, spdk_bdev_io_from_ctx(ctx));
+	}
+	bdev_fastblock_maybe_finish_reset(disk);
 	return 0;
+}
+
+static void
+bdev_fastblock_abort(struct bdev_fastblock *disk, struct spdk_bdev_io *bdev_io)
+{
+	auto *target = bdev_io->u.abort.bio_to_abort;
+	if (!target || target->bdev != bdev_io->bdev) {
+		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
+		return;
+	}
+	auto *ctx = bdev_fastblock_io_ctx(target);
+	if (!ctx->in_flight || ctx->completed) {
+		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
+		return;
+	}
+	SPDK_INFOLOG(bdev_fastblock, "bdev_fastblock abort outstanding I/O\n");
+	bdev_fastblock_cancel_io(disk, target);
+	spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_SUCCESS);
 }
 
 static int
@@ -255,7 +389,7 @@ static void bdev_fastblock_read_callback(struct spdk_bdev_io *bdev_io, char* dat
 	if (res == errc::success)
 	{
 		if(!data){
-			spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_SUCCESS);
+			bdev_fastblock_complete_io(bdev_io, SPDK_BDEV_IO_STATUS_SUCCESS);
 			return;
 		}
 	    struct iovec *iovs = bdev_io->u.bdev.iovs;
@@ -272,7 +406,7 @@ static void bdev_fastblock_read_callback(struct spdk_bdev_io *bdev_io, char* dat
 	    }
 		if(length != len){
 			SPDK_ERRLOG("length: %lu len: %lu\n", length, len);
-			spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
+			bdev_fastblock_complete_io(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
 			return;
 		}
 
@@ -281,11 +415,15 @@ static void bdev_fastblock_read_callback(struct spdk_bdev_io *bdev_io, char* dat
 			ptr += iovs[i].iov_len;
 		}
 
-		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_SUCCESS);
+		bdev_fastblock_complete_io(bdev_io, SPDK_BDEV_IO_STATUS_SUCCESS);
+	}
+	else if (res == -ECANCELED)
+	{
+		bdev_fastblock_complete_io(bdev_io, SPDK_BDEV_IO_STATUS_ABORTED);
 	}
 	else
 	{
-		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
+		bdev_fastblock_complete_io(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
 	};
 	return;
 }
@@ -297,11 +435,15 @@ static void bdev_fastblock_write_callback(struct spdk_bdev_io *bdev_io, int32_t 
 {
 	if (res == errc::success)
 	{
-		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_SUCCESS);
+		bdev_fastblock_complete_io(bdev_io, SPDK_BDEV_IO_STATUS_SUCCESS);
+	}
+	else if (res == -ECANCELED)
+	{
+		bdev_fastblock_complete_io(bdev_io, SPDK_BDEV_IO_STATUS_ABORTED);
 	}
 	else
 	{
-		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
+		bdev_fastblock_complete_io(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
 	};
 	return;
 }
@@ -341,6 +483,7 @@ bdev_fastblock_write(struct spdk_bdev_io *bdev_io,
 		return;
 	}
 
+	bdev_fastblock_track_io(fastblock, bdev_io);
 	blk_cli->write(
       fastblock->pool_id,
       std::string(fastblock->image_name),
@@ -367,13 +510,20 @@ static void bdev_fastblock_write_zeroes_next(struct spdk_bdev_io *bdev_io);
 static void
 bdev_fastblock_write_zeroes_cb(struct spdk_bdev_io *bdev_io, int32_t res)
 {
+	if (res == -ECANCELED) {
+		bdev_fastblock_complete_io(bdev_io, SPDK_BDEV_IO_STATUS_ABORTED);
+		return;
+	}
 	if (res != errc::success) {
-		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
+		bdev_fastblock_complete_io(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
 		return;
 	}
 	auto *ctx = reinterpret_cast<struct bdev_fastblock_io *>(bdev_io->driver_ctx);
+	if (ctx->completed) {
+		return;
+	}
 	if (ctx->wz_left == 0) {
-		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_SUCCESS);
+		bdev_fastblock_complete_io(bdev_io, SPDK_BDEV_IO_STATUS_SUCCESS);
 		return;
 	}
 	bdev_fastblock_write_zeroes_next(bdev_io);
@@ -386,7 +536,7 @@ bdev_fastblock_write_zeroes_next(struct spdk_bdev_io *bdev_io)
 	auto *fastblock = (struct bdev_fastblock *)bdev_io->bdev->ctxt;
 	auto blk_cli = bdev_fastblock_blk_cli();
 	if (!blk_cli) {
-		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
+		bdev_fastblock_complete_io(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
 		return;
 	}
 
@@ -408,9 +558,11 @@ bdev_fastblock_write_zeroes(struct spdk_bdev_io *bdev_io)
 		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_SUCCESS);
 		return;
 	}
+	auto *fastblock = (struct bdev_fastblock *)bdev_io->bdev->ctxt;
 	auto *ctx = reinterpret_cast<struct bdev_fastblock_io *>(bdev_io->driver_ctx);
 	ctx->wz_off = bdev_io->u.bdev.offset_blocks * bdev_io->bdev->blocklen;
 	ctx->wz_left = len;
+	bdev_fastblock_track_io(fastblock, bdev_io);
 	bdev_fastblock_write_zeroes_next(bdev_io);
 }
 
@@ -424,7 +576,7 @@ bdev_fastblock_get_buf_cb(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_
 {
 	if (!success)
 	{
-		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
+		bdev_fastblock_complete_io(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
 		return;
 	}
 
@@ -457,6 +609,12 @@ bdev_fastblock_get_buf_cb(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_
 		blk_cli = global::blk_clients.at(global::app_thread_shard_id);
 	}
 
+	if (!blk_cli) {
+		bdev_fastblock_complete_io(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
+		return;
+	}
+
+	bdev_fastblock_track_io(fastblock, bdev_io);
 	blk_cli->read(
       fastblock->pool_id,
       std::string(fastblock->image_name),
@@ -470,6 +628,13 @@ bdev_fastblock_get_buf_cb(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_
 static void _bdev_fastblock_submit_request(struct spdk_bdev_io *bdev_io)
 {
 	struct bdev_fastblock *fastblock = (struct bdev_fastblock *)bdev_io->bdev->ctxt;
+
+	if (fastblock->reset_bdev_io != nullptr &&
+	    bdev_io->type != SPDK_BDEV_IO_TYPE_RESET &&
+	    bdev_io->type != SPDK_BDEV_IO_TYPE_ABORT) {
+		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
+		return;
+	}
 
 	switch (bdev_io->type)
 	{
@@ -496,11 +661,11 @@ static void _bdev_fastblock_submit_request(struct spdk_bdev_io *bdev_io)
 		return;
 
 	case SPDK_BDEV_IO_TYPE_RESET:
-		if (fastblock->reset_bdev_io != nullptr) {
-			spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
-			return;
-		}
 		bdev_fastblock_reset(fastblock, bdev_io);
+		return;
+
+	case SPDK_BDEV_IO_TYPE_ABORT:
+		bdev_fastblock_abort(fastblock, bdev_io);
 		return;
 
 	default:
@@ -527,6 +692,7 @@ bdev_fastblock_io_type_supported(void *ctx, enum spdk_bdev_io_type io_type)
 	case SPDK_BDEV_IO_TYPE_WRITE_ZEROES:
 	case SPDK_BDEV_IO_TYPE_FLUSH:
 	case SPDK_BDEV_IO_TYPE_RESET:
+	case SPDK_BDEV_IO_TYPE_ABORT:
 		return true;
 
 	default:
@@ -578,6 +744,7 @@ bdev_fastblock_create_cb(void *io_device, void *ctx_buf)
 	// ch->image = NULL;
 	// ch->io_ctx = NULL;
 	ch->pfd = -1;
+	ch->io_watchdog = nullptr;
 
 	if (spdk_call_unaffinitized(bdev_fastblock_handle, ch) == NULL)
 	{
@@ -644,6 +811,8 @@ bdev_fastblock_create_cb(void *io_device, void *ctx_buf)
         SPDK_INFOLOG(bdev_fastblock, "block client has been started on core %d, thread id %lu\n", ::spdk_env_get_current_core(), ::spdk_thread_get_id(::spdk_get_thread()));
     });
 
+	ch->io_watchdog = SPDK_POLLER_REGISTER(bdev_fastblock_io_watchdog, ch, 100 * 1000);
+
 	return 0;
 }
 
@@ -659,6 +828,10 @@ bdev_fastblock_destroy_cb(void *io_device, void *ctx_buf)
 	{
 		SPDK_ERRLOG("Failed to remove fd on io_channel=%p from the polling group=%p\n",
 					io_channel, io_channel->group_ch);
+	}
+
+	if (io_channel->io_watchdog) {
+		spdk_poller_unregister(&io_channel->io_watchdog);
 	}
 
 	bdev_fastblock_free_channel(io_channel);
@@ -796,6 +969,7 @@ int bdev_fastblock_create(struct spdk_bdev **bdev, const char *name,
 		SPDK_ERRLOG("Failed to allocate bdev_fastblock struct\n");
 		return -ENOMEM;
 	}
+	TAILQ_INIT(&fastblock->outstanding);
 
 	fastblock->image_name = strdup(image_name);
 	if (!fastblock->image_name)
