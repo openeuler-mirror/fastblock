@@ -31,15 +31,37 @@ constexpr uint64_t kRegionAlign = 1024ull * 1024; // 1 MiB
 
 aos_runtime::~aos_runtime() {
   stop_gc_poller();
+  if (drain_poller_ != nullptr) {
+    spdk_poller_unregister(&drain_poller_);
+    drain_poller_ = nullptr;
+  }
   if (store_) {
     store_->set_kv_engine(nullptr);
   }
   kv_.reset();
+  if (backend_.io_pending() || (store_ && store_->io_busy())) {
+    // stop() drains this. Destroying here would run a bdev completion
+    // against a freed pg_store / backend.
+    SPDK_ERRLOG("aos_runtime destroyed with IO still in flight\n");
+  }
   store_.reset();
   if (opened_) {
     backend_.close();
   }
   opened_ = false;
+}
+
+bool aos_runtime::io_still_running() const {
+  if (backend_.io_pending()) {
+    return true;
+  }
+  return store_ != nullptr && store_->io_busy();
+}
+
+int aos_runtime::drain_poller_fn(void* arg) {
+  auto* self = static_cast<aos_runtime*>(arg);
+  self->finish_stop(0);
+  return SPDK_POLLER_BUSY;
 }
 
 int aos_runtime::gc_poller_fn(void* arg) {
@@ -130,7 +152,21 @@ void aos_runtime::stop_gc_poller() {
 
 int aos_runtime::open(const std::string& bdev_name, uint64_t region_offset,
                       uint64_t region_length, uint64_t segment_size) {
-  close();
+  if (opened_ || kv_ || store_ || teardown_started_ || backend_.io_pending()) {
+    close();
+  }
+  if (opened_ || kv_ || store_ || teardown_started_ || backend_.io_pending()) {
+    SPDK_ERRLOG("aos_runtime open refused: previous stop still in flight\n");
+    return -EBUSY;
+  }
+  // close() on a never-started runtime must not leave stop_finished_ set,
+  // or the OSD mkfs shutdown drops its callback and waits forever.
+  stop_finished_ = false;
+  stop_pending_ = false;
+  in_finish_stop_ = false;
+  teardown_started_ = false;
+  stop_cb_ = nullptr;
+  stop_arg_ = nullptr;
   if (bdev_name.empty() || region_length < kMetaSize + 4096) {
     return -EINVAL;
   }
@@ -232,7 +268,50 @@ void aos_runtime::recover(op_complete cb, void* arg) {
 }
 
 void aos_runtime::finish_stop(int err) {
+  if (in_finish_stop_ || teardown_started_) {
+    return;
+  }
+  // Already closed. stop() may have stored a callback after that; dropping
+  // it leaves osd_stop parked on AppendOnlyStore forever.
+  if (stop_finished_ && !opened_ && !kv_ && !store_) {
+    if (stop_cb_) {
+      auto cb = std::move(stop_cb_);
+      void* cb_arg = stop_arg_;
+      stop_arg_ = nullptr;
+      cb(cb_arg, 0);
+    }
+    return;
+  }
+  in_finish_stop_ = true;
+  if (backend_.driver_idle() && backend_.io_pending()) {
+    // Queued writes with nothing in the driver will not complete on their own.
+    // Callbacks may re-enter finish_stop. Inflight IO is left alone.
+    backend_.fail_queued(-ESHUTDOWN);
+  }
+  if (io_still_running()) {
+    stop_pending_ = true;
+    in_finish_stop_ = false;
+    if (drain_poller_ == nullptr) {
+      SPDK_NOTICELOG(
+          "aos_runtime stop waiting write_inflight=%u io_pending=%d "
+          "driver_idle=%d pg_busy=%d\n",
+          backend_.write_inflight(), backend_.io_pending() ? 1 : 0,
+          backend_.driver_idle() ? 1 : 0,
+          (store_ && store_->io_busy()) ? 1 : 0);
+      drain_poller_ = SPDK_POLLER_REGISTER(drain_poller_fn, this, 100);
+    }
+    return;
+  }
+  in_finish_stop_ = false;
+  if (drain_poller_ != nullptr) {
+    spdk_poller_unregister(&drain_poller_);
+    drain_poller_ = nullptr;
+  }
+  // Do not set stop_finished_ until the backend is closed. A flag latched
+  // by an earlier empty stop() must not skip this path.
+  teardown_started_ = true;
   stop_pending_ = false;
+  stop_finished_ = false;
   auto cb = std::move(stop_cb_);
   void* arg = stop_arg_;
   stop_arg_ = nullptr;
@@ -252,10 +331,22 @@ void aos_runtime::finish_stop(int err) {
     segment_size_ = 0;
     gc_pass_count_ = 0;
     gc_in_flight_ = false;
+    ckpt_in_flight_ = false;
+    teardown_started_ = false;
+    stop_finished_ = true;
+    auto extra = std::move(stop_cb_);
+    void* extra_arg = stop_arg_;
+    stop_arg_ = nullptr;
     if (cb) {
       cb(arg, e);
     }
+    if (extra) {
+      extra(extra_arg, e);
+    }
   };
+  if (opened_ || kv_) {
+    SPDK_NOTICELOG("aos_runtime stop idle, closing backend\n");
+  }
   if (kv_) {
     kv_->stop(
         [finish = std::move(finish)](void* /*a*/, int e) { finish(e); },
@@ -267,6 +358,12 @@ void aos_runtime::finish_stop(int err) {
 
 void aos_runtime::stop(op_complete cb, void* arg) {
   stop_gc_poller();
+  if (teardown_started_) {
+    // finish() still owns the callback captured when teardown began.
+    stop_cb_ = std::move(cb);
+    stop_arg_ = arg;
+    return;
+  }
   if (gc_in_flight_ || ckpt_in_flight_) {
     stop_pending_ = true;
     stop_cb_ = std::move(cb);
@@ -279,6 +376,14 @@ void aos_runtime::stop(op_complete cb, void* arg) {
 }
 
 void aos_runtime::close() {
+  // Nothing was opened. stop() would latch stop_finished_ and the real
+  // shutdown after format() would return without invoking its callback.
+  if (!opened_ && !kv_ && !store_ && !teardown_started_ &&
+      drain_poller_ == nullptr && gc_poller_ == nullptr &&
+      ckpt_poller_ == nullptr && !gc_in_flight_ && !ckpt_in_flight_ &&
+      !backend_.io_pending()) {
+    return;
+  }
   stop([](void*, int) {}, nullptr);
 }
 
