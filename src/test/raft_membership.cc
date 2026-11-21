@@ -152,6 +152,7 @@ membership_watchdog_poll(void * /* arg */)
           "If connects were refused, the ports this run holds may be stale\n"
           "(osd ports are reassigned at every boot).\n",
           (unsigned long)elapsed_s);
+        spdk_poller_unregister(&g_watchdog_poller);
         spdk_app_stop(-ETIMEDOUT);
         return SPDK_POLLER_BUSY;
     }
