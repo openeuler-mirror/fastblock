@@ -182,7 +182,8 @@ public:
             too_large,
             connection_dead,
             unserialize,
-            other
+            other,
+            canceled
         };
 
         struct rpc_request {
@@ -584,6 +585,9 @@ public:
                   req->ctrlr,
                   detail ? detail : "rpc error",
                   detail ? classify_rpc_error(detail) : rpc_error_class::application);
+                break;
+            case rpc_fail::canceled:
+                fail_rpc(req->ctrlr, "canceled", rpc_error_class::canceled);
                 break;
             }
 
