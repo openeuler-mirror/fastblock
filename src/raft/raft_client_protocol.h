@@ -11,8 +11,9 @@
 
 #pragma once
 #include <google/protobuf/stubs/callback.h>
+#include <chrono>
 #include <concepts>
-#include <set>
+#include <map>
 #include <utility>
 
 #include "fastblock/rpc/connect_cache.h"
@@ -325,5 +326,11 @@ private:
     //每个cpu核上有一个map
     std::vector<std::map<int, std::shared_ptr<rpc_service_raft_Stub>>> _stubs;
     core_sharded &_shard;
-    std::set<std::pair<uint32_t, int32_t>> _reconnecting;
+
+    struct reconnect_state {
+        bool inflight{false};
+        std::chrono::steady_clock::time_point next_try{};
+        std::chrono::milliseconds backoff{200};
+    };
+    std::map<std::pair<uint32_t, int32_t>, reconnect_state> _reconnect;
 };
