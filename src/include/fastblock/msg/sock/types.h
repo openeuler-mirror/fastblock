@@ -29,7 +29,9 @@ static constexpr uint32_t default_max_conns = 128;
 static constexpr uint32_t default_rpc_batch_size = 1024;
 static constexpr uint32_t default_connect_queue_depth = 64;
 static constexpr int default_connect_workers = 4;
-static constexpr int64_t default_connect_timeout_us = 1'000'000;
+// Fail-fast: a dead OSD on loopback/LAN refuses or blackholes well under 1s.
+// Override with msg_sock_connect_timeout_us if a WAN hop needs longer.
+static constexpr int64_t default_connect_timeout_us = 250'000;
 static constexpr int64_t default_timeout_scan_us = 10'000;
 static constexpr uint32_t default_send_buf = 2U * 1024U * 1024U;
 static constexpr uint32_t default_recv_buf = 2U * 1024U * 1024U;
