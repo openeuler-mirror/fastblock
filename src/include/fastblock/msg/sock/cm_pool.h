@@ -27,6 +27,7 @@ public:
                 ::spdk_thread* target, done_fn cb);
 
     void cancel(uint64_t generation);
+    void forget(uint64_t generation);
 
 private:
     cm_pool() = default;
