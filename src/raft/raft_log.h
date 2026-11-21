@@ -261,6 +261,13 @@ public:
         return _next_idx;
     }
 
+    raft_index_t last_disk_index() {
+        if (!_log) {
+            return 0;
+        }
+        return static_cast<raft_index_t>(_log->get_highest_index());
+    }
+
     void set_disk_log_index(raft_index_t index, raft_term_t term,
                             log_op_complete cb_fn, void* arg){
         if(_log){
