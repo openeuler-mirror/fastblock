@@ -14,6 +14,7 @@
 #include "fastblock/rpc/osd_msg.pb.h"
 
 #include <cerrno>
+#include <spdk/log.h>
 
 namespace {
 
@@ -195,12 +196,37 @@ void process_installsnapshot_response(raft_server_t *raft, installsnapshot_respo
     raft->raft_process_installsnapshot_reply(response);
 }
 
+void raft_client_protocol::maybe_reconnect(raft_server_t* raft, int32_t node_id) {
+    if (!raft || node_id <= 0) {
+        return;
+    }
+    const auto shard_id = _get_shard_id();
+    const auto key = std::make_pair(shard_id, node_id);
+    if (_reconnecting.count(key) != 0) {
+        return;
+    }
+    auto node = raft->raft_get_cfg_node(node_id);
+    if (!node) {
+        return;
+    }
+    const auto& info = node->raft_get_node_info();
+    if (info.addr().empty() || info.port() == 0) {
+        return;
+    }
+    _reconnecting.insert(key);
+    SPDK_NOTICELOG("raft reconnect to node %d %s:%d shard %u\n", node_id,
+                   info.addr().c_str(), info.port(), shard_id);
+    create_connect(node_id, shard_id, info.addr(), static_cast<int>(info.port()),
+                   [this, key](void*, int) { _reconnecting.erase(key); });
+}
+
 int raft_client_protocol::send_appendentries(raft_server_t *raft, int32_t target_node_id, msg_appendentries_t* request){
     auto shard_id = _get_shard_id();
     auto stub = _get_stub(shard_id, target_node_id);
     if(!stub){
         SPDK_INFOLOG(pg_group, "pg %lu.%lu in node %d not connect to node %d\n",
                            raft->raft_get_pool_id(), raft->raft_get_pg_id(), raft->raft_get_nodeid(), target_node_id);
+        maybe_reconnect(raft, target_node_id);
         return err::RAFT_ERR_NO_CONNECTED;
     }
     auto source = new common_msg_source<msg_appendentries_t, msg_appendentries_response_t>(request, raft,
@@ -221,7 +247,7 @@ int raft_client_protocol::send_create_pg(
   std::function<void(int)> cb) {
     auto shard_id = _get_shard_id();
     auto conn = _cache->get_connect(shard_id, target_node_id);
-    if (!conn) {
+    if (!conn || conn->is_terminated()) {
         SPDK_INFOLOG(pg_group, "pg %lu.%lu not connect to node %d in shard %u\n",
                      pool_id, pg_id, target_node_id, shard_id);
         return err::RAFT_ERR_NO_CONNECTED;
@@ -252,6 +278,7 @@ int raft_client_protocol::send_vote(raft_server_t *raft, int32_t target_node_id,
     {
         SPDK_INFOLOG(pg_group, "pg %lu.%lu in node %d not connect to node %d\n",
                            raft->raft_get_pool_id(), raft->raft_get_pg_id(), raft->raft_get_nodeid(), target_node_id);
+        maybe_reconnect(raft, target_node_id);
         delete request;
         return  err::RAFT_ERR_NO_CONNECTED;
     }
@@ -269,6 +296,11 @@ int raft_client_protocol::send_heartbeat(int32_t target_node_id, heartbeat_reque
     auto stub = _get_stub(shard_id, target_node_id);
     if(!stub){
         SPDK_INFOLOG(pg_group, "not connect to node %d\n", target_node_id);
+        if (request->heartbeats_size() > 0) {
+            const auto& meta = request->heartbeats(0);
+            maybe_reconnect(group->get_pg(shard_id, meta.pool_id(), meta.pg_id()).get(),
+                            target_node_id);
+        }
         delete request;
         return  err::RAFT_ERR_NO_CONNECTED;
     }
@@ -284,6 +316,7 @@ int raft_client_protocol::send_timeout_now(raft_server_t *raft, int32_t target_n
     if(!stub){
         SPDK_INFOLOG(pg_group, "pg %lu.%lu in node %d not connect to node %d\n",
                            raft->raft_get_pool_id(), raft->raft_get_pg_id(), raft->raft_get_nodeid(), target_node_id);
+        maybe_reconnect(raft, target_node_id);
         delete request;
         return err::RAFT_ERR_NO_CONNECTED;
     }
@@ -303,6 +336,7 @@ int raft_client_protocol::send_snapshot_check(raft_server_t *raft, int32_t targe
     {
         SPDK_INFOLOG(pg_group, "pg %lu.%lu in node %d not connect to node %d\n",
                            raft->raft_get_pool_id(), raft->raft_get_pg_id(), raft->raft_get_nodeid(), target_node_id);
+        maybe_reconnect(raft, target_node_id);
         delete request;
         return  err::RAFT_ERR_NO_CONNECTED;
     }
@@ -320,6 +354,7 @@ int raft_client_protocol::send_install_snapshot(raft_server_t *raft, int32_t tar
     if(!stub){
         SPDK_INFOLOG(pg_group, "pg %lu.%lu in node %d not connect to node %d\n",
                            raft->raft_get_pool_id(), raft->raft_get_pg_id(), raft->raft_get_nodeid(), target_node_id);
+        maybe_reconnect(raft, target_node_id);
         delete request;
         return  err::RAFT_ERR_NO_CONNECTED;
     }
