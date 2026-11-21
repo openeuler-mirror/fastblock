@@ -11,8 +11,10 @@
 #include "osd_service.h"
 #include "fastblock/utils/utils.h"
 #include "fastblock/utils/err_num.h"
+#include "raft/raft.h"
 
 #include <spdk/env.h>
+#include <spdk/log.h>
 
 #include <condition_variable>
 #include <errno.h>
@@ -30,6 +32,53 @@ void osd_service::process_rpc_bench(google::protobuf::RpcController *controller,
     done->Run();
 }
 
+osd_service::leader_endpoint osd_service::lookup_pg_leader(
+  raft_server_t* raft, uint32_t shard_id, bool use_raw_port) {
+    leader_endpoint endpoint{};
+    if (!raft) {
+        endpoint.state = err::RAFT_ERR_NOT_FOUND_PG;
+        return endpoint;
+    }
+
+    const int32_t leader_id = raft->raft_get_current_leader();
+    if (leader_id <= 0) {
+        endpoint.state = err::RAFT_ERR_NOT_FOUND_LEADER;
+        return endpoint;
+    }
+    endpoint.leader_id = leader_id;
+
+    // Raft node info is the PG's own addr:port and is valid the instant
+    // this node becomes leader — do not wait on the monitor osdmap.
+    if (!use_raw_port) {
+        auto node = raft->raft_get_node(leader_id);
+        if (!node) {
+            node = raft->raft_get_cfg_node(leader_id);
+        }
+        if (node) {
+            const auto& info = node->raft_get_node_info();
+            if (!info.addr().empty() && info.port() != 0) {
+                endpoint.state = err::E_SUCCESS;
+                endpoint.leader_addr = info.addr();
+                endpoint.leader_port = info.port();
+                return endpoint;
+            }
+        }
+    }
+
+    auto leader = use_raw_port
+      ? _monitor_client->get_osd_raw_addr(leader_id, shard_id)
+      : _monitor_client->get_osd_addr(leader_id, shard_id);
+    if (leader.first.empty() || leader.second == 0) {
+        endpoint.state = err::RAFT_ERR_NOT_FOUND_LEADER;
+        endpoint.leader_id = -1;
+        return endpoint;
+    }
+    endpoint.state = err::E_SUCCESS;
+    endpoint.leader_addr = std::move(leader.first);
+    endpoint.leader_port = leader.second;
+    return endpoint;
+}
+
 osd_service::leader_endpoint osd_service::resolve_pg_leader(
   const uint64_t pool_id,
   const uint64_t pg_id,
@@ -45,25 +94,8 @@ osd_service::leader_endpoint osd_service::resolve_pg_leader(
 
     // If already on home SPDK thread, resolve inline (no hop).
     if (rtc::is_on_home_spdk_thread(shard_id)) {
-        auto raft = _pm->get_pg(shard_id, pool_id, pg_id);
-        if(!raft){
-            SPDK_WARNLOG("not find pg %lu.%lu\n", pool_id, pg_id);
-            endpoint.state = err::RAFT_ERR_NOT_FOUND_PG;
-            return endpoint;
-        }
-        endpoint.leader_id = raft->raft_get_current_leader();
-        auto leader = use_raw_port
-          ? _monitor_client->get_osd_raw_addr(endpoint.leader_id, shard_id)
-          : _monitor_client->get_osd_addr(endpoint.leader_id, shard_id);
-        if(leader.first.empty() || leader.second == 0){
-            endpoint.state = err::RAFT_ERR_NOT_FOUND_LEADER;
-            endpoint.leader_id = -1;
-            return endpoint;
-        }
-        endpoint.state = err::E_SUCCESS;
-        endpoint.leader_addr = std::move(leader.first);
-        endpoint.leader_port = leader.second;
-        return endpoint;
+        return lookup_pg_leader(_pm->get_pg(shard_id, pool_id, pg_id).get(),
+                                shard_id, use_raw_port);
     }
 
     // Off-home (including raw std::thread): hop to home + block until done.
@@ -76,24 +108,8 @@ osd_service::leader_endpoint osd_service::resolve_pg_leader(
     const int rc = _pm->get_shard().invoke_on(
       shard_id,
       [this, pool_id, pg_id, shard_id, use_raw_port, &mu, &cv, &ready, &result]() {
-        leader_endpoint ep{};
-        auto raft = _pm->get_pg(shard_id, pool_id, pg_id);
-        if (!raft) {
-            ep.state = err::RAFT_ERR_NOT_FOUND_PG;
-        } else {
-            ep.leader_id = raft->raft_get_current_leader();
-            auto leader = use_raw_port
-              ? _monitor_client->get_osd_raw_addr(ep.leader_id, shard_id)
-              : _monitor_client->get_osd_addr(ep.leader_id, shard_id);
-            if (leader.first.empty() || leader.second == 0) {
-                ep.state = err::RAFT_ERR_NOT_FOUND_LEADER;
-                ep.leader_id = -1;
-            } else {
-                ep.state = err::E_SUCCESS;
-                ep.leader_addr = std::move(leader.first);
-                ep.leader_port = leader.second;
-            }
-        }
+        auto ep = lookup_pg_leader(_pm->get_pg(shard_id, pool_id, pg_id).get(),
+                                   shard_id, use_raw_port);
         {
             std::lock_guard<std::mutex> lk(mu);
             result = std::move(ep);
@@ -135,26 +151,17 @@ void osd_service::process_get_leader(google::protobuf::RpcController* controller
       _pm->get_shard(),
       shard_id,
       [this, request, response, done, shard_id]() {
-        auto raft = _pm->get_pg(shard_id, request->pool_id(), request->pg_id());
-        if (!raft) {
+        auto ep = lookup_pg_leader(
+          _pm->get_pg(shard_id, request->pool_id(), request->pg_id()).get(),
+          shard_id, false);
+        response->set_state(ep.state);
+        if (ep.state == err::E_SUCCESS) {
+            response->set_leader_id(ep.leader_id);
+            response->set_leader_addr(ep.leader_addr);
+            response->set_leader_port(ep.leader_port);
+        } else if (ep.state == err::RAFT_ERR_NOT_FOUND_PG) {
             SPDK_WARNLOG("not find pg %lu.%lu\n", request->pool_id(), request->pg_id());
-            response->set_state(err::RAFT_ERR_NOT_FOUND_PG);
-            done->Run();
-            return;
         }
-
-        const int32_t leader_id = raft->raft_get_current_leader();
-        auto leader = _monitor_client->get_osd_addr(leader_id, shard_id);
-        if (leader.first.empty() || leader.second == 0) {
-            response->set_state(err::RAFT_ERR_NOT_FOUND_LEADER);
-            done->Run();
-            return;
-        }
-
-        response->set_state(err::E_SUCCESS);
-        response->set_leader_id(leader_id);
-        response->set_leader_addr(leader.first);
-        response->set_leader_port(leader.second);
         done->Run();
       },
       rtc::hop_kind::leader_lookup);
