@@ -52,18 +52,42 @@ public:
     connect_cache(const connect_cache&) = delete;
     connect_cache& operator=(const connect_cache&) = delete;
 
+    bool drop_if_dead(uint32_t shard_id, int node_id) {
+        if (shard_id >= _shard_cores.size()) {
+            return false;
+        }
+        auto iter = _cache[shard_id].find(node_id);
+        if (iter == _cache[shard_id].end()) {
+            return false;
+        }
+        if (iter->second && !iter->second->is_terminated()) {
+            return false;
+        }
+        auto dead = iter->second;
+        _cache[shard_id].erase(iter);
+        if (dead) {
+            _transports[shard_id]->remove_connection(dead, [](bool) {});
+        }
+        return true;
+    }
+
     void create_connect(
       int32_t shard_id,
       int node_id,
       std::string addr,
       uint16_t port,
       std::function<void(bool, msg::channel*)> raft_cb) {
+        drop_if_dead(shard_id, node_id);
         _transports[shard_id]->emplace_connection(
           addr, port,
           [this, shard_id, node_id, raft_cb = std::move(raft_cb)]
           (bool is_ok, std::shared_ptr<msg::channel> conn) {
               if (is_ok) {
+                  auto prev = get_connect(shard_id, node_id);
                   _cache[shard_id][node_id] = conn;
+                  if (prev && prev != conn) {
+                      _transports[shard_id]->remove_connection(prev, [](bool) {});
+                  }
               }
               raft_cb(is_ok, conn.get());
           }
@@ -71,14 +95,17 @@ public:
     }
 
     void create_connect(uint32_t shard_id, int node_id, std::string addr, uint16_t port, utils::context* ctx, auto&& raft_cb) {
+        drop_if_dead(shard_id, node_id);
         _transports[shard_id]->emplace_connection(
           addr, port,
           [this, shard_id, node_id, ctx, raft_cb = std::move(raft_cb)]
           (bool is_ok, std::shared_ptr<msg::channel> conn) {
               if (is_ok) {
-                //   ::pthread_mutex_lock(&_mutex);
+                  auto prev = get_connect(shard_id, node_id);
                   _cache[shard_id][node_id] = conn;
-                //   ::pthread_mutex_unlock(&_mutex);
+                  if (prev && prev != conn) {
+                      _transports[shard_id]->remove_connection(prev, [](bool) {});
+                  }
                   raft_cb(conn.get());
                   ctx->complete(err::E_SUCCESS);
               } else {
@@ -112,21 +139,22 @@ public:
         }
         auto iter = _cache[shard_id].find(node_id);
         if(iter == _cache[shard_id].end()){
-            ctx->complete(err::RAFT_ERR_UNKNOWN);
+            raft_cb();
+            ctx->complete(err::E_SUCCESS);
             return;
         }
-
-        _transports[shard_id]->remove_connection(iter->second,
-          [this, node_id, shard_id, ctx, raft_cb = std::move(raft_cb)](bool is_ok){
-            if(is_ok){
-                // ::pthread_mutex_lock(&_mutex);
-                _cache[shard_id].erase(node_id);
-                // ::pthread_mutex_unlock(&_mutex);
-                raft_cb();
-                ctx->complete(err::E_SUCCESS);
-            } else {
-                ctx->complete(err::RAFT_ERR_UNKNOWN);
-            }
+        // A live replacement must not be torn down by a stale disconnect.
+        if (iter->second && !iter->second->is_terminated()) {
+            raft_cb();
+            ctx->complete(err::E_SUCCESS);
+            return;
+        }
+        auto dead = iter->second;
+        _cache[shard_id].erase(iter);
+        _transports[shard_id]->remove_connection(dead,
+          [ctx, raft_cb = std::move(raft_cb)](bool){
+            raft_cb();
+            ctx->complete(err::E_SUCCESS);
           });
     }
 
