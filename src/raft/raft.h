@@ -476,6 +476,12 @@ public:
 
     bool raft_get_entry_term(raft_index_t idx, raft_term_t& term);
 
+    // Term of the last log index that is actually present (cache or disk).
+    // current_idx can sit on a hole after a failed follower disk_append or
+    // an unreplicated ADD_NONVOTING entry; voting must still be able to
+    // proceed with the last real entry.
+    bool raft_last_present_log(raft_index_t& idx, raft_term_t& term);
+
     int raft_send_heartbeat_all();
 
     /**
