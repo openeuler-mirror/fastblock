@@ -52,6 +52,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# A change that waits on a snapshot recovery for the member it just added can
+# easily run past the tool's 180s watchdog.
+export RAFT_MEMBERSHIP_TIMEOUT_SECONDS="${RAFT_MEMBERSHIP_TIMEOUT_SECONDS:-300}"
+
 require_exec() {
     if [ ! -x "$1" ]; then
         echo "required executable not found: $1" >&2
@@ -115,7 +119,7 @@ load_osd_map() {
 
 load_pg_members() {
     local pg_line
-    pg_line="$("$client_bin" -conf="$conf" -op=getpgmap | awk -v pg="$pool_id.$pg_id" '$1 == pg {print; exit}')"
+    pg_line="$("$client_bin" -conf="$conf" -op=getpgmap | awk -v pg="$pool_id.$pg_id" '$1 == pg {print}')"
     if [ -z "$pg_line" ]; then
         echo "failed to find PG $pool_id.$pg_id in pg map" >&2
         exit 1
@@ -189,6 +193,44 @@ run_membership_change() {
         -O "$nodes_csv" > "$log_file" 2>&1
 }
 
+wait_pg_leader() {
+    local deadline=$((SECONDS + 120))
+
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        if grep -E -q "becoming leader of pg ${pool_id}\\."${pg_id}"" "$log_dir"/osd*.log 2>/dev/null; then
+            return 0
+        fi
+        sleep 2
+    done
+
+    echo "no raft leader for PG $pool_id.$pg_id within 120s" >&2
+    exit 1
+}
+
+wait_pg_state() {
+    local label="$1"
+    shift
+    local deadline=$((SECONDS + converge_timeout))
+    local state
+
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        state="$("$client_bin" -conf="$conf" -op=getpgmap \
+                 | awk -v pg="$pool_id.$pg_id" '$1 == pg {found = $2} END {print found}')"
+        local want
+        for want in "$@"; do
+            if [ "$state" = "$want" ]; then
+                echo "PG $pool_id.$pg_id in state $state ($label)"
+                return 0
+            fi
+        done
+        sleep 3
+    done
+
+    echo "PG $pool_id.$pg_id not in any of [$*] within ${converge_timeout}s: $label" >&2
+    "$client_bin" -conf="$conf" -op=getpgmap >&2 || true
+    exit 1
+}
+
 wait_pg_active() {
     local label="$1"
     local deadline=$((SECONDS + converge_timeout))
@@ -197,9 +239,11 @@ wait_pg_active() {
     # mon pgmap keeps the mon-assigned member list, so there is nothing to
     # converge there.  What must hold is: the PG stays active and serves IO
     # with the new raft member set.
+    local state
     while [ "$SECONDS" -lt "$deadline" ]; do
-        if "$client_bin" -conf="$conf" -op=getpgmap \
-             | awk -v pg="$pool_id.$pg_id" '$1 == pg {exit !($2 == "active")}'; then
+        state="$("$client_bin" -conf="$conf" -op=getpgmap \
+                 | awk -v pg="$pool_id.$pg_id" '$1 == pg {found = $2} END {print found}')"
+        if [ "$state" = "active" ]; then
             echo "PG $pool_id.$pg_id active ($label)"
             return 0
         fi
@@ -260,6 +304,10 @@ alternate_csv="$(member_csv "${alt_members[@]}")"
 echo "Original PG $pool_id.$pg_id members: $original_csv"
 echo "Alternate PG $pool_id.$pg_id members: $alternate_csv"
 
+# The mon marks a pg active on creation; the raft election follows, and a
+# change_nodes issued before it reports "no leader (id=0)".
+wait_pg_leader
+
 # noout keeps the mon from remapping PGs around the kill; the member change
 # under test is the raft-level one.
 "$client_bin" -conf="$conf" -set=noout
@@ -268,25 +316,42 @@ echo "Alternate PG $pool_id.$pg_id members: $alternate_csv"
 # soon as the tool reports it, so the kill lands in the change/mon-finish
 # window.
 tool_log="$(mktemp /tmp/leader-change-membership-tool.XXXX.log)"
-run_membership_change "to alternate (leader exits mid-flight)" "${pg_members[0]}" "$alternate_csv" "$tool_log" &
-change_pid="$!"
 
+# leader id 0 means the contacted osd has no raft leader for this pg yet: on a
+# freshly started cluster the pg's raft is still loading, which happens well
+# after the mon marks the pg active.  Retry the change until a leader resolves.
 victim=""
-for _ in $(seq 1 50); do
-    if [[ "$(cat "$tool_log" 2>/dev/null)" =~ leader\ of\ the\ pg\ [0-9]+\.[0-9]+\ is\ ([0-9]+) ]]; then
-        victim="${BASH_REMATCH[1]}"
+change_pid=""
+for attempt in 1 2 3 4 5 6; do
+    run_membership_change "to alternate (leader exits mid-flight)" "${pg_members[0]}" "$alternate_csv" "$tool_log" &
+    change_pid="$!"
+
+    for _ in $(seq 1 50); do
+        if [[ "$(cat "$tool_log" 2>/dev/null)" =~ leader\ of\ the\ pg\ [0-9]+\.[0-9]+\ is\ ([0-9]+) ]]; then
+            victim="${BASH_REMATCH[1]}"
+            break
+        fi
+        if ! kill -0 "$change_pid" 2>/dev/null; then
+            break
+        fi
+        sleep 0.1
+    done
+
+    if [ -n "$victim" ] && [ "$victim" != "0" ]; then
         break
     fi
-    if ! kill -0 "$change_pid" 2>/dev/null; then
-        break
-    fi
-    sleep 0.1
+
+    # The tool has no recovery path for a pg without a raft leader: it waits
+    # on a connect to an empty address until its watchdog fires.  Kill it.
+    kill -9 "$change_pid" 2>/dev/null || true
+    wait "$change_pid" 2>/dev/null || true
+    victim=""
+    echo "no raft leader resolved yet (attempt $attempt/6), retrying in 20s"
+    sleep 20
 done
 
 if [ -z "$victim" ] || [ "$victim" = "0" ]; then
-    # leader id 0 means the contacted osd had no elected leader for this pg:
-    # mon pgmap and raft membership have diverged (leftover member changes).
-    echo "membership tool reported no leader (id=0); cluster state is not clean" >&2
+    echo "membership tool reported no leader (id=0); the pg never elected one" >&2
     exit 1
 fi
 # small randomized delay so repeated runs sample different points of the window
@@ -313,7 +378,10 @@ wait_for_status "after leader death" "${osd_count} osds: $((osd_count - 1)) up" 
 
 # The new leader continues or aborts the pending change; converge to the
 # target members either way.
-wait_pg_active "after leader death (alternate membership)"
+# The killed leader is still in the mon's member list (noout), so the mon
+# reports this pg undersize until it comes back.  Anything worse than
+# undersize (down/unknown/peering) means the pg really wedged.
+wait_pg_state "after leader death (alternate membership)" active undersize
 
 echo "Restarting the killed leader osd$victim"
 "$osd_bin" -C "$conf" --id "$victim" -N 0 \
@@ -330,7 +398,13 @@ check_full_health "after write/read on alternate"
 load_osd_map
 load_osd_map
 load_pg_members
-run_membership_change "back to original" "${pg_members[0]}" "$original_csv" "${tool_log}.revert"
+# The first change may still be finishing (the member it added is catching up)
+# and a second change is refused until it settles.  Give the revert one retry.
+if ! run_membership_change "back to original" "${pg_members[0]}" "$original_csv" "${tool_log}.revert"; then
+    echo "revert change did not finish, settling 30s and retrying once"
+    sleep 30
+    run_membership_change "back to original retry" "${pg_members[0]}" "$original_csv" "${tool_log}.revert"
+fi
 wait_pg_active "after revert"
 check_full_health "after revert membership"
 
