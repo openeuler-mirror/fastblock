@@ -7,6 +7,7 @@
 #include "fastblock/msg/sock/options.h"
 #include "fastblock/utils/simple_poller.h"
 
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -49,8 +50,14 @@ public:
 private:
     void handle_start();
     void handle_stop();
-    void on_connected(::spdk_sock* s, uint64_t generation,
-                      std::function<void(bool, std::shared_ptr<connection>)> cb);
+    void on_connected(::spdk_sock* s, uint64_t generation);
+    void scan_connect_timeouts(std::chrono::system_clock::time_point now);
+    void fail_pending_connect(uint64_t generation, bool cancel_cm);
+
+    struct pending_connect {
+        std::function<void(bool, std::shared_ptr<connection>)> cb;
+        std::chrono::system_clock::time_point deadline{};
+    };
 
     std::string _name;
     ::spdk_thread* _thread{nullptr};
@@ -63,6 +70,7 @@ private:
     uint64_t _generation{1};
     std::chrono::system_clock::time_point _last_scan{};
     std::vector<std::shared_ptr<connection>> _conns;
+    std::unordered_map<uint64_t, pending_connect> _pending_connects;
     std::optional<std::function<void()>> _on_stop;
 };
 
