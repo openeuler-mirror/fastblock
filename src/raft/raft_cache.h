@@ -237,10 +237,27 @@ public:
 
     raft_index_t get_last_cache_entry()
     {
-        if (_cache.empty())
+        if (_idx_mcs.empty())
             return 0;
-        auto last = _cache.back();
-        return last->entry->idx();
+        return _idx_mcs.rbegin()->first;
+    }
+
+    // Drop every cached entry with idx >= `idx`, running leftover completes.
+    // Uses the index map so holes / out-of-order list nodes still get removed.
+    void drop_from(raft_index_t idx, int result)
+    {
+        auto it = _idx_mcs.lower_bound(idx);
+        while (it != _idx_mcs.end()) {
+            auto list_iter = it->second;
+            auto item = *list_iter;
+            auto complete = item->complete;
+            item->complete = nullptr;
+            _cache.erase(list_iter);
+            it = _idx_mcs.erase(it);
+            if (complete) {
+                complete->complete(result);
+            }
+        }
     }
 
 private:
