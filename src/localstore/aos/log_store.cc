@@ -162,11 +162,18 @@ void log_store::append(const log_entry& entry, op_complete cb, void* arg) {
     cb(arg, -EINVAL);
     return;
   }
-  if (!index_map_.empty() && entry.index != last_index_ + 1) {
+  // Snapshot base may land past a shorter log. The index map is replaced
+  // only after the marker is durable, so a failed append keeps the old log.
+  const bool snap_base = entry.type == kRaftLogTypeSnapshotBase;
+  if (snap_base) {
+    if (last_index_ >= entry.index) {
+      cb(arg, -EINVAL);
+      return;
+    }
+  } else if (!index_map_.empty() && entry.index != last_index_ + 1) {
     cb(arg, -EINVAL);
     return;
-  }
-  if (index_map_.empty() && last_index_ != 0) {
+  } else if (index_map_.empty() && last_index_ != 0) {
     cb(arg, -EINVAL);
     return;
   }
@@ -216,6 +223,11 @@ void log_store::append(const log_entry& entry, op_complete cb, void* arg) {
               auto* c2 = static_cast<ctx*>(a2);
               if (ferr == 0) {
                 log_store* self = c2->self;
+                if (c2->entry.type == kRaftLogTypeSnapshotBase) {
+                  self->index_map_.clear();
+                  self->base_index_ = 0;
+                  self->last_index_ = 0;
+                }
                 self->index_map_[c2->entry.index] =
                     idx_pos{c2->phys, c2->aligned, c2->entry.term,
                             record_type::raft_log_entry};
@@ -541,11 +553,9 @@ void log_store::install_snapshot_base(uint64_t index, uint64_t term,
     cb(arg, 0);
     return;
   }
-  if (!index_map_.empty()) {
-    // Non-empty log cannot jump to a non-consecutive snapshot index.
-    cb(arg, -EINVAL);
-    return;
-  }
+  // Shorter log, empty or not: the marker replaces it. A follower whose
+  // next index fell below the leader's compacted base must accept this
+  // jump; refusing it makes the leader snapshot forever.
   log_entry e;
   e.term = term;
   e.index = index;
@@ -609,6 +619,13 @@ int log_store::apply_record(const data_record& rec, uint64_t phys_offset) {
   }
   if (e.index == 0) {
     return -EIO;
+  }
+  // Snapshot base discards the log it replaces, including entries that
+  // replay already inserted ahead of this record.
+  if (e.type == kRaftLogTypeSnapshotBase) {
+    index_map_.clear();
+    base_index_ = 0;
+    last_index_ = 0;
   }
   // On-disk length: use aligned size from header+payload estimate.
   const auto encoded_len = encode_record(rec).size();
