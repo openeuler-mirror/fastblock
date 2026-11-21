@@ -424,6 +424,57 @@ bool raft_server_t::raft_get_entry_term(raft_index_t idx, raft_term_t& term)
     return true;
 }
 
+bool raft_server_t::raft_last_present_log(raft_index_t& idx, raft_term_t& term)
+{
+    idx = raft_get_current_idx();
+    if (raft_get_entry_term(idx, term)) {
+        return true;
+    }
+
+    const raft_index_t hole_idx = idx;
+    auto log = raft_get_log();
+    if (log) {
+        const raft_index_t cache_last = log->get_last_cache_entry();
+        if (cache_last > 0 && cache_last <= hole_idx &&
+            raft_get_entry_term(cache_last, term)) {
+            SPDK_WARNLOG(
+              "pg %lu.%lu vote log hole at current_idx %ld, using cache last %ld term %ld\n",
+              _pool_id, _pg_id, hole_idx, cache_last, term);
+            idx = cache_last;
+            return true;
+        }
+        const raft_index_t disk_last = log->last_disk_index();
+        if (disk_last > 0 && disk_last <= hole_idx &&
+            raft_get_entry_term(disk_last, term)) {
+            SPDK_WARNLOG(
+              "pg %lu.%lu vote log hole at current_idx %ld, using disk last %ld term %ld\n",
+              _pool_id, _pg_id, hole_idx, disk_last, term);
+            idx = disk_last;
+            return true;
+        }
+    }
+
+    for (raft_index_t i = hole_idx; i > 0; --i) {
+        if (raft_get_entry_term(i, term)) {
+            SPDK_WARNLOG(
+              "pg %lu.%lu vote log hole at current_idx %ld, walked to %ld term %ld\n",
+              _pool_id, _pg_id, hole_idx, i, term);
+            idx = i;
+            return true;
+        }
+        if ((hole_idx - i) > 4096) {
+            break;
+        }
+    }
+
+    SPDK_WARNLOG(
+      "pg %lu.%lu vote log hole at current_idx %ld, no present entry, use idx 0\n",
+      _pool_id, _pg_id, hole_idx);
+    idx = 0;
+    term = 0;
+    return true;
+}
+
 int raft_server_t::raft_process_appendentries_reply(
                                      msg_appendentries_response_t* r, bool is_heartbeat)
 {
@@ -638,7 +689,27 @@ void raft_server_t::follow_raft_disk_append_finish(raft_index_t start_idx, raft_
         follow_raft_write_entry_finish(start_idx, end_idx, raft_state_to_errno(raft_get_op_state()));
         return;
     }
-    if (result == 0 && raft_get_commit_idx() < commit_idx){
+    if (result != 0) {
+        // current_idx was advanced to end_idx before the disk append. If
+        // the append failed the cache entry is completed-failed and the
+        // index is not on disk — leaving current_idx there makes every
+        // later vote look up a missing term and the pg never elects.
+        if (_current_idx >= start_idx) {
+            raft_index_t rolled = start_idx > 0 ? start_idx - 1 : 0;
+            if (rolled < raft_get_commit_idx()) {
+                rolled = raft_get_commit_idx();
+            }
+            SPDK_ERRLOG(
+              "pg %lu.%lu follower disk_append [%ld-%ld] failed %d, "
+              "roll current_idx from %ld to %ld\n",
+              _pool_id, _pg_id, start_idx, end_idx, result, _current_idx,
+              rolled);
+            _current_idx = rolled;
+        }
+        follow_raft_write_entry_finish(start_idx, end_idx, result);
+        return;
+    }
+    if (raft_get_commit_idx() < commit_idx){
         raft_set_commit_idx(commit_idx);
         SPDK_DEBUGLOG(pg_group, "in pg %lu.%lu, _node_id %d _commit_idx %lu\n", raft_get_pool_id(),
                 raft_get_pg_id(), _node_id, _commit_idx);
@@ -762,13 +833,33 @@ int raft_server_t::raft_recv_appendentries(
         raft_term_t term;
 
         bool got = raft_get_entry_term(ae->prev_log_idx(), term);
-        if (!got && raft_get_current_idx() < ae->prev_log_idx())
+        if (!got)
         {
-            e = err::E_INVAL;
-            //follower滞后leader，需要recovery
-            SPDK_WARNLOG("pg %lu.%lu AE from %d no log at prev_idx %ld , current idx %ld\n",
-                    _pool_id, _pg_id, ae->node_id(), ae->prev_log_idx(), raft_get_current_idx());
-            return hand_error(e);
+            const raft_index_t base = raft_get_log()
+              ? raft_get_log()->log_get_base_index()
+              : 1;
+            if (raft_get_current_idx() < ae->prev_log_idx())
+            {
+                e = err::E_INVAL;
+                //follower滞后leader，需要recovery
+                SPDK_WARNLOG("pg %lu.%lu AE from %d no log at prev_idx %ld , current idx %ld\n",
+                        _pool_id, _pg_id, ae->node_id(), ae->prev_log_idx(), raft_get_current_idx());
+                return hand_error(e);
+            }
+            if (ae->prev_log_idx() >= base)
+            {
+                // current_idx is past prev but the term is missing: a hole
+                // in the live suffix. Skipping this check used to let
+                // current_idx walk further past the hole.
+                e = err::E_INVAL;
+                SPDK_WARNLOG(
+                  "pg %lu.%lu AE from %d prev_idx %ld missing in live log "
+                  "(base %ld current %ld)\n",
+                  _pool_id, _pg_id, ae->node_id(), ae->prev_log_idx(), base,
+                  raft_get_current_idx());
+                return hand_error(e);
+            }
+            // prev is in the trimmed prefix; the snapshot covers it.
         }
         else if (got && term != ae->prev_log_term())
         {
@@ -922,15 +1013,9 @@ int raft_server_t::_should_grant_vote(const msg_requestvote_t* vr)
 
     /* Below we check if log is more up-to-date... */
 
-    raft_index_t current_idx_tmp = raft_get_current_idx();
-
+    raft_index_t current_idx_tmp = 0;
     raft_term_t term = 0;
-    auto got = raft_get_entry_term(current_idx_tmp, term);
-    if (!got) {
-        SPDK_WARNLOG("reject vote for pg %lu.%lu from %d, missing local term at current_idx %ld\n",
-          _pool_id, _pg_id, vr->candidate_id(), current_idx_tmp);
-        return 0;
-    }
+    raft_last_present_log(current_idx_tmp, term);
     if (term < vr->last_log_term())
         return 1;
 
@@ -1593,6 +1678,46 @@ void raft_server_t::process_conf_change_add_nonvoting(std::shared_ptr<raft_entry
         }
     }
 
+    // Persist and replicate ADD_NONVOTING to the current members before
+    // catch-up.  raft_flush advances current_idx to this entry and then
+    // returns without the normal disk_append/AE path, so existing
+    // followers never saw the index.  The later CONFIGURATION AE then
+    // has prev_log_idx sitting in a hole.
+    //
+    // Use entry->idx(), not the leftover _first_idx/_current_idx from a
+    // previous flush: the CFG_CATCHING_START path processes this entry
+    // without updating those fields, and re-appending the last durable
+    // index returns EEXIST (-17).
+    {
+        const raft_index_t index = entry->idx();
+        if (index > 0) {
+            raft_term_t existing_term = 0;
+            const bool already_on_disk =
+              raft_get_log() && raft_get_log()->disk_get_term(index, existing_term);
+            if (_current_idx < index) {
+                _current_idx = index;
+            }
+            _first_idx = index;
+            if (!already_on_disk && raft_get_log() &&
+                raft_get_log()->get_entry(index)) {
+                disk_append_complete *append_complete =
+                  new disk_append_complete(index, index, this);
+                raft_disk_append_entries(index, index, append_complete);
+            }
+            auto send_to_current = [this, index](std::shared_ptr<raft_node> node) {
+                if (!node || raft_is_self(node)) {
+                    return;
+                }
+                if (node->raft_node_is_recovering()) {
+                    return;
+                }
+                node->raft_set_end_idx(index);
+                raft_send_appendentries(node, index, index);
+            };
+            _nodes_stat.for_all_node(std::move(send_to_current));
+        }
+    }
+
     std::vector<raft_node_info> create_pg_nodes;
     for (auto& new_node : config.new_nodes()) {
         create_pg_nodes.emplace_back(new_node);
@@ -1708,17 +1833,11 @@ int raft_server_t::raft_send_requestvote(std::shared_ptr<raft_node> node)
     rv->set_pool_id(_pool_id);
     rv->set_pg_id(_pg_id);
     rv->set_term(raft_get_current_term());
-    rv->set_last_log_idx(raft_get_current_idx());
-
-    raft_term_t _term = 0;
-    auto got = raft_get_entry_term(raft_get_current_idx(),  _term);
-    if (!got) {
-        SPDK_WARNLOG("skip requestvote%s for pg %lu.%lu, missing term at current_idx %ld\n",
-          raft_get_prevote() ? " (prevote)" : "", _pool_id, _pg_id, raft_get_current_idx());
-        delete rv;
-        return err::RAFT_ERR_LOG_NOT_MATCH;
-    }
-    rv->set_last_log_term(_term);
+    raft_index_t last_idx = 0;
+    raft_term_t last_term = 0;
+    raft_last_present_log(last_idx, last_term);
+    rv->set_last_log_idx(last_idx);
+    rv->set_last_log_term(last_term);
     rv->set_candidate_id(raft_get_nodeid());
     rv->set_prevote(raft_get_prevote());
     _client.send_vote(this, node->raft_node_get_id(), rv);
@@ -3183,6 +3302,20 @@ void raft_server_t::install_membership(
     const std::vector<utils::osd_info_t>& node_list, uint32_t shard_id) {
     if (node_list.empty()) {
         return;
+    }
+    // Loaded (or init'd) membership is the raft source of truth.  The
+    // monitor list is only a repair seed for empty / seed-self configs.
+    // Overwriting a real cfg with the mon view after a committed
+    // change_nodes splits the group: restarted nodes campaign with the
+    // mon members, live nodes keep the raft members, nobody elects.
+    if (!_configuration_manager.empty()) {
+        auto& last = _configuration_manager.get_last_node_configuration();
+        if (last.get_node_size() >= 2) {
+            SPDK_NOTICELOG(
+              "skip install_membership for pg %lu.%lu: raft already has %d nodes\n",
+              _pool_id, _pg_id, last.get_node_size());
+            return;
+        }
     }
     node_configuration configuration;
     for (const auto& node : node_list) {
