@@ -47,27 +47,34 @@ osd_service::leader_endpoint osd_service::lookup_pg_leader(
     }
     endpoint.leader_id = leader_id;
 
-    // Raft node info is the PG's own addr:port and is valid the instant
-    // this node becomes leader — do not wait on the monitor osdmap.
-    if (!use_raw_port) {
-        auto node = raft->raft_get_node(leader_id);
-        if (!node) {
-            node = raft->raft_get_cfg_node(leader_id);
-        }
-        if (node) {
-            const auto& info = node->raft_get_node_info();
-            if (!info.addr().empty() && info.port() != 0) {
-                endpoint.state = err::E_SUCCESS;
-                endpoint.leader_addr = info.addr();
-                endpoint.leader_port = info.port();
-                return endpoint;
-            }
-        }
-    }
-
+    // The monitor map is the live truth for osd endpoints: an osd reboots
+    // into a newly assigned port and re-registers it there within a poll
+    // period, while the raft node info held by its peers keeps the port
+    // recorded when the pg was created and never self-heals.  Handing out
+    // that stale port made every client resolve a leader it could not
+    // reach after any osd restart.  Prefer the map (polled every second)
+    // and keep raft node info only as the fallback for the window before
+    // the first cluster map pull.
     auto leader = use_raw_port
       ? _monitor_client->get_osd_raw_addr(leader_id, shard_id)
       : _monitor_client->get_osd_addr(leader_id, shard_id);
+    if (leader.first.empty() || leader.second == 0) {
+        if (!use_raw_port) {
+            // Raft node info is the PG's own addr:port, valid the instant
+            // this node becomes leader — usable before the monitor map has
+            // loaded.
+            auto node = raft->raft_get_node(leader_id);
+            if (!node) {
+                node = raft->raft_get_cfg_node(leader_id);
+            }
+            if (node) {
+                const auto& info = node->raft_get_node_info();
+                if (!info.addr().empty() && info.port() != 0) {
+                    leader = {info.addr(), static_cast<int>(info.port())};
+                }
+            }
+        }
+    }
     if (leader.first.empty() || leader.second == 0) {
         endpoint.state = err::RAFT_ERR_NOT_FOUND_LEADER;
         endpoint.leader_id = -1;
