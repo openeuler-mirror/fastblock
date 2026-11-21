@@ -58,6 +58,12 @@ int state_machine::raft_apply_entry() {
   if (_raft->raft_get_snapshot_in_progress())
     return SPDK_POLLER_IDLE;
 
+  // Applied metadata can sit past the recovered log (snapshot / lost tail).
+  // Fetching last_applied+1 then finds nothing and never applies new commits.
+  if (_last_applied_idx > _raft->raft_get_commit_idx()) {
+    _last_applied_idx = _raft->raft_get_commit_idx();
+  }
+
   auto cur_time = utils::get_time();
   if ((cur_time - _last_save_time) / 1000 > 1 ||
       _last_applied_idx - _last_save_index >= 100) {
