@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 #include <spdk/env.h>
+#include <spdk/thread.h>
 #include <iostream>
 
 #include "common.h"
@@ -59,6 +60,21 @@ int main(int argc, char *argv[])
 
 	opts.rpc_addr = nvmf_tgt_path.c_str();
     g_app_name = "nvmf_tgt";
+	if (opts.no_huge) {
+		if (opts.mem_size <= 0) {
+			opts.mem_size = 256;
+		}
+		spdk_iobuf_opts iobuf_opts{};
+		spdk_iobuf_get_opts(&iobuf_opts, sizeof(iobuf_opts));
+		iobuf_opts.opts_size = sizeof(iobuf_opts);
+		/* nvmf TCP defaults to 511 shared buffers; 64 left the pg cache empty. */
+		iobuf_opts.small_pool_count = 2048;
+		iobuf_opts.large_pool_count = 512;
+		if (spdk_iobuf_set_opts(&iobuf_opts) != 0) {
+			std::cerr << "failed to shrink iobuf for --no-huge" << std::endl;
+			return -EINVAL;
+		}
+	}
 	rc = spdk_app_start(&opts, app_run, NULL);
 	spdk_app_fini();
 	utils::unclaim_cores();
