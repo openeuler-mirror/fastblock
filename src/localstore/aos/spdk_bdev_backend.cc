@@ -30,6 +30,7 @@ struct io_ctx_append {
 };
 
 struct io_ctx_op {
+  spdk_bdev_backend* self{nullptr};
   device_backend::op_complete cb;
   void* arg{nullptr};
 };
@@ -85,6 +86,8 @@ int spdk_bdev_backend::open(const char* bdev_name, uint64_t region_offset,
   region_length_ = region_length;
   write_pointer_ = 0;
   write_inflight_ = 0;
+  read_inflight_ = 0;
+  flush_inflight_ = 0;
   return 0;
 }
 
@@ -92,14 +95,18 @@ void spdk_bdev_backend::set_max_write_inflight(uint32_t n) {
   max_write_inflight_ = n == 0 ? 1 : n;
 }
 
-void spdk_bdev_backend::close() {
+void spdk_bdev_backend::fail_queued(int err) {
   auto q = std::move(write_q_);
   write_q_.clear();
   for (auto& p : q) {
     if (p.cb) {
-      p.cb(p.arg, 0, -ESHUTDOWN);
+      p.cb(p.arg, 0, err);
     }
   }
+}
+
+void spdk_bdev_backend::close() {
+  fail_queued(-ESHUTDOWN);
   if (channel_ != nullptr) {
     spdk_put_io_channel(channel_);
     channel_ = nullptr;
@@ -114,6 +121,8 @@ void spdk_bdev_backend::close() {
   region_length_ = 0;
   write_pointer_ = 0;
   write_inflight_ = 0;
+  read_inflight_ = 0;
+  flush_inflight_ = 0;
 }
 
 void spdk_bdev_backend::set_write_pointer(uint64_t bytes_from_region_start) {
@@ -154,7 +163,11 @@ void spdk_bdev_backend::write_done(struct spdk_bdev_io* bdev_io, bool success,
 void spdk_bdev_backend::read_done(struct spdk_bdev_io* bdev_io, bool success,
                                   void* cb_arg) {
   auto* ctx = static_cast<io_ctx_op*>(cb_arg);
+  spdk_bdev_backend* self = ctx->self;
   const int err = success ? 0 : -EIO;
+  if (self != nullptr && self->read_inflight_ > 0) {
+    --self->read_inflight_;
+  }
   auto cb = std::move(ctx->cb);
   void* arg = ctx->arg;
   delete ctx;
@@ -167,7 +180,11 @@ void spdk_bdev_backend::read_done(struct spdk_bdev_io* bdev_io, bool success,
 void spdk_bdev_backend::flush_done(struct spdk_bdev_io* bdev_io, bool success,
                                    void* cb_arg) {
   auto* ctx = static_cast<io_ctx_op*>(cb_arg);
+  spdk_bdev_backend* self = ctx->self;
   const int err = success ? 0 : -EIO;
+  if (self != nullptr && self->flush_inflight_ > 0) {
+    --self->flush_inflight_;
+  }
   auto cb = std::move(ctx->cb);
   void* arg = ctx->arg;
   delete ctx;
@@ -274,6 +291,7 @@ void spdk_bdev_backend::read(uint64_t phys_offset, void* data, uint64_t nbytes,
     cb(arg, -ENOMEM);
     return;
   }
+  ctx->self = this;
   ctx->cb = std::move(cb);
   ctx->arg = arg;
 
@@ -281,9 +299,13 @@ void spdk_bdev_backend::read(uint64_t phys_offset, void* data, uint64_t nbytes,
   const uint64_t offset_blocks = abs_off / block_size_;
   const uint64_t num_blocks = nbytes / block_size_;
 
+  ++read_inflight_;
   const int rc = spdk_bdev_read_blocks(desc_, channel_, data, offset_blocks,
                                        num_blocks, read_done, ctx);
   if (rc != 0) {
+    if (read_inflight_ > 0) {
+      --read_inflight_;
+    }
     auto done = std::move(ctx->cb);
     void* a = ctx->arg;
     delete ctx;
@@ -304,6 +326,7 @@ void spdk_bdev_backend::flush(op_complete cb, void* arg) {
     cb(arg, -ENOMEM);
     return;
   }
+  ctx->self = this;
   ctx->cb = std::move(cb);
   ctx->arg = arg;
 
@@ -311,9 +334,13 @@ void spdk_bdev_backend::flush(op_complete cb, void* arg) {
   const uint64_t offset_blocks = region_offset_ / block_size_;
   const uint64_t num_blocks = region_length_ / block_size_;
 
+  ++flush_inflight_;
   const int rc = spdk_bdev_flush_blocks(desc_, channel_, offset_blocks,
                                         num_blocks, flush_done, ctx);
   if (rc != 0) {
+    if (flush_inflight_ > 0) {
+      --flush_inflight_;
+    }
     // malloc bdev and some devices do not support flush; durability is
     // already implied when the write callback completed for those devices.
     auto done = std::move(ctx->cb);
