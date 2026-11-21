@@ -22,7 +22,10 @@ osd_count="${RAFT_REGRESSION_OSD_COUNT:-4}"
 pg_count="${RAFT_REGRESSION_PG_COUNT:-8}"
 membership_cpu_mask="${RAFT_MEMBERSHIP_CPU_MASK:-0x10}"
 bench_cpu_mask="${BLOCK_BENCH_CPU_MASK:-0x80}"
-converge_timeout="${LEADER_CHANGE_CONVERGE_TIMEOUT:-180}"
+# Convergence after a leader kill includes: re-election, the restarted osd
+# re-registering (new port), reconnect backoff (up to 8s per attempt) and
+# catch-up.  180s proved too tight; 300s still bounds a wedged run.
+converge_timeout="${LEADER_CHANGE_CONVERGE_TIMEOUT:-300}"
 
 kill_osd() {
     local id="$1"
