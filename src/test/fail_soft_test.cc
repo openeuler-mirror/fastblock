@@ -46,6 +46,7 @@ int main() {
   EXPECT_TRUE(!is_retryable(rpc_error_class::application));
   EXPECT_TRUE(!is_retryable(rpc_error_class::connection));
   EXPECT_TRUE(!is_retryable(rpc_error_class::peer_terminating));
+  EXPECT_TRUE(!is_retryable(rpc_error_class::canceled));
 
   EXPECT_TRUE(tears_connection(rpc_error_class::connection));
   EXPECT_TRUE(tears_connection(rpc_error_class::peer_terminating));
@@ -53,6 +54,7 @@ int main() {
   EXPECT_TRUE(!tears_connection(rpc_error_class::timeout));
   EXPECT_TRUE(!tears_connection(rpc_error_class::too_large));
   EXPECT_TRUE(!tears_connection(rpc_error_class::application));
+  EXPECT_TRUE(!tears_connection(rpc_error_class::canceled));
 
   EXPECT_TRUE(classify_rpc_error("resource_exhausted") ==
               rpc_error_class::resource_exhausted);
@@ -61,6 +63,7 @@ int main() {
               rpc_error_class::request_timeout);
   EXPECT_TRUE(classify_rpc_error("connection terminated") ==
               rpc_error_class::connection);
+  EXPECT_TRUE(classify_rpc_error("canceled") == rpc_error_class::canceled);
   EXPECT_TRUE(classify_rpc_error("too_large") == rpc_error_class::too_large);
   EXPECT_TRUE(classify_rpc_error("server terminating") ==
               rpc_error_class::peer_terminating);
