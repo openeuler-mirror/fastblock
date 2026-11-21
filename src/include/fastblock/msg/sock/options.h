@@ -20,7 +20,7 @@ struct options {
     std::string bind_address{"0.0.0.0"};
     uint16_t port{0};
     const char* impl{"posix"};
-    bool zcopy{true};
+    bool zcopy{false};
     uint32_t max_frame_bytes{default_max_frame_bytes};
     uint32_t max_rpc_bytes{default_max_rpc_bytes};
     uint32_t ae_max_oob_bytes{default_ae_max_oob_bytes};
