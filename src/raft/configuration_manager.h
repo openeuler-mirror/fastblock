@@ -136,6 +136,10 @@ public:
         return _configurations.back();
     }
 
+    bool empty() const {
+        return _configurations.empty();
+    }
+
     void set_state(cfg_state state){
         _state = state;
     }
