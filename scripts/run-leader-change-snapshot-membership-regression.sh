@@ -73,6 +73,21 @@ start_osd() {
     echo "$!" > "$run_dir/osd-${id}.pid"
 }
 
+membership_conf=""
+
+# The config handed to the membership tool: change_nodes can have to
+# snapshot-catch-up the member it adds, which takes seconds, while the default
+# client rpc timeout is 1s.  The server finishes the change either way, but the
+# tool gives up first and reports NO_CONNECTED.
+membership_conf_path() {
+    if [ -z "$membership_conf" ]; then
+        membership_conf="$(mktemp /tmp/leader-change-membership-conf.XXXX.json)"
+        sed 's/"msg_client_rpc_timeout_us": [0-9]*/"msg_client_rpc_timeout_us": 60000000/' \
+            "$conf" > "$membership_conf"
+    fi
+    echo "$membership_conf"
+}
+
 require_exec() {
     if [ ! -x "$1" ]; then
         echo "required executable not found: $1" >&2
@@ -333,7 +348,7 @@ run_membership_change() {
     set +e
     ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0}" \
         "$membership_bin" --no-huge -s 1024 -m "$membership_cpu_mask" \
-        -C "$conf" \
+        -C "$(membership_conf_path)" \
         -I "$contact_osd" \
         -o "${osd_addr[$contact_osd]}" \
         -t "${osd_port[$contact_osd]}" \
