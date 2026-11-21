@@ -12,6 +12,7 @@
 
 #include <cstddef>
 #include <cstring>
+#include <memory>
 #include <utility>
 
 SPDK_LOG_REGISTER_COMPONENT(msg_sock)
@@ -24,6 +25,7 @@ struct send_req {
     ::spdk_sock_request req{};
     ::iovec iov[1]{};
     std::string bytes;
+    std::shared_ptr<connection> hold;
     connection* conn{nullptr};
 };
 static_assert(offsetof(send_req, iov) == sizeof(::spdk_sock_request),
@@ -98,23 +100,53 @@ void connection::teardown(const char* why) {
         return;
     }
     _torn = true;
+    // Fail closures (heartbeat, raft remove_connect) may drop the last
+    // shared_ptr. Hold until inflight completions finish so complete_rpc
+    // does not write into a destroyed pending_rpc / this.
+    auto hold = shared_from_this();
     if (_probe) {
         ++_probe->conn_teardown;
     }
-    SPDK_NOTICELOG("sock connection teardown: %s\n", why ? why : "");
+    if (!why || (std::strcmp(why, "eof") != 0 && std::strcmp(why, "async_shutdown") != 0)) {
+        SPDK_NOTICELOG("sock connection teardown: %s\n", why ? why : "");
+    }
     detach_and_close();
+    std::vector<std::unique_ptr<pending_rpc>> dying;
+    dying.reserve(_inflight.size());
     for (auto& [k, req] : _inflight) {
-        complete_rpc(req.get(), rpc_fail::connection_dead);
+        dying.push_back(std::move(req));
     }
     _inflight.clear();
     for (auto& [k, as] : _assemblies) {
-        if (as.reserved) {
-            process_quota::instance().release(as.reserved);
+        if (_is_server && !as.a.response) {
+            release_inflight(as.reserved);
+            as.reserved = 0;
         }
     }
     _assemblies.clear();
     _priority_q.clear();
     _normal_q.clear();
+    for (auto& req : dying) {
+        complete_rpc(req.get(), rpc_fail::connection_dead);
+    }
+}
+
+void connection::release_inflight(size_t reserved) {
+    if (reserved) {
+        process_quota::instance().release(reserved);
+        if (_inflight_bytes >= reserved) {
+            _inflight_bytes -= reserved;
+        } else {
+            _inflight_bytes = 0;
+        }
+    }
+    if (_inflight_rpcs > 0) {
+        --_inflight_rpcs;
+    }
+}
+
+void connection::finish_server_rpc(size_t reserved) {
+    release_inflight(reserved);
 }
 
 void connection::complete_rpc(pending_rpc* req, rpc_fail why, const char* detail) {
@@ -126,13 +158,8 @@ void connection::complete_rpc(pending_rpc* req, rpc_fail why, const char* detail
     }
     req->completed = true;
     _done_keys.remember(req->correlation);
-    if (req->reserved) {
-        process_quota::instance().release(req->reserved);
-        req->reserved = 0;
-    }
-    if (_inflight_rpcs > 0) {
-        --_inflight_rpcs;
-    }
+    release_inflight(req->reserved);
+    req->reserved = 0;
     switch (why) {
     case rpc_fail::ok:
         if (_probe) {
@@ -186,9 +213,10 @@ void connection::complete_rpc(pending_rpc* req, rpc_fail why, const char* detail
         }
         break;
     }
-    if (req->closure) {
-        req->closure->Run();
-        req->closure = nullptr;
+    auto* cl = req->closure;
+    req->closure = nullptr;
+    if (cl) {
+        cl->Run();
     }
 }
 
@@ -279,6 +307,7 @@ void connection::handle_complete_frame(const sock_frame_hdr& hdr, std::string_vi
     const bool rsp = (hdr.flags & k_flag_response) != 0;
     auto it = _assemblies.find(hdr.correlation);
     if (hdr.frame_seq == 0) {
+        size_t inbound_reserved = 0;
         if (it != _assemblies.end()) {
             if (_is_server && !rsp) {
                 send_status(hdr.correlation, rdma::status::bad_request_body);
@@ -312,11 +341,15 @@ void connection::handle_complete_frame(const sock_frame_hdr& hdr, std::string_vi
                     }
                     return;
                 }
+                inbound_reserved = need;
             }
         }
         live_assembly la{};
         const auto st = push_frame(&la.a, hdr, meta, proto, payload, true);
         if (st == assemble_status::payload_mismatch) {
+            if (inbound_reserved) {
+                process_quota::instance().release(inbound_reserved);
+            }
             if (_is_server && !rsp) {
                 send_status(hdr.correlation, rdma::status::resource_exhausted);
             }
@@ -392,12 +425,8 @@ void connection::handle_complete_frame(const sock_frame_hdr& hdr, std::string_vi
                 _inflight.erase(inf);
             }
         }
-        if (it->second.reserved) {
-            process_quota::instance().release(it->second.reserved);
-            if (_inflight_bytes >= it->second.reserved) {
-                _inflight_bytes -= it->second.reserved;
-            }
-        }
+        release_inflight(it->second.reserved);
+        it->second.reserved = 0;
         _assemblies.erase(it);
         return;
     }
@@ -405,9 +434,8 @@ void connection::handle_complete_frame(const sock_frame_hdr& hdr, std::string_vi
         return;
     }
     if (st != assemble_status::complete) {
-        if (it->second.reserved) {
-            process_quota::instance().release(it->second.reserved);
-        }
+        release_inflight(it->second.reserved);
+        it->second.reserved = 0;
         _assemblies.erase(it);
         teardown("payload mismatch");
         return;
@@ -463,9 +491,10 @@ void connection::enqueue_frames(std::vector<encoded_frame> frames, bool priority
 
 void connection::on_send_done(void* arg, int err) {
     auto* r = static_cast<send_req*>(arg);
+    auto hold = std::move(r->hold);
     auto* conn = r->conn;
     delete r;
-    if (!conn || conn->_torn) {
+    if (!hold || !conn || conn->_torn) {
         return;
     }
     if (conn->_async_inflight > 0) {
@@ -481,6 +510,7 @@ void connection::on_send_done(void* arg, int err) {
 void connection::submit_one_frame(encoded_frame fr) {
     auto* r = new send_req{};
     r->bytes = std::move(fr.bytes);
+    r->hold = shared_from_this();
     r->conn = this;
     r->req.cb_fn = on_send_done;
     r->req.cb_arg = r;
@@ -534,9 +564,13 @@ void connection::CallMethod(const google::protobuf::MethodDescriptor* method,
         return;
     }
 
+    // Peel a clone. fb_client retries the same write_request after NOT_LEADER;
+    // mutating the caller's bytes field would send data_len>0 with empty OOB.
+    std::unique_ptr<google::protobuf::Message> owned(request->New());
+    owned->CopyFrom(*request);
     std::string oob;
-    rdma::peel_rpc_payload(*const_cast<google::protobuf::Message*>(request), &oob);
-    const auto proto_sz = request->ByteSizeLong();
+    rdma::peel_rpc_payload(*owned, &oob);
+    const auto proto_sz = owned->ByteSizeLong();
     if (proto_sz > k_proto_hard_cap) {
         rdma::fail_rpc(ctrlr, "too_large", rdma::rpc_error_class::too_large);
         if (done) {
@@ -593,7 +627,7 @@ void connection::CallMethod(const google::protobuf::MethodDescriptor* method,
     std::string meta(sizeof(wm), '\0');
     store_request_meta(meta.data(), wm);
     std::string proto(proto_sz, '\0');
-    request->SerializeToArray(proto.data(), static_cast<int>(proto_sz));
+    owned->SerializeToArray(proto.data(), static_cast<int>(proto_sz));
 
     std::vector<encoded_frame> frames;
     if (!split_rpc(false, key, meta, proto, oob, _opts->max_frame_bytes, &frames)) {
@@ -679,6 +713,7 @@ void connection::inject_unknown_frame() {
 }
 
 bool connection::scan_timeouts(std::chrono::system_clock::time_point now) {
+    auto hold = shared_from_this();
     bool busy = false;
     if (_partial && now > _recv_deadline) {
         teardown("recv_deadline");
@@ -694,15 +729,8 @@ bool connection::scan_timeouts(std::chrono::system_clock::time_point now) {
         }
         if (_is_server && !it->second.a.response) {
             send_status(it->first, rdma::status::request_timeout);
-            if (it->second.reserved) {
-                process_quota::instance().release(it->second.reserved);
-                if (_inflight_bytes >= it->second.reserved) {
-                    _inflight_bytes -= it->second.reserved;
-                }
-                if (_inflight_rpcs > 0) {
-                    --_inflight_rpcs;
-                }
-            }
+            release_inflight(it->second.reserved);
+            it->second.reserved = 0;
         } else {
             auto inf = _inflight.find(it->first);
             if (inf != _inflight.end()) {
