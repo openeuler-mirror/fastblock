@@ -109,6 +109,7 @@ private:
         google::protobuf::Message* response{nullptr};
         google::protobuf::Closure* closure{nullptr};
         std::chrono::system_clock::time_point start_at{};
+        std::chrono::microseconds timeout{rdma::default_rpc_timeout_us};
         size_t reserved{0};
         bool completed{false};
         bool priority{false};
