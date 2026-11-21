@@ -1,0 +1,28 @@
+diff --git a/lib/nvmf/ctrlr_bdev.c b/lib/nvmf/ctrlr_bdev.c
+index d9d850d22..a818a2dd0 100644
+--- a/lib/nvmf/ctrlr_bdev.c
++++ b/lib/nvmf/ctrlr_bdev.c
+@@ -85,6 +85,9 @@ nvmf_bdev_ctrlr_complete_cmd(struct spdk_bdev_io *bdev_io, bool success,
+ 		first_response->cdw0 = cdw0;
+ 		first_response->status.sc = first_sc;
+ 		first_response->status.sct = first_sct;
++		if (spdk_unlikely(first_sc != SPDK_NVME_SC_SUCCESS)) {
++			first_response->status.dnr = 1;
++		}
+ 
+ 		/* first request should be completed */
+ 		spdk_nvmf_request_complete(first_req);
+@@ -97,6 +100,13 @@ nvmf_bdev_ctrlr_complete_cmd(struct spdk_bdev_io *bdev_io, bool success,
+ 	response->cdw0 = cdw0;
+ 	response->status.sc = sc;
+ 	response->status.sct = sct;
++	/*
++	 * Linux nvme retries any error with DNR=0 until io_timeout (30s).
++	 * A bdev failure is already terminal; tell the host not to resubmit.
++	 */
++	if (spdk_unlikely(sc != SPDK_NVME_SC_SUCCESS)) {
++		response->status.dnr = 1;
++	}
+ 
+ 	spdk_nvmf_request_complete(req);
+ 	spdk_bdev_free_io(bdev_io);
