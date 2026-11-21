@@ -41,6 +41,12 @@ void on_handoff(void* arg) {
 
 class pool_impl {
 public:
+    // The pool is a global with joinable worker threads.  Nothing called
+    // stop() on the shutdown path, so the workers stayed parked on _cv and
+    // were still joinable when the global was destroyed at exit, which is
+    // std::terminate() -> "terminate called without an active exception".
+    ~pool_impl() { stop(); }
+
     void ensure_started(int workers, uint32_t queue_depth) {
         std::lock_guard<std::mutex> lk(_mu);
         if (_running) {
