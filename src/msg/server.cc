@@ -13,6 +13,7 @@
 
 #include <google/protobuf/stubs/callback.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
 
@@ -142,8 +143,13 @@ void server::accept_one() {
     if (!s) {
         return;
     }
+    std::erase_if(_conns, [](const std::shared_ptr<connection>& c) {
+        return !c || c->is_terminated();
+    });
     if (_conns.size() >= _opts->max_conns) {
         ++_probe.accept_drop;
+        SPDK_NOTICELOG("sock accept drop: live conns %zu >= max %u\n", _conns.size(),
+                       _opts->max_conns);
         ::spdk_sock_close(&s);
         return;
     }
@@ -151,7 +157,8 @@ void server::accept_one() {
     conn->set_server(this);
     conn->set_on_request([this](connection* c, assembled_rpc rpc) { dispatch(c, std::move(rpc)); });
     if (!conn->attach()) {
-        ::spdk_sock_close(&s);
+        ++_probe.accept_drop;
+        SPDK_ERRLOG("sock accept attach failed\n");
         return;
     }
     _conns.push_back(std::move(conn));
@@ -164,11 +171,15 @@ void server::dispatch(connection* conn, assembled_rpc rpc) {
       std::string(rpc.req_meta.method_name, rpc.req_meta.method_name_size);
     auto sit = _services.find(svc_name);
     if (sit == _services.end()) {
+        SPDK_NOTICELOG("sock unknown service '%s'\n", svc_name.c_str());
+        conn->finish_server_rpc(rpc.reserved);
         conn->send_status(rpc.correlation, rdma::status::service_not_found);
         return;
     }
     auto mit = sit->second.methods.find(method_name);
     if (mit == sit->second.methods.end()) {
+        SPDK_NOTICELOG("sock unknown method '%s.%s'\n", svc_name.c_str(), method_name.c_str());
+        conn->finish_server_rpc(rpc.reserved);
         conn->send_status(rpc.correlation, rdma::status::method_not_found);
         return;
     }
@@ -176,6 +187,7 @@ void server::dispatch(connection* conn, assembled_rpc rpc) {
     auto* task = new rpc_task{};
     task->correlation = rpc.correlation;
     task->conn = conn;
+    task->hold = conn->shared_from_this();
     task->owner = this;
     task->reserved = rpc.reserved;
     task->ctrlr = std::make_unique<rdma::rpc_controller>();
@@ -183,6 +195,10 @@ void server::dispatch(connection* conn, assembled_rpc rpc) {
     task->response.reset(sit->second.svc->GetResponsePrototype(method).New());
     if (!task->request->ParseFromArray(rpc.proto.data(), static_cast<int>(rpc.proto.size())) ||
         !rdma::attach_rpc_payload(*task->request, rpc.oob)) {
+        SPDK_NOTICELOG("sock bad request body %s.%s proto=%zu oob=%zu\n", svc_name.c_str(),
+                       method_name.c_str(), rpc.proto.size(), rpc.oob.size());
+        conn->finish_server_rpc(rpc.reserved);
+        task->reserved = 0;
         conn->send_status(rpc.correlation, rdma::status::bad_request_body);
         delete task;
         return;
@@ -197,15 +213,18 @@ void server::on_method_done(rpc_task* task) {
         return;
     }
     task->done = true;
+    const size_t reserved = task->reserved;
+    task->reserved = 0;
+    if (task->conn) {
+        task->conn->finish_server_rpc(reserved);
+    } else if (reserved) {
+        process_quota::instance().release(reserved);
+    }
     if (!task->conn || task->conn->is_terminated()) {
         delete task;
         return;
     }
     task->conn->remember_done(task->correlation);
-    if (task->reserved) {
-        process_quota::instance().release(task->reserved);
-        task->reserved = 0;
-    }
     if (task->ctrlr && task->ctrlr->Failed()) {
         task->conn->send_status(task->correlation, rdma::status::server_error);
     } else {
@@ -215,6 +234,9 @@ void server::on_method_done(rpc_task* task) {
 }
 
 int server::poll() {
+    std::erase_if(_conns, [](const std::shared_ptr<connection>& c) {
+        return !c || c->is_terminated();
+    });
     accept_one();
     int rc = SPDK_POLLER_IDLE;
     if (_group) {
