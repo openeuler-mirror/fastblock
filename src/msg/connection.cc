@@ -660,6 +660,8 @@ void connection::CallMethod(const google::protobuf::MethodDescriptor* method,
     req->response = response;
     req->closure = done;
     req->start_at = std::chrono::system_clock::now();
+    req->timeout = rdma::rpc_timeout_for_method(
+      mname, std::chrono::duration_cast<std::chrono::microseconds>(_opts->rpc_timeout));
     req->reserved = rpc_sz;
     req->priority = mname == "heartbeat";
     _inflight_bytes += rpc_sz;
@@ -776,7 +778,7 @@ bool connection::scan_timeouts(std::chrono::system_clock::time_point now) {
             busy = true;
             continue;
         }
-        if (it->second->start_at + _opts->rpc_timeout < now) {
+        if (it->second->start_at + it->second->timeout < now) {
             complete_rpc(it->second.get(), rpc_fail::timeout);
             it = _inflight.erase(it);
             busy = true;
