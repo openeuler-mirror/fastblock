@@ -149,6 +149,15 @@ void connection::finish_server_rpc(size_t reserved) {
     release_inflight(reserved);
 }
 
+void connection::cancel_rpc(uint64_t correlation) {
+    auto inf = _inflight.find(correlation);
+    if (inf == _inflight.end()) {
+        return;
+    }
+    complete_rpc(inf->second.get(), rpc_fail::canceled);
+    _inflight.erase(inf);
+}
+
 void connection::complete_rpc(pending_rpc* req, rpc_fail why, const char* detail) {
     if (!req || req->completed) {
         if (req && req->completed && _probe) {
@@ -208,6 +217,12 @@ void connection::complete_rpc(pending_rpc* req, rpc_fail why, const char* detail
         break;
     case rpc_fail::other:
         rdma::fail_rpc(req->ctrlr, detail ? detail : "rpc error", rdma::rpc_error_class::application);
+        if (_probe) {
+            ++_probe->complete_fail;
+        }
+        break;
+    case rpc_fail::canceled:
+        rdma::fail_rpc(req->ctrlr, "canceled", rdma::rpc_error_class::canceled);
         if (_probe) {
             ++_probe->complete_fail;
         }
@@ -651,6 +666,18 @@ void connection::CallMethod(const google::protobuf::MethodDescriptor* method,
     ++_inflight_rpcs;
     auto* raw = req.get();
     _inflight.emplace(key, std::move(req));
+    if (auto* rc = static_cast<rdma::rpc_controller*>(ctrlr)) {
+        auto wp = std::weak_ptr<connection>(shared_from_this());
+        rc->set_cancel_fn([wp, key]() {
+            if (auto self = wp.lock()) {
+                self->cancel_rpc(key);
+            }
+        });
+        if (rc->IsCanceled()) {
+            cancel_rpc(key);
+            return;
+        }
+    }
     enqueue_frames(std::move(frames), raw->priority);
 }
 
@@ -742,6 +769,13 @@ bool connection::scan_timeouts(std::chrono::system_clock::time_point now) {
         busy = true;
     }
     for (auto it = _inflight.begin(); it != _inflight.end();) {
+        auto* rc = static_cast<rdma::rpc_controller*>(it->second->ctrlr);
+        if (rc && rc->IsCanceled()) {
+            complete_rpc(it->second.get(), rpc_fail::canceled);
+            it = _inflight.erase(it);
+            busy = true;
+            continue;
+        }
         if (it->second->start_at + _opts->rpc_timeout < now) {
             complete_rpc(it->second.get(), rpc_fail::timeout);
             it = _inflight.erase(it);
