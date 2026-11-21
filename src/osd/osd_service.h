@@ -151,6 +151,9 @@ public:
         google::protobuf::Closure* done);
 
 private:
+    leader_endpoint lookup_pg_leader(raft_server_t* raft, uint32_t shard_id,
+                                     bool use_raw_port);
+
     partition_manager *_pm;
     std::shared_ptr<monitor_client> _monitor_client{nullptr};
 };
