@@ -481,7 +481,10 @@ public:
         }
 
         bool is_timeout(rpc_request* req) noexcept {
-            return req->start_at + _opts->rpc_timeout < std::chrono::system_clock::now();
+            const auto limit = rpc_timeout_for_method(
+              req->method ? req->method->name() : std::string_view{},
+              std::chrono::duration_cast<std::chrono::microseconds>(_opts->rpc_timeout));
+            return req->start_at + limit < std::chrono::system_clock::now();
         }
 
         void quarantine_transport(std::unique_ptr<transport_data>& td) {
