@@ -2241,35 +2241,40 @@ int raft_server_t::raft_recv_installsnapshot(raft_node_id_t node_id,
         }
         // Last chunk: seal + activate serving epoch, then advance raft indices.
         get_machine()->finish_install_snapshot(
-            [this, index, term, complete](void*, int ferr) {
+            [this, index, term, complete, response](void*, int ferr) {
                 SPDK_NOTICELOG(
                     "pg: %lu.%lu, finish_install_snapshot err=%d index=%ld "
                     "term=%ld\n",
                     _pool_id, _pg_id, ferr, index, term);
                 if (ferr != 0) {
+                    response->set_success(0);
                     complete->complete(ferr);
                     return;
                 }
                 raft_get_log()->set_disk_log_index(
                     index, term,
-                    [this, index, complete](void*, int rberrno) {
+                    [this, index, complete, response](void*, int rberrno) {
                         if (rberrno != 0) {
                             SPDK_ERRLOG(
                                 "pg: %lu.%lu, persist snapshot log base "
                                 "index=%ld failed %d\n",
                                 _pool_id, _pg_id, index, rberrno);
+                            response->set_success(0);
                             complete->complete(rberrno);
                             return;
                         }
                         set_index_after_snapshot(index);
                         save_last_apply_index_durable(
                             index,
-                            [this, index, complete](void*, int kerr) {
+                            [this, index, complete, response](void*, int kerr) {
                                 SPDK_NOTICELOG(
                                     "pg: %lu.%lu, set _last_applied_idx, "
                                     "_current_idx, _commit_idx to %ld "
                                     "kv_err %d\n",
                                     _pool_id, _pg_id, index, kerr);
+                                if (kerr != 0) {
+                                    response->set_success(0);
+                                }
                                 complete->complete(kerr);
                             },
                             nullptr);
@@ -3019,7 +3024,19 @@ int raft_server_t::_recovery_by_snapshot(std::shared_ptr<raft_node> node){
         dispatch_pending_recovery();
     };
 
-    _snapshot_index = _machine->get_last_applied_idx();
+    // last_applied can sit past the log tip after a truncated recover.
+    // Advertising that index makes the follower's next_idx jump past
+    // current, the following AE fails, and next_idx rewinds below the
+    // log base — snapshot again, forever, and the reactor never serves I/O.
+    raft_index_t snap = _machine->get_last_applied_idx();
+    const raft_index_t current = raft_get_current_idx();
+    if (snap > current) {
+        SPDK_NOTICELOG(
+            "pg: %lu.%lu, snapshot index %ld past log current %ld; clamp\n",
+            _pool_id, _pg_id, snap, current);
+        snap = current;
+    }
+    _snapshot_index = snap;
     raft_term_t term = 0;
     if (_snapshot_index > 0 && !raft_get_entry_term(_snapshot_index, term)) {
         // Index may come from applied-only metadata; fall back to current term.
@@ -3070,6 +3087,15 @@ void raft_server_t::do_recovery(std::shared_ptr<raft_node> node){
     if (next_idx < raft_get_log()->log_get_base_index()){
         _recovery_by_snapshot(node);
         return;
+    }
+    if (next_idx > raft_get_current_idx() + 1) {
+        SPDK_NOTICELOG(
+            "pg: %lu.%lu, clamp recovery next_idx %ld to current+1 %ld "
+            "for node %d\n",
+            _pool_id, _pg_id, next_idx, raft_get_current_idx() + 1,
+            node->raft_node_get_id());
+        next_idx = raft_get_current_idx() + 1;
+        node->raft_node_set_next_idx(next_idx);
     }
 
     auto send_recovery_entries = [this, next_idx, node_id = node->raft_node_get_id()](std::vector<raft_entry_t>&& entries){
@@ -3518,14 +3544,15 @@ void raft_server_t::load(raft_node_id_t current_node, raft_complete cb_fn, void 
                 last_applied_idx -= 1;
         }
         // Snapshot can persist applied ahead of the recovered log tail.
-        // Do not bump current_idx (no entry at that index → election
-        // "missing term"). snapshot_check treats applied != commit as
-        // "send all objects".
+        // Do not bump current_idx (no entry at that index). Clamp applied
+        // down to the log tip so the apply loop can commit new entries
+        // instead of fetching an index the log does not have.
         if (last_applied_idx > raft_get_current_idx()) {
             SPDK_NOTICELOG(
-                "pg %lu.%lu load: applied %ld ahead of log current %ld "
-                "(snapshot); keep current/commit, will request full snapshot\n",
+                "pg %lu.%lu load: applied %ld ahead of log current %ld; "
+                "clamp applied to log tip\n",
                 _pool_id, _pg_id, last_applied_idx, raft_get_current_idx());
+            last_applied_idx = raft_get_current_idx();
         }
         if (fastblock::aos::unified_log_enabled()) {
             const raft_index_t commit = static_cast<raft_index_t>(
