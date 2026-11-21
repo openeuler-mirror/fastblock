@@ -103,6 +103,8 @@ public:
 private:
   static int gc_poller_fn(void* arg);
   static int ckpt_poller_fn(void* arg);
+  static int drain_poller_fn(void* arg);
+  bool io_still_running() const;
 
   spdk_bdev_backend backend_;
   std::unique_ptr<osd_store> store_;
@@ -115,12 +117,18 @@ private:
 
   struct spdk_poller* gc_poller_{nullptr};
   struct spdk_poller* ckpt_poller_{nullptr};
+  struct spdk_poller* drain_poller_{nullptr};
   gc_poller_config gc_cfg_{};
   uint64_t gc_pass_count_{0};
   uint64_t ckpt_pass_count_{0};
   bool ckpt_in_flight_{false};
   bool gc_in_flight_{false};
   bool stop_pending_{false};
+  // True only after kv is destroyed and the backend is closed.
+  bool stop_finished_{false};
+  bool in_finish_stop_{false};
+  // kv::stop is in flight. A second finish_stop must not close again.
+  bool teardown_started_{false};
   op_complete stop_cb_;
   void* stop_arg_{nullptr};
 
